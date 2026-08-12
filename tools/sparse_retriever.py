@@ -14,20 +14,29 @@ Uses rank_bm25.BM25Okapi internally.
 
 from __future__ import annotations
 
+import os
+import pickle
 import re
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
 
-from config_tool import load_rag_config
+from config_tool import load_chroma_config, load_rag_config
 from log_tool import get_logger
+from path_tool import get_abs_path
 
 logger = get_logger(name="sparse_retriever")
 
 _rag_cfg = load_rag_config()
+_chroma_cfg = load_chroma_config()
 _retrieval_cfg = _rag_cfg.get("retrieval", {})
 _sparse_cfg = _rag_cfg.get("sparse", {})
+
+_DEFAULT_K1: float = 1.5    
+_DEFAULT_B: float = 0.75
+
+_BM25_CACHE_FILE = "data/bm25_index.pkl"
 
 _DEFAULT_K1: float = 1.5
 _DEFAULT_B: float = 0.75
@@ -125,3 +134,55 @@ class SparseRetriever:
     @property
     def is_ready(self) -> bool:
         return self.bm25_model is not None and len(self.chunks) > 0
+
+    # ------------------------------------------------------------------
+    # Pickle persistence
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _cache_path() -> str:
+        return get_abs_path(_BM25_CACHE_FILE)
+
+    @staticmethod
+    def _fingerprint() -> dict:
+        from vector_store import get_vector_store
+        store = get_vector_store()
+        return {
+            "chunk_count": store._collection.count(),
+            "collection_name": _chroma_cfg.get("collection_name", "clean_robot_kb"),
+        }
+
+    def save(self) -> None:
+        path = self._cache_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        payload = {
+            "chunks": self.chunks,
+            "corpus_tokens": self.corpus_tokens,
+            "bm25_model": self.bm25_model,
+            "fingerprint": self._fingerprint(),
+        }
+        with open(path, "wb") as f:
+            pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+        logger.info("[Sparse] BM25 cached: %s (%d chunks)", path, len(self.chunks))
+
+    def load(self) -> bool:
+        path = self._cache_path()
+        if not os.path.isfile(path):
+            return False
+        try:
+            with open(path, "rb") as f:
+                payload = pickle.load(f)
+        except Exception as e:
+            logger.warning("[Sparse] Cache load failed: %s", e)
+            return False
+        fp = payload.get("fingerprint", {})
+        cur = self._fingerprint()
+        if fp.get("chunk_count") != cur.get("chunk_count"):
+            logger.info("[Sparse] Cache stale (%d → %d chunks), rebuild.",
+                        fp.get("chunk_count", 0), cur.get("chunk_count", 0))
+            return False
+        self.chunks = payload["chunks"]
+        self.corpus_tokens = payload["corpus_tokens"]
+        self.bm25_model = payload["bm25_model"]
+        logger.info("[Sparse] BM25 loaded from cache: %d chunks", len(self.chunks))
+        return True

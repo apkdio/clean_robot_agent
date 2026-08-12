@@ -67,35 +67,20 @@ def get_embedding_model(
     )
 
 
-def simple_chat(query: str, system: str = "") -> str:
-    """One-shot helper: send a single user query and return the text reply.
+def stream_chat(messages: list, model: str = "", temperature: float = 0.3) -> any:
+    """Streaming chat: generator that yields text chunks as they arrive.
 
-    Useful as a quick smoke-test against the running Ollama instance.
+    Each yield is a plain string chunk (partial answer text).
+    For thinking-capable models (qwen3, deepseek-r1), set model_kwargs
+    with `extra_body={"reasoning": True}` to include reasoning tokens.
     """
-    llm = get_chat_model()
-    messages = []
-    if system:
-        from langchain_core.messages import SystemMessage, HumanMessage
-        messages.append(SystemMessage(content=system))
-    else:
-        from langchain_core.messages import HumanMessage
-    messages.append(HumanMessage(content=query))
+    m = model or _DEFAULT_CHAT_MODEL
+    llm = get_chat_model(model=m, temperature=temperature, streaming=True)
+    logger.info(f"[Stream] start model={m}")
     try:
-        resp = llm.invoke(messages)
-        logger.info(f"[Chat] replied, len={len(resp.content)}")
-        return resp.content
+        for chunk in llm.stream(messages):
+            if chunk.content:
+                yield chunk.content
     except Exception as e:
-        logger.error(f"[Chat] invoke failed: {e}")
-        return ""
-
-
-if __name__ == "__main__":
-    # Smoke test: ask a cleaning-robot question
-    print("=== Chat smoke test ===")
-    answer = simple_chat("扫地机器人吸力下降怎么办？用一句话回答。")
-    print(answer)
-
-    print("\n=== Embedding smoke test ===")
-    emb = get_embedding_model()
-    vec = emb.embed_query("扫地机器人不回充")
-    print(f"embedding dim={len(vec)}, first5={vec[:5]}")
+        logger.error(f"[Stream] failed: {e}")
+        yield ""

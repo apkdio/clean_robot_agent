@@ -24,13 +24,3 @@ def _load_prompt_by_key(key: str) -> str:
 def load_main_prompts() -> str:
     """Load the main system prompt."""
     return _load_prompt_by_key("main_prompts_path")
-
-
-def load_rag_summarize_prompts() -> str:
-    """Load the RAG summarization prompt template."""
-    return _load_prompt_by_key("rag_summarize_prompts_path")
-
-
-def load_report_prompts() -> str:
-    """Load the report generation prompt template."""
-    return _load_prompt_by_key("report_prompts_path")

@@ -12,7 +12,7 @@ Flow:
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config_tool import load_agent_config
-from llm_tool import get_chat_model
+from llm_tool import get_chat_model, stream_chat
 from log_tool import get_logger
 from prompts_tool import load_main_prompts
 
@@ -34,68 +34,50 @@ def _get_retriever():
         _hybrid_retriever.ensure_sparse_index()
     return _hybrid_retriever
 
+def ask_stream(query: str):
+    """Streaming version of ask() — yields answer chunks as LLM generates them.
 
-def ask(query: str) -> str:
-    """Answer a user question using hybrid RAG (dense+sparse → RRF → generate).
-
-    Args:
-        query: The user's question about cleaning robots.
-
-    Returns:
-        The LLM-generated answer string.
+    In retrieval_only mode, yields the full chunk text at once.
+    In RAG mode, yields partial answer tokens from the LLM.
     """
-    # --- 1. Retrieve (hybrid: dense + sparse → RRF fusion) ---
     hr = _get_retriever()
     chunks = hr.search(query)
 
     if not chunks:
-        logger.warning("[Agent] No chunks retrieved; falling back to direct answer.")
-        return _direct_answer(query)
+        for chunk in stream_chat(
+            [
+                SystemMessage(content=load_main_prompts()),
+                HumanMessage(content=f"知识库中暂无相关内容，请简短回答：{query}"),
+            ],
+            model=_llm_cfg.get("model", "qwen2.5:3b"),
+            temperature=_llm_cfg.get("temperature", 0.3),
+        ):
+            yield chunk
+        return
 
-    # --- 2b. Retrieval-only mode: return top chunk directly (no LLM summarization) ---
-    # Useful when LLM is too small to follow instructions (e.g. ≤3B models).
     if _behavior.get("retrieval_only", False):
         top = chunks[0]
         src = top.metadata.get("file_name", "")
-        return f"📄 来源：{src}\n\n{top.page_content}"
+        yield f"📄 来源：{src}\n\n{top.page_content}"
+        return
 
-    # --- 3. Build user message with retrieved context ---
-    # Concise prompt optimized for small models (≤3B):
-    # keep instructions minimal so the model reads the context instead of ignoring it.
-    chunk_texts = []
-    for c in chunks:
-        chunk_texts.append(c.page_content)
+    chunk_texts = [c.page_content for c in chunks]
     context_block = "\n\n".join(chunk_texts)
-
     user_message = (
-        f"参考资料：\n{context_block}\n\n"
-        f"问题：{query}\n\n"
-        f"请根据参考资料回答。只输出答案，不要展开其他话题。"
+        "参考资料：\n" + context_block + "\n\n"
+        "问题：" + query + "\n\n"
+        "简要使用中文回答，注意分行，可以参考多个资料进行总结。如果参考资料全部与问题无关，不要展开，只回复「知识库暂无相关信息，请联系官方售后支持~」。"
     )
 
-    # --- 4. Call LLM ---
-    # Minimal approach for small models: single user message with context inline.
-    llm = get_chat_model(
-        model=_llm_cfg.get("model", "qwen3:1.7b"),
-        base_url=_llm_cfg.get("base_url", "http://localhost:11434/v1"),
-        api_key=_llm_cfg.get("api_key", "ollama"),
+    for chunk in stream_chat(
+        [
+            SystemMessage(content=load_main_prompts()),
+            HumanMessage(content=user_message),
+        ],
+        model=_llm_cfg.get("model", "qwen2.5:3b"),
         temperature=_llm_cfg.get("temperature", 0.3),
-    )
-
-    # For small models, the system prompt can overwhelm attention.
-    # Use a single concise user message that contains both context and instruction.
-    messages = [
-        HumanMessage(content=user_message),
-    ]
-
-    try:
-        resp = llm.invoke(messages)
-        answer = resp.content.strip()
-        logger.info(f"[Agent] Answer generated, {len(answer)} chars.")
-        return answer
-    except Exception as e:
-        logger.error(f"[Agent] LLM invoke failed: {e}")
-        return "抱歉，模型暂时不可用，请稍后再试。"
+    ):
+        yield chunk
 
 
 def _direct_answer(query: str) -> str:

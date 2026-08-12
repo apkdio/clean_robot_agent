@@ -76,14 +76,14 @@
     }
 
     /* ── Typing indicator ── */
-    .typing { display: none; align-self: flex-start; margin-left: 46px; }
-    .typing.active { display: flex; gap: 6px; padding: 14px 18px; }
-    .typing span {
-      width: 8px; height: 8px; border-radius: 50%; background: #c0c4cc;
+    .typing { display: none; }   /* replaced by in-bubble dots */
+    .dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      background: #c0c4cc; margin-right: 4px;
       animation: bounce 1.2s infinite;
     }
-    .typing span:nth-child(2) { animation-delay: .2s; }
-    .typing span:nth-child(3) { animation-delay: .4s; }
+    .dot:nth-child(2) { animation-delay: .2s; }
+    .dot:nth-child(3) { animation-delay: .4s; }
     @keyframes bounce {
       0%, 60%, 100% { transform: translateY(0); }
       30% { transform: translateY(-8px); }
@@ -212,7 +212,7 @@
     <div class="chat-header">
       <span class="logo">🤖</span>
       <span class="title">扫地机器人智能助手</span>
-      <span class="badge">RAG · 双路召回</span>
+      <span class="badge" id="modeBadge">加载中…</span>
       <button class="kb-btn" id="drawerToggle" title="知识库管理">
         <span class="chunk-dot" id="headerDot" style="background:#e6a23c"></span>📚
       </button>
@@ -225,7 +225,8 @@
         <p style="color:#c0c4cc;margin-top:8px;">示例：吸力下降怎么办 / 边刷多久换一次 / 拖地有水痕怎么解决</p>
       </div>
       <div class="typing" id="typing">
-        <span></span><span></span><span></span>
+        <div class="avatar">🤖</div>
+        <div class="bubble"><span></span><span></span><span></span></div>
       </div>
     </div>
 
@@ -434,25 +435,46 @@
     chatInput.value = '';
     chatInput.style.height = 'auto';
     sendBtn.disabled = true;
-    typing.classList.add('active');
+
+    // Create bot bubble with loading dots — cleared when first chunk arrives
+    const botDiv = document.createElement('div');
+    botDiv.className = 'msg bot';
+    botDiv.innerHTML = '<div class="avatar">🤖</div><div class="bubble"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
+    chatMessages.insertBefore(botDiv, typing);
+    const bubble = botDiv.querySelector('.bubble');
     scrollBottom();
 
+    let streamedText = '';
+
     try {
-      const r = await fetch('/api/chat', {
+      const r = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query })
       });
-      const d = await r.json();
-      typing.classList.remove('active');
-      if (d.status === 'ok') {
-        appendMessage('bot', d.answer);
-      } else {
-        appendMessage('bot', '抱歉，出了点问题：' + (d.message || '未知错误'));
+
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
+        for (const part of parts) {
+          if (part.startsWith('data: ')) {
+            const chunk = part.slice(6);
+            if (chunk === '[DONE]') continue;
+            streamedText += chunk;
+            bubble.innerHTML = md(streamedText);
+            scrollBottom();
+          }
+        }
       }
     } catch (err) {
-      typing.classList.remove('active');
-      appendMessage('bot', '抱歉，连接失败，请检查服务是否启动。');
+      bubble.innerHTML = md('抱歉，连接失败，请检查服务是否启动。');
     }
     sendBtn.disabled = false;
     chatInput.focus();
@@ -475,6 +497,7 @@
     for (let line of lines) {
       line = line.trimEnd();
       line = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
       const bm = line.match(/^(\s*)-(\s*)(.+)$/);
       if (bm && bm[3].length > 0) {
         if (!inBl) { html += '<ul class="bot-list">'; inBl = true; }
@@ -490,7 +513,7 @@
       if (inBl) { html += '</ul>'; inBl = false; }
       if (inNl) { html += '</ol>'; inNl = false; }
       if (/^###\s/.test(line)) {
-        html += `<h4>${line.replace(/^###\s*/,'')}</h4>`;
+        html += `<h4>${line.replace(/^###\s*/, '')}</h4>`;
         continue;
       }
       if (line.trim() === '') { html += '<br>'; continue; }
@@ -498,7 +521,8 @@
     }
     if (inBl) { html += '</ul>'; }
     if (inNl) { html += '</ol>'; }
-    return html;
+    // strip trailing <br>
+    return html.replace(/<br>$/, '');
   }
 
   function scrollBottom() {
@@ -507,6 +531,19 @@
 
   // Init
   loadStats();
+  loadConfig();
+
+  async function loadConfig() {
+    try {
+      const r = await fetch('/api/config');
+      const d = await r.json();
+      if (d.status === 'ok') {
+        const badge = document.getElementById('modeBadge');
+        badge.textContent = `${d.mode_label}`;
+        badge.title = `模型: ${d.model}`;
+      }
+    } catch(e) { document.getElementById('modeBadge').textContent = 'RAG'; }
+  }
 </script>
 </body>
 </html>

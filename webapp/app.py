@@ -9,7 +9,7 @@ Then open http://localhost:5050
 import os
 import sys
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 # Ensure project root and tools/ are on sys.path.
 # tools/ is needed because modules inside use bare imports
@@ -20,8 +20,8 @@ for _p in (_PROJECT_ROOT, _TOOLS_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from tools.agent import ask
-from tools.config_tool import load_rag_config
+from tools.agent import ask_stream
+from tools.config_tool import load_agent_config, load_rag_config
 from tools.log_tool import get_logger
 from tools.vector_store import (
     ingest_data_dir,
@@ -104,24 +104,32 @@ def reset():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route("/api/chat", methods=["POST"])
-def chat():
-    """Answer a cleaning-robot question via RAG agent."""
+@app.route("/api/chat/stream", methods=["POST"])
+def chat_stream():
+    """Stream answer chunks via Server-Sent Events."""
     data = request.get_json(silent=True)
     if not data or "query" not in data:
         return jsonify({"status": "error", "message": "Missing 'query' in JSON body."}), 400
-
     query = data["query"].strip()
     if not query:
         return jsonify({"status": "error", "message": "Empty query."}), 400
 
-    logger.info(f"[Chat] query: {query[:60]}...")
-    try:
-        answer = ask(query)
-        return jsonify({"status": "ok", "query": query, "answer": answer})
-    except Exception as e:
-        logger.error(f"[Chat] {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    logger.info(f"[Stream] query: {query[:60]}...")
+
+    def generate():
+        try:
+            for chunk in ask_stream(query):
+                yield f"data: {chunk}\n\n"
+        except Exception as e:
+            logger.error(f"[Stream] {e}")
+            yield f"data: [错误: {e}]\n\n"
+        yield "data: [DONE]\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.route("/api/ingest/batch", methods=["POST"])
@@ -133,6 +141,25 @@ def ingest_batch():
         return jsonify({"status": "ok", "results": results})
     except Exception as e:
         logger.error(f"[BatchIngest] {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/config", methods=["GET"])
+def agent_config():
+    """Return the current agent & retrieval config for the frontend badge."""
+    try:
+        agent_cfg = load_agent_config()
+        rag_cfg = load_rag_config()
+        behavior = agent_cfg.get("behavior", {})
+        retrieval = rag_cfg.get("retrieval", {})
+        return jsonify({
+            "status": "ok",
+            "mode": "retrieval_only" if behavior.get("retrieval_only", True) else "rag_full",
+            "mode_label": "RAG 检索模式" if behavior.get("retrieval_only", True) else "RAG+LLM 模式",
+            "model": agent_cfg.get("llm", {}).get("model", "?"),
+        })
+    except Exception as e:
+        logger.error(f"[Config] {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 

@@ -1,6 +1,7 @@
 # Build / runtime
 logs/
 data/vector_store/
+data/bm25_index.pkl
 __pycache__/
 *.pyc
 __pycache__/

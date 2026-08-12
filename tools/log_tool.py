@@ -22,8 +22,12 @@ class _ColorFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         color = _COLORS.get(record.levelname, "")
         reset = _COLORS["RESET"]
-        record.levelname = f"{color}{record.levelname}{reset}"
-        return super().format(record)
+        # Save & restore so the shared record is not mutated for other handlers
+        original = record.levelname
+        record.levelname = f"{color}{original}{reset}"
+        result = super().format(record)
+        record.levelname = original
+        return result
 
 
 # ── File log (no colors, full detail) ─────────────────────────────────────

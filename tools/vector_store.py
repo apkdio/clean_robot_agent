@@ -54,6 +54,7 @@ def get_vector_store() -> Chroma:
         collection_name=_get_collection_name(),
         embedding_function=embedding,
         persist_directory=_get_persist_dir(),
+        collection_metadata={"hnsw:space": "cosine"}
     )
 
 
@@ -150,15 +151,6 @@ def ingest_data_dir(data_dir: str = None) -> list[dict]:
     return results
 
 
-def retrieve(query: str, top_k: int = None) -> list[Document]:
-    """Retrieve the top-k most similar chunks for a query (dense only)."""
-    k = top_k or _rag_cfg.get("retrieval", {}).get("dense_top_k", 10)
-    store = get_vector_store()
-    docs = store.similarity_search(query, k=k)
-    logger.info(f"[Retrieve] query='{query[:40]}...' -> {len(docs)} chunk(s)")
-    return docs
-
-
 # ---------------------------------------------------------------------------
 # DenseRetriever class — wraps Chroma for use in the hybrid (dual-route) pipeline
 # ---------------------------------------------------------------------------
@@ -201,6 +193,11 @@ def build_hybrid_index(sparse_retriever=None) -> int:
         from sparse_retriever import SparseRetriever
         sparse_retriever = SparseRetriever()
 
+    # Try to restore from pickle cache first (avoids rebuild on restart)
+    if sparse_retriever.load():
+        return len(sparse_retriever.chunks)
+
+    # Cache miss or stale — rebuild from Chroma
     store = get_vector_store()
     data = store._collection.get(include=["metadatas", "documents"])
     docs = [
@@ -208,6 +205,7 @@ def build_hybrid_index(sparse_retriever=None) -> int:
         for text, meta in zip(data["documents"], data["metadatas"])
     ]
     sparse_retriever.index_documents(docs)
+    sparse_retriever.save()
     return len(docs)
 
 
@@ -230,20 +228,3 @@ def reset_collection() -> int:
     store._collection.delete(where={"file_name": {"$ne": "__never__"}})
     logger.warning(f"[Reset] Cleared {count} chunk(s) from collection.")
     return count
-
-
-if __name__ == "__main__":
-    # CLI smoke test
-    import sys
-
-    info = list_collections_info()
-    print("Collection info:", info)
-    if len(sys.argv) > 1 and sys.argv[1] == "ingest":
-        target = sys.argv[2]
-        print("Ingesting:", target)
-        print(ingest_file(target))
-    elif len(sys.argv) > 1 and sys.argv[1] == "search":
-        q = sys.argv[2]
-        print("Searching:", q)
-        for d in retrieve(q):
-            print("---", d.metadata.get("file_name"), "->", d.page_content[:80])
