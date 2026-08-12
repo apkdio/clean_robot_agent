@@ -1,0 +1,14 @@
+# Chroma vector store configuration
+# 使用方式：复制本文件为 chroma.yaml，然后填入你的实际参数。
+
+# 持久化目录（相对于项目根目录）
+persist_dir: data/vector_store
+
+# 向量集合名称
+collection_name: clean_robot_kb
+
+# Embedding 模型（本地 Ollama，OpenAI 兼容端点）
+embedding:
+  base_url: <OLLAMA_BASE_URL>             # Ollama 默认地址
+  api_key: ollama                         # Ollama 默认无需key
+  model: <YOUR_EMBEDDING_MODEL>           # 如 bge-m3 / qwen3-embedding:0.6b / nomic-embed-text

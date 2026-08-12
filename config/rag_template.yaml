@@ -1,0 +1,47 @@
+# RAG pipeline configuration
+# 使用方式：复制本文件为 rag.yaml 即可使用默认值，无需额外配置。
+
+# Text chunking settings
+chunk:
+  chunk_size: 200          # smaller chunks → 1-2 Q&A entries each, better signal
+  chunk_overlap: 30        # overlap between adjacent chunks
+  separators:              # recursive splitter separators (in priority order)
+    - "\n### "             # section headers like "### 基础使用类"
+    - "\n## "              # sub-headers like "## 通用基础维护"
+    - "\n\n"
+    - "\n"
+    - "。"
+    - ". "
+    - " "
+    - ""
+
+# Retrieval settings
+retrieval:
+  dense_top_k: 10           # candidate count per dense search（before RRF）
+  sparse_top_k: 10           # candidate count per BM25 search（before RRF）
+  final_top_k: 3             # result count after RRF fusion
+  score_threshold: 0.25     # minimum similarity score (cosine) to include a chunk
+
+# Sparse retrieval (BM25 keyword matching)
+sparse:
+  bm25_k1: 1.5              # TF saturation parameter
+  bm25_b: 0.75              # document length normalization
+
+# RRF (Reciprocal Rank Fusion) parameters
+rrf:
+  k: 60                      # smoothing constant（larger = more conservative）
+  dense_weight: 1.0          # dense route weight
+  sparse_weight: 1.0         # sparse route weight
+
+# Data source directory (files here are ingested into the vector store)
+data_dir: data
+
+# Supported file extensions for ingestion
+supported_exts:
+  - .txt
+  - .md
+  - .pdf
+  - .csv
+  - .docx
+  - .pptx
+  - .xlsx

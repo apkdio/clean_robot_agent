@@ -1,0 +1,16 @@
+# Agent configuration
+# 使用方式：复制本文件为 agent.yaml，然后填入你的实际参数。
+
+# LLM 设置（OpenAI 兼容端点，默认连接本地 Ollama）
+llm:
+  model: <YOUR_MODEL_NAME>        # Ollama 模型名，如 qwen2.5:3b / qwen3:8b / llama3.1:8b
+  base_url: <OLLAMA_BASE_URL>     # 本地 Ollama 默认地址；云端服务改为对应 API 地址
+  api_key: ollama                       # 本地 Ollama 无需真实 key；云端服务填入实际 API Key
+  temperature: 0.3
+  max_tokens: 1024
+
+# 行为开关
+behavior:
+  rag_enabled: true
+  retrieval_only: true           # true=直接返回检索片段原文（小模型推荐）；false=走 LLM 生成
+  verbose_log: false

@@ -1,0 +1,26 @@
+# Build / runtime
+logs/
+data/vector_store/
+__pycache__/
+*.pyc
+__pycache__/
+
+# config
+config/agent.yaml
+config/chroma.yaml
+config/rag.yaml
+config/prompts.yaml
+
+# IDE
+.idea/
+*.iml
+
+# Data processing scripts (not part of the agent runtime)
+temp/
+
+# Independent demo modules
+Multi_Route_Retrieval/
+
+# OS
+.DS_Store
+Thumbs.db

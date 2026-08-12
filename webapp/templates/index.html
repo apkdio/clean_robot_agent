@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>扫地机器人智能助手</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: #f0f2f5; color: #333; height: 100vh; overflow: hidden;
+    }
+
+    /* ── Layout ── */
+    .app { display: flex; height: 100vh; overflow: hidden; position: relative; }
+
+    /* ── Chat panel (left / full-width) ── */
+    .chat-panel {
+      flex: 1; display: flex; flex-direction: column; min-width: 0;
+      background: #fff; transition: margin-right .3s ease;
+    }
+    .chat-panel.drawer-open { margin-right: 0; }
+
+    .chat-header {
+      padding: 14px 24px; border-bottom: 1px solid #ebeef5;
+      background: #fff; display: flex; align-items: center; gap: 10px;
+    }
+    .chat-header .logo { font-size: 24px; }
+    .chat-header .title { font-size: 16px; font-weight: 600; flex: 1; }
+    .chat-header .badge {
+      font-size: 11px; background: #ecf5ff; color: #409eff; padding: 2px 8px;
+      border-radius: 10px;
+    }
+    .chat-header .kb-btn {
+      width: 34px; height: 34px; border-radius: 8px; border: 1px solid #dcdfe6;
+      background: #fff; cursor: pointer; font-size: 16px; display: flex;
+      align-items: center; justify-content: center; transition: .2s;
+    }
+    .chat-header .kb-btn:hover { background: #ecf5ff; border-color: #409eff; }
+    .chat-header .kb-btn span { font-size: 11px; margin-left: 4px; }
+    .chat-header .chunk-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: #67c23a;
+      display: inline-block; margin-right: 4px;
+    }
+
+    .chat-messages {
+      flex: 1; overflow-y: auto; padding: 20px 24px;
+      background: #fafbfc; display: flex; flex-direction: column; gap: 16px;
+    }
+    .chat-messages .welcome { text-align: center; color: #909399; margin-top: 60px; }
+    .chat-messages .welcome h3 { font-size: 18px; margin-bottom: 8px; color: #606266; }
+    .chat-messages .welcome p { font-size: 14px; margin-bottom: 4px; }
+
+    /* ── Message bubbles ── */
+    .msg { display: flex; gap: 10px; max-width: 85%; animation: fadeIn .2s; }
+    .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+    .msg.bot  { align-self: flex-start; }
+    .msg .avatar {
+      width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center; font-size: 18px;
+    }
+    .msg.user .avatar { background: #409eff; color: #fff; }
+    .msg.bot  .avatar { background: #67c23a; color: #fff; }
+    .msg .bubble {
+      padding: 12px 16px; border-radius: 12px; font-size: 14px;
+      line-height: 1.7; word-break: break-word;
+    }
+    .msg.user .bubble { background: #409eff; color: #fff; border-bottom-right-radius: 4px; }
+    .msg.bot  .bubble { background: #fff; border: 1px solid #e4e7ed; border-bottom-left-radius: 4px; }
+    .msg.bot .bubble strong, .msg.bot .bubble b { color: #303133; }
+    .msg.bot .bubble h4 { font-size: 15px; margin: 4px 0 6px; color: #303133; }
+    .msg.bot .bubble .bot-list { margin: 4px 0 6px 18px; padding: 0; }
+    .msg.bot .bubble .bot-list li { margin-bottom: 3px; line-height: 1.6; }
+    .msg.bot .bubble code {
+      background: #f0f2f5; padding: 1px 5px; border-radius: 3px; font-size: 13px;
+    }
+
+    /* ── Typing indicator ── */
+    .typing { display: none; align-self: flex-start; margin-left: 46px; }
+    .typing.active { display: flex; gap: 6px; padding: 14px 18px; }
+    .typing span {
+      width: 8px; height: 8px; border-radius: 50%; background: #c0c4cc;
+      animation: bounce 1.2s infinite;
+    }
+    .typing span:nth-child(2) { animation-delay: .2s; }
+    .typing span:nth-child(3) { animation-delay: .4s; }
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30% { transform: translateY(-8px); }
+    }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ── Chat input ── */
+    .chat-input-area {
+      padding: 14px 24px; border-top: 1px solid #ebeef5; background: #fff;
+      display: flex; gap: 10px; align-items: center;
+    }
+    .chat-input-area textarea {
+      flex: 1; border: 1px solid #dcdfe6; border-radius: 10px; padding: 10px 14px;
+      font-size: 14px; font-family: inherit; resize: none; outline: none;
+      line-height: 1.5; max-height: 120px; transition: border-color .2s;
+    }
+    .chat-input-area textarea:focus { border-color: #409eff; }
+    .chat-input-area button {
+      width: 42px; height: 42px; border-radius: 50%; border: none;
+      background: #409eff; color: #fff; font-size: 18px; cursor: pointer;
+      flex-shrink: 0; transition: .2s; display: flex; align-items: center; justify-content: center;
+    }
+    .chat-input-area button:hover { background: #66b1ff; }
+    .chat-input-area button:disabled { background: #a0cfff; cursor: not-allowed; }
+
+    /* ── Drawer overlay ── */
+    .drawer-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.15);
+      z-index: 90; display: none; transition: opacity .3s;
+    }
+    .drawer-overlay.show { display: block; }
+
+    /* ── Drawer panel (right) ── */
+    .drawer {
+      position: fixed; right: -400px; top: 0; bottom: 0; width: 380px;
+      background: #f5f7fa; border-left: 1px solid #e4e7ed; z-index: 100;
+      transition: right .3s ease; display: flex; flex-direction: column;
+      overflow-y: auto; box-shadow: -4px 0 12px rgba(0,0,0,.06);
+    }
+    .drawer.open { right: 0; }
+    .drawer-header {
+      padding: 16px 18px; border-bottom: 1px solid #e4e7ed;
+      display: flex; align-items: center; justify-content: space-between;
+      background: #fff; position: sticky; top: 0; z-index: 1;
+    }
+    .drawer-header h3 { font-size: 15px; font-weight: 600; }
+    .drawer-close {
+      width: 30px; height: 30px; border-radius: 6px; border: none;
+      background: #f0f2f5; cursor: pointer; font-size: 16px; line-height: 1;
+    }
+    .drawer-close:hover { background: #e4e7ed; }
+    .drawer-body {
+      padding: 16px 18px; display: flex; flex-direction: column; gap: 18px;
+      flex: 1; overflow-y: auto;
+    }
+
+    /* Cards inside drawer */
+    .card {
+      background: #fff; border-radius: 10px; padding: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.05);
+    }
+    .dropzone {
+      border: 2px dashed #c0c4cc; border-radius: 8px; padding: 22px 14px;
+      text-align: center; cursor: pointer; transition: .2s;
+    }
+    .dropzone:hover, .dropzone.dragover { border-color: #409eff; background: #ecf5ff; }
+    .dropzone .dz-icon { font-size: 28px; }
+    .dropzone .dz-text { color: #606266; font-size: 13px; }
+    .dropzone .dz-hint { color: #c0c4cc; font-size: 11px; margin-top: 4px; }
+    .dropzone input[type=file] { display: none; }
+
+    .file-list { margin-top: 10px; }
+    .file-item {
+      display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+      border-radius: 6px; background: #f9fafc; margin-bottom: 4px; font-size: 12px;
+    }
+    .file-item .fname { flex: 1; word-break: break-all; }
+    .file-item .fstatus { font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .fstatus.pending  { color: #e6a23c; }
+    .fstatus.ok       { color: #67c23a; }
+    .fstatus.error    { color: #f56c6c; }
+    .fstatus.processing { color: #409eff; }
+    .fdetail { color: #909399; font-size: 11px; margin-top: 2px; }
+
+    .btn {
+      border: none; border-radius: 8px; padding: 7px 16px; font-size: 13px;
+      cursor: pointer; transition: .2s; font-weight: 500;
+    }
+    .btn-primary { background: #409eff; color: #fff; }
+    .btn-primary:hover { background: #66b1ff; }
+    .btn-primary:disabled { background: #a0cfff; cursor: not-allowed; }
+    .btn-danger { background: #f56c6c; color: #fff; }
+    .btn-danger:hover { background: #f89898; }
+    .btn-block { width: 100%; margin-top: 8px; }
+    .actions-row { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+
+    .stat-row { display: flex; gap: 8px; }
+    .stat-item { flex: 1; background: #f9fafc; border-radius: 8px; padding: 10px; text-align: center; }
+    .stat-item .num { font-size: 22px; font-weight: 700; color: #409eff; }
+    .stat-item .label { font-size: 11px; color: #909399; margin-top: 2px; }
+
+    .log-box {
+      background: #1e1e1e; color: #d4d4d4; border-radius: 8px; padding: 10px;
+      font-family: "Cascadia Code", Consolas, monospace; font-size: 11px;
+      max-height: 220px; overflow-y: auto; line-height: 1.6;
+    }
+    .log-line { white-space: pre-wrap; word-break: break-all; }
+    .log-line.ok { color: #67c23a; }
+    .log-line.error { color: #f56c6c; }
+
+    .collapse-toggle {
+      cursor: pointer; display: flex; align-items: center; gap: 4px;
+      font-size: 13px; font-weight: 600; margin-bottom: 0; user-select: none;
+    }
+    .collapse-toggle .arrow { transition: .2s; font-size: 11px; }
+    .collapse-toggle.open .arrow { transform: rotate(90deg); }
+    .collapse-body { margin-top: 10px; }
+    .collapse-body.hidden { display: none; }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ====================  MAIN: Chat  ====================  -->
+  <div class="chat-panel" id="chatPanel">
+    <div class="chat-header">
+      <span class="logo">🤖</span>
+      <span class="title">扫地机器人智能助手</span>
+      <span class="badge">RAG · 双路召回</span>
+      <button class="kb-btn" id="drawerToggle" title="知识库管理">
+        <span class="chunk-dot" id="headerDot" style="background:#e6a23c"></span>📚
+      </button>
+    </div>
+
+    <div class="chat-messages" id="chatMessages">
+      <div class="welcome">
+        <h3>👋 你好，我是扫地机器人售后助手</h3>
+        <p>可以问我使用、维护、故障排查、选购等问题</p>
+        <p style="color:#c0c4cc;margin-top:8px;">示例：吸力下降怎么办 / 边刷多久换一次 / 拖地有水痕怎么解决</p>
+      </div>
+      <div class="typing" id="typing">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+
+    <div class="chat-input-area">
+      <textarea id="chatInput" rows="1" placeholder="输入你的问题…" onkeydown="handleKey(event)"></textarea>
+      <button id="sendBtn" onclick="sendMessage()" title="发送">➤</button>
+    </div>
+  </div>
+
+  <!-- ====================  DRAWER: KB Management  ====================  -->
+  <div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-header">
+      <h3>📚 知识库管理</h3>
+      <button class="drawer-close" onclick="closeDrawer()">✕</button>
+    </div>
+    <div class="drawer-body">
+
+      <!-- Stats -->
+      <div class="card">
+        <div class="collapse-toggle" onclick="toggleSection('statsBody', this)">
+          <span class="arrow">▶</span> 知识库状态
+        </div>
+        <div class="collapse-body" id="statsBody">
+          <div class="stat-row">
+            <div class="stat-item"><div class="num" id="statChunks">—</div><div class="label">向量分块</div></div>
+            <div class="stat-item"><div class="num" id="statCollection">—</div><div class="label">集合名称</div></div>
+          </div>
+          <button class="btn btn-primary btn-block" onclick="refreshStats()">刷新状态</button>
+        </div>
+      </div>
+
+      <!-- Upload -->
+      <div class="card">
+        <div class="collapse-toggle open" onclick="toggleSection('uploadBody', this)">
+          <span class="arrow">▶</span> 上传文档
+        </div>
+        <div class="collapse-body" id="uploadBody">
+          <div class="dropzone" id="dropzone">
+            <div class="dz-icon">📄</div>
+            <div class="dz-text">拖拽文件到此处或点击选择</div>
+            <div class="dz-hint">.txt .md .pdf .csv .docx .pptx .xlsx</div>
+            <input type="file" id="fileInput" multiple
+                   accept=".txt,.md,.markdown,.asciidoc,.adoc,.pdf,.csv,.docx,.doc,.pptx,.ppt,.xlsx,.xls" />
+          </div>
+          <div class="file-list" id="fileList"></div>
+          <div class="actions-row">
+            <button class="btn btn-primary" id="uploadBtn" disabled>上传</button>
+            <button class="btn btn-danger" id="resetBtn">清空</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Log -->
+      <div class="card" style="flex:1; min-height:0; display:flex; flex-direction:column;">
+        <div class="collapse-toggle" onclick="toggleSection('logBody', this)">
+          <span class="arrow">▶</span> 处理日志
+        </div>
+        <div class="collapse-body" id="logBody" style="flex:1; min-height:0;">
+          <div class="log-box" id="logBox">
+            <div class="log-line">就绪。</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ── Drawer ──
+  const drawer = document.getElementById('drawer');
+  const overlay = document.getElementById('drawerOverlay');
+  function openDrawer()  { drawer.classList.add('open'); overlay.classList.add('show'); }
+  function closeDrawer() { drawer.classList.remove('open'); overlay.classList.remove('show'); }
+  document.getElementById('drawerToggle').addEventListener('click', () => {
+    drawer.classList.contains('open') ? closeDrawer() : openDrawer();
+  });
+  // ESC to close
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+  // ── Collapsible ──
+  function toggleSection(id, toggle) {
+    const body = document.getElementById(id);
+    const isHidden = body.classList.toggle('hidden');
+    toggle.classList.toggle('open', !isHidden);
+  }
+
+  // ── KB Upload ──
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const fileList = document.getElementById('fileList');
+  const uploadBtn = document.getElementById('uploadBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const logBox = document.getElementById('logBox');
+  let pendingFiles = [];
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault(); dropzone.classList.remove('dragover');
+    handleFiles(e.dataTransfer.files);
+  });
+  fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+  function handleFiles(files) {
+    for (const f of files) pendingFiles.push({ file: f, status: 'pending', detail: '' });
+    renderFileList();
+    uploadBtn.disabled = pendingFiles.length === 0;
+    openDrawer();
+  }
+  function renderFileList() {
+    fileList.innerHTML = pendingFiles.map(item => {
+      const f = item.file, s = (f.size/1024).toFixed(1);
+      return `<div class="file-item">
+        <span class="fname">${h(f.name)}</span>
+        <span class="fstatus ${item.status}">${st(item.status)}</span>
+        ${item.detail ? `<div class="fdetail">${h(item.detail)}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+  function st(s) { return { pending:'待上传', processing:'处理中', ok:'成功', error:'失败' }[s]||s; }
+  function h(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+  function klog(msg, type='info') {
+    const line=document.createElement('div'); line.className='log-line '+type;
+    const t=new Date().toLocaleTimeString(); line.textContent=`[${t}] ${msg}`;
+    logBox.appendChild(line); logBox.scrollTop=logBox.scrollHeight;
+  }
+
+  uploadBtn.addEventListener('click', async () => {
+    uploadBtn.disabled = true; resetBtn.disabled = true;
+    for (const item of pendingFiles) {
+      if (item.status === 'ok') continue;
+      item.status = 'processing'; renderFileList();
+      const fd = new FormData(); fd.append('file', item.file);
+      klog(`上传 ${item.file.name}…`);
+      try {
+        const r = await fetch('/api/ingest', { method:'POST', body:fd });
+        const d = await r.json();
+        if (d.status === 'ok') {
+          item.status='ok'; item.detail=`${d.chunks} chunks · ${d.elapsed}s`;
+          klog(`✅ ${d.file} → ${d.chunks} chunks`, 'ok');
+        } else {
+          item.status='error'; item.detail=d.message||'';
+          klog(`❌ ${item.file.name}: ${d.message}`, 'error');
+        }
+      } catch(err) {
+        item.status='error'; item.detail=String(err);
+        klog(`❌ ${item.file.name}: ${err}`, 'error');
+      }
+      renderFileList();
+    }
+    await loadStats();
+    uploadBtn.disabled = false; resetBtn.disabled = false;
+    pendingFiles = pendingFiles.filter(f => f.status !== 'ok');
+    renderFileList();
+  });
+
+  resetBtn.addEventListener('click', async () => {
+    if (!confirm('确定清空知识库？不可撤销。')) return;
+    klog('清空中…');
+    try {
+      const r = await fetch('/api/reset', { method:'POST' });
+      const d = await r.json();
+      klog(`✅ 已清除 ${d.deleted} chunks`, 'ok');
+      await loadStats();
+    } catch(err) { klog(`❌ ${err}`, 'error'); }
+  });
+
+  async function loadStats() {
+    try {
+      const r = await fetch('/api/stats');
+      const d = await r.json();
+      document.getElementById('statChunks').textContent = d.chunk_count ?? '—';
+      document.getElementById('statCollection').textContent = d.collection_name ?? '—';
+      const color = (d.chunk_count||0) > 0 ? '#67c23a' : '#e6a23c';
+      document.getElementById('statChunks').style.color = color;
+      document.getElementById('headerDot').style.background = color;
+    } catch(err) { klog(`状态获取失败: ${err}`, 'error'); }
+  }
+
+  function refreshStats() { loadStats(); klog('状态已刷新', 'ok'); }
+
+  // ── Chat ──
+  const chatMessages = document.getElementById('chatMessages');
+  const chatInput = document.getElementById('chatInput');
+  const sendBtn = document.getElementById('sendBtn');
+  const typing = document.getElementById('typing');
+  const welcome = chatMessages.querySelector('.welcome');
+
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  }
+  chatInput.addEventListener('input', () => {
+    chatInput.style.height = 'auto';
+    chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+  });
+
+  async function sendMessage() {
+    const query = chatInput.value.trim();
+    if (!query) return;
+    if (welcome) welcome.remove();
+    appendMessage('user', query);
+    chatInput.value = '';
+    chatInput.style.height = 'auto';
+    sendBtn.disabled = true;
+    typing.classList.add('active');
+    scrollBottom();
+
+    try {
+      const r = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query })
+      });
+      const d = await r.json();
+      typing.classList.remove('active');
+      if (d.status === 'ok') {
+        appendMessage('bot', d.answer);
+      } else {
+        appendMessage('bot', '抱歉，出了点问题：' + (d.message || '未知错误'));
+      }
+    } catch (err) {
+      typing.classList.remove('active');
+      appendMessage('bot', '抱歉，连接失败，请检查服务是否启动。');
+    }
+    sendBtn.disabled = false;
+    chatInput.focus();
+  }
+
+  function appendMessage(role, text) {
+    const div = document.createElement('div');
+    div.className = `msg ${role}`;
+    const av = role === 'user' ? '👤' : '🤖';
+    div.innerHTML = `<div class="avatar">${av}</div><div class="bubble">${md(text)}</div>`;
+    chatMessages.insertBefore(div, typing);
+    scrollBottom();
+    div.addEventListener('click', () => { if (role === 'bot') chatInput.focus(); });
+  }
+
+  function md(text) {
+    const lines = text.split('\n');
+    let html = '';
+    let inBl = false, inNl = false;
+    for (let line of lines) {
+      line = line.trimEnd();
+      line = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      const bm = line.match(/^(\s*)-(\s*)(.+)$/);
+      if (bm && bm[3].length > 0) {
+        if (!inBl) { html += '<ul class="bot-list">'; inBl = true; }
+        html += `<li>${bm[3]}</li>`;
+        continue;
+      }
+      const nm = line.match(/^(\s*)(\d+)\.(\s+)(.+)$/);
+      if (nm) {
+        if (!inNl) { html += '<ol class="bot-list">'; inNl = true; }
+        html += `<li>${nm[4]}</li>`;
+        continue;
+      }
+      if (inBl) { html += '</ul>'; inBl = false; }
+      if (inNl) { html += '</ol>'; inNl = false; }
+      if (/^###\s/.test(line)) {
+        html += `<h4>${line.replace(/^###\s*/,'')}</h4>`;
+        continue;
+      }
+      if (line.trim() === '') { html += '<br>'; continue; }
+      html += h(line) + '<br>';
+    }
+    if (inBl) { html += '</ul>'; }
+    if (inNl) { html += '</ol>'; }
+    return html;
+  }
+
+  function scrollBottom() {
+    setTimeout(() => { chatMessages.scrollTop = chatMessages.scrollHeight; }, 50);
+  }
+
+  // Init
+  loadStats();
+</script>
+</body>
+</html>
