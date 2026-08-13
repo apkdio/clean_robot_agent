@@ -55,7 +55,7 @@ def get_embedding_model(
     Parameters can be overridden via constructor args or environment variables
     (LLM_BASE_URL / LLM_API_KEY / LLM_EMBED_MODEL).
     """
-    logger.info(f"[Embed] init model={model} base_url={base_url}")
+    logger.info(f"[Embed] init model={model}")
     return OpenAIEmbeddings(
         model=model,
         base_url=base_url,

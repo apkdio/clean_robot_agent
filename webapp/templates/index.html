@@ -45,7 +45,7 @@
 
     .chat-messages {
       flex: 1; overflow-y: auto; padding: 20px 24px;
-      background: #fafbfc; display: flex; flex-direction: column; gap: 16px;
+      background: #fafbfc; display: flex; flex-direction: column; gap: 10px;
     }
     .chat-messages .welcome { text-align: center; color: #909399; margin-top: 60px; }
     .chat-messages .welcome h3 { font-size: 18px; margin-bottom: 8px; color: #606266; }
@@ -74,6 +74,14 @@
     .msg.bot .bubble code {
       background: #f0f2f5; padding: 1px 5px; border-radius: 3px; font-size: 13px;
     }
+    .retry-btn {
+      font-size: 12px; color: #909399; cursor: pointer; margin-top: 6px;
+      margin-left: 46px; display: inline-block; padding: 4px 12px;
+      border: 1px solid #e4e7ed; border-radius: 14px; user-select: none;
+      transition: .15s;
+      max-width: 95px;
+    }
+    .retry-btn:hover { color: #409eff; border-color: #409eff; background: #ecf5ff; }
 
     /* ── Typing indicator ── */
     .typing { display: none; }   /* replaced by in-bubble dots */
@@ -427,21 +435,10 @@
     chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
   });
 
-  async function sendMessage() {
-    const query = chatInput.value.trim();
-    if (!query) return;
-    if (welcome) welcome.remove();
-    appendMessage('user', query);
-    chatInput.value = '';
-    chatInput.style.height = 'auto';
-    sendBtn.disabled = true;
-
-    // Create bot bubble with loading dots — cleared when first chunk arrives
-    const botDiv = document.createElement('div');
-    botDiv.className = 'msg bot';
-    botDiv.innerHTML = '<div class="avatar">🤖</div><div class="bubble"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
-    chatMessages.insertBefore(botDiv, typing);
-    const bubble = botDiv.querySelector('.bubble');
+  async function streamAnswer(query, botDiv, bubble, retry) {
+    // Show loading dots, clear previous content
+    bubble.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+    if (retry) retry.style.display = 'none';
     scrollBottom();
 
     let streamedText = '';
@@ -476,6 +473,36 @@
     } catch (err) {
       bubble.innerHTML = md('抱歉，连接失败，请检查服务是否启动。');
     }
+
+    if (retry) retry.style.display = '';
+  }
+
+  async function sendMessage() {
+    const query = chatInput.value.trim();
+    if (!query) return;
+    if (welcome) welcome.remove();
+    appendMessage('user', query);
+    chatInput.value = '';
+    chatInput.style.height = 'auto';
+    sendBtn.disabled = true;
+
+    // Create bot bubble with loading dots
+    const botDiv = document.createElement('div');
+    botDiv.className = 'msg bot';
+    botDiv.innerHTML = '<div class="avatar">🤖</div><div class="bubble"></div>';
+    chatMessages.insertBefore(botDiv, typing);
+    const bubble = botDiv.querySelector('.bubble');
+
+    // Retry button below the bubble
+    const retry = document.createElement('div');
+    retry.className = 'retry-btn';
+    retry.textContent = '🔄 重新回答';
+    retry.title = '使用相同问题重新回答';
+    retry.addEventListener('click', () => streamAnswer(query, botDiv, bubble, retry));
+    botDiv.after(retry);
+
+    await streamAnswer(query, botDiv, bubble, retry);
+
     sendBtn.disabled = false;
     chatInput.focus();
   }

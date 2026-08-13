@@ -34,12 +34,40 @@ def _get_retriever():
         _hybrid_retriever.ensure_sparse_index()
     return _hybrid_retriever
 
+
+# 常见打招呼/闲聊模式，命中则跳过检索，直接自然回应
+_GREETING_PATTERNS = [
+    "你好", "您好","你好啊", "嗨", "哈喽", "hello", "hi", "在吗", "在不在",
+    "谢谢", "感谢", "辛苦了", "再见", "拜拜", "晚安", "早上好", "中午好", "晚上好",
+    "你是谁", "你叫什么", "你能做什么", "你会什么", "介绍一下你自己",
+]
+
+
+def _is_casual_talk(query: str) -> bool:
+    """Detect greetings / thanks / self-intro queries that need no retrieval."""
+    q = query.strip().lower()
+    return any(p in q for p in _GREETING_PATTERNS)
+
+
 def ask_stream(query: str):
     """Streaming version of ask() — yields answer chunks as LLM generates them.
 
     In retrieval_only mode, yields the full chunk text at once.
     In RAG mode, yields partial answer tokens from the LLM.
     """
+    # Greetings / small talk: skip retrieval, answer naturally
+    if _is_casual_talk(query):
+        for chunk in stream_chat(
+            [
+                SystemMessage(content=load_main_prompts()),
+                HumanMessage(content=query),
+            ],
+            model=_llm_cfg.get("model", "qwen2.5:3b"),
+            temperature=_llm_cfg.get("temperature", 0.3),
+        ):
+            yield chunk
+        return
+
     hr = _get_retriever()
     chunks = hr.search(query)
 
@@ -66,7 +94,14 @@ def ask_stream(query: str):
     user_message = (
         "参考资料：\n" + context_block + "\n\n"
         "问题：" + query + "\n\n"
-        "简要使用中文回答，注意分行，可以参考多个资料进行总结。如果参考资料全部与问题无关，不要展开，只回复「知识库暂无相关信息，请联系官方售后支持~」。"
+        "回答规则：\n"
+        "1. 若用户是推荐/选购类问题（如「推荐几款」「有什么机器人」「预算XX」「买哪个」），"
+        "必须逐条列出参考资料中所有符合条件（价格在预算内）的型号，至少 3 条，能列 4-5 条更好，"
+        "每个型号单独一行，格式为「型号名：吸力、导航、避障等关键参数，参考价 XX 元」。"
+        "严禁只介绍一个型号。\n"
+        "2. 若是一般事实性问题，简要使用中文回答，注意分行。\n"
+        "3. 如果参考资料与问题无关：先判断是否打招呼/闲聊，是则按系统提示词「闲聊与问候」自然回应；"
+        "若是扫地机器人相关事实性问题，从系统提示词「暂无信息回复」列表随机选一句。"
     )
 
     for chunk in stream_chat(
