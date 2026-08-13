@@ -117,12 +117,14 @@ def chat_stream():
     logger.info(f"[Stream] query: {query[:60]}...")
 
     def generate():
+        import json
         try:
             for chunk in ask_stream(query):
-                yield f"data: {chunk}\n\n"
+                # JSON-encode so newlines inside a chunk don't break SSE framing
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.error(f"[Stream] {e}")
-            yield f"data: [错误: {e}]\n\n"
+            yield f"data: {json.dumps(f'[错误: {e}]', ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
     return Response(

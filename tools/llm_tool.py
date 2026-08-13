@@ -34,7 +34,7 @@ def get_chat_model(
     Parameters can be overridden via constructor args or environment variables
     (LLM_BASE_URL / LLM_API_KEY / LLM_CHAT_MODEL).
     """
-    logger.info(f"[Chat] init model={model} base_url={base_url}")
+    logger.info(f"[Chat] init model={model}")
     return ChatOpenAI(
         model=model,
         base_url=base_url,

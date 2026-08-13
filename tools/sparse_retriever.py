@@ -33,13 +33,39 @@ _chroma_cfg = load_chroma_config()
 _retrieval_cfg = _rag_cfg.get("retrieval", {})
 _sparse_cfg = _rag_cfg.get("sparse", {})
 
-_DEFAULT_K1: float = 1.5    
+_DEFAULT_K1: float = 1.5
 _DEFAULT_B: float = 0.75
 
 _BM25_CACHE_FILE = "data/bm25_index.pkl"
 
-_DEFAULT_K1: float = 1.5
-_DEFAULT_B: float = 0.75
+
+def _matches_filter(doc: Document, f: dict) -> bool:
+    """Check if a Document's metadata satisfies a Chroma-style where filter.
+
+    Supports the subset we generate: {"min_price": {"$lte": N}}, {"$and": [...]},
+    "$gte" / "$lte" / "$eq" comparisons. Unknown operators pass through.
+    """
+    if not f:
+        return True
+    if "$and" in f:
+        return all(_matches_filter(doc, sub) for sub in f["$and"])
+    for key, cond in f.items():
+        if key.startswith("$"):
+            continue
+        val = doc.metadata.get(key)
+        if val is None:
+            return False
+        if isinstance(cond, dict):
+            if "$lte" in cond and not (val <= cond["$lte"]):
+                return False
+            if "$gte" in cond and not (val >= cond["$gte"]):
+                return False
+            if "$eq" in cond and val != cond["$eq"]:
+                return False
+        else:
+            if val != cond:
+                return False
+    return True
 
 
 class SparseRetriever:
@@ -101,13 +127,14 @@ class SparseRetriever:
     # ------------------------------------------------------------------
 
     def search(
-        self, query: str, top_k: int | None = None
+        self, query: str, top_k: int | None = None, filter: dict | None = None
     ) -> List[Tuple[Document, float]]:
         """Execute BM25 retrieval.
 
         Args:
             query: User query string.
             top_k: Number of results to return (default from rag.yaml).
+            filter: Optional Chroma-style `where` dict applied to candidates.
 
         Returns:
             [(doc, bm25_score), ...] sorted by score descending.
@@ -122,9 +149,13 @@ class SparseRetriever:
 
         scored = sorted(
             zip(self.chunks, scores), key=lambda x: x[1], reverse=True
-        )[:k]
+        )
+        # Apply metadata filter over BM25 candidates (fetch a bit more first)
+        if filter is not None:
+            scored = [pair for pair in scored if _matches_filter(pair[0], filter)]
+        scored = scored[:k]
         results = [(doc, float(score)) for doc, score in scored]
-        logger.info("[Sparse] query='%s' → %d results", query[:50], len(results))
+        logger.info("[Sparse] query='%s' filter=%s → %d results", query[:50], filter, len(results))
         for rank, (doc, score) in enumerate(results, 1):
             src = doc.metadata.get("file_name", "?")
             preview = doc.page_content[:60].replace("\n", " ")

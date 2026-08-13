@@ -462,8 +462,10 @@
         buffer = parts.pop();
         for (const part of parts) {
           if (part.startsWith('data: ')) {
-            const chunk = part.slice(6);
-            if (chunk === '[DONE]') continue;
+            const payload = part.slice(6);
+            if (payload === '[DONE]') continue;
+            let chunk;
+            try { chunk = JSON.parse(payload); } catch { chunk = payload; }
             streamedText += chunk;
             bubble.innerHTML = md(streamedText);
             scrollBottom();

@@ -69,6 +69,29 @@ def ask_stream(query: str):
         return
 
     hr = _get_retriever()
+    from metadata_extractor import build_filter
+    metadata_filter = build_filter(query)
+
+    # Structured query (budget): enumerate ALL matching models via metadata,
+    # bypassing top-k so we don't drop any in-budget item.
+    if metadata_filter is not None:
+        from vector_store import search_by_filter
+        from metadata_extractor import extract_model_info, format_model_line
+        filtered = search_by_filter(metadata_filter)
+        models, seen = [], set()
+        for c in filtered:
+            info = extract_model_info(c)
+            if info.get("price") is not None and info.get("name") and info["name"] not in seen:
+                seen.add(info["name"])
+                models.append(info)
+        if models:
+            lines = [format_model_line(m) for m in models]
+            yield f"在您预算内的机器人有 {len(models)} 款：\n\n" + "\n".join(lines)
+            return
+        # No in-budget models found → fall through to normal RAG
+        logger.info("[Agent] Budget filter matched no models, falling back to RAG")
+
+    # Normal RAG: dual-route retrieval
     chunks = hr.search(query)
 
     if not chunks:

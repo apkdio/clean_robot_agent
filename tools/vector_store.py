@@ -34,7 +34,7 @@ def _get_splitter() -> RecursiveCharacterTextSplitter:
 
 
 def _get_persist_dir() -> str:
-    path = get_abs_path(_chroma_cfg.get("persist_dir", "data/vector_store"))
+    path = get_abs_path(_chroma_cfg.get("persist_dir", "data\\vector_store"))
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -85,19 +85,39 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
     if not docs:
         return {"status": "error", "file": file_path, "message": "Extraction returned no content."}
 
-    # Chunk the documents
-    splitter = _get_splitter()
-    chunks = splitter.split_documents(docs)
+    # Chunk the documents: prefer numbered-entry splitter, fall back to generic
+    from entry_splitter import split_numbered_entries
+    file_name = os.path.basename(file_path)
+    tag = source_tag or file_name
+
+    chunks: list[Document] = []
+    for doc in docs:
+        entry_chunks = split_numbered_entries(
+            doc.page_content,
+            metadata={**doc.metadata, "source": tag, "file_name": file_name, "file_md5": md5},
+        )
+        chunks.extend(entry_chunks)
+
+    if not chunks:
+        # No numbered entries → fall back to generic character splitter
+        logger.info("[Ingest] No numbered entries, using generic splitter for %s", file_name)
+        splitter = _get_splitter()
+        chunks = splitter.split_documents(docs)
+        for chunk in chunks:
+            chunk.metadata.setdefault("source", tag)
+            chunk.metadata["file_name"] = file_name
+            chunk.metadata["file_md5"] = md5
+
     if not chunks:
         return {"status": "error", "file": file_path, "message": "Splitting returned no chunks."}
 
-    # Stamp each chunk with file metadata
-    file_name = os.path.basename(file_path)
-    tag = source_tag or file_name
+    # Stamp each chunk with structured metadata (price etc.)
+    from metadata_extractor import extract_price_metadata
     for chunk in chunks:
         chunk.metadata.setdefault("source", tag)
-        chunk.metadata["file_name"] = file_name
+        chunk.metadata.setdefault("file_name", file_name)
         chunk.metadata["file_md5"] = md5
+        chunk.metadata.update(extract_price_metadata(chunk.page_content))
 
     # Persist to Chroma
     logger.info(f"[Ingest] Embedding {len(chunks)} chunk(s) from {file_name}")
@@ -163,17 +183,39 @@ class DenseRetriever:
     """
 
     def search(
-        self, query: str, top_k: int | None = None
+        self, query: str, top_k: int | None = None, filter: dict | None = None
     ) -> list[tuple[Document, float]]:
         k = top_k if top_k is not None else _rag_cfg.get("retrieval", {}).get("dense_top_k", 10)
         store = get_vector_store()
-        results = store.similarity_search_with_relevance_scores(query, k=k)
-        logger.info("[Dense] query='%s' → %d results", query[:50], len(results))
+        results = store.similarity_search_with_relevance_scores(query, k=k, filter=filter)
+        logger.info("[Dense] query='%s' filter=%s → %d results", query[:50], filter, len(results))
         for rank, (doc, score) in enumerate(results, 1):
             src = doc.metadata.get("file_name", "?")
             preview = doc.page_content[:60].replace("\n", " ")
             logger.debug("  [Dense #%d score=%.4f] %s | %s", rank, score, src, preview)
         return results
+
+
+def search_by_filter(filter: dict) -> list[Document]:
+    """Return ALL chunks matching a metadata filter (no vector ranking).
+
+    Used for structured queries (e.g. budget) where we need full enumeration
+    of every in-budget item rather than a similarity-ranked top-k.
+
+    Args:
+        filter: Chroma `where` filter dict, e.g. {"min_price": {"$lte": 1000}}.
+
+    Returns:
+        List of Documents matching the filter (order not guaranteed).
+    """
+    store = get_vector_store()
+    data = store._collection.get(where=filter, include=["metadatas", "documents"])
+    docs = [
+        Document(page_content=text, metadata=meta or {})
+        for text, meta in zip(data["documents"], data["metadatas"])
+    ]
+    logger.info("[Filter] where=%s → %d chunks", filter, len(docs))
+    return docs
 
 
 def build_hybrid_index(sparse_retriever=None) -> int:
@@ -215,7 +257,6 @@ def list_collections_info() -> dict:
     count = store._collection.count()
     return {
         "collection_name": _get_collection_name(),
-        "persist_dir": _get_persist_dir(),
         "chunk_count": count,
     }
 

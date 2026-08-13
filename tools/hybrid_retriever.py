@@ -41,11 +41,13 @@ class HybridRetriever:
     # Search
     # ------------------------------------------------------------------
 
-    def search(self, query: str) -> List[Document]:
+    def search(self, query: str, filter: dict | None = None) -> List[Document]:
         """Run dense + sparse retrieval, fuse via RRF, return Document list.
 
         Args:
             query: User question.
+            filter: Optional Chroma `where` filter for structured dimensions
+                    (e.g. {"min_price": {"$lte": 1000}}).
 
         Returns:
             Top-k fused Documents (count controlled by rag.yaml → final_top_k).
@@ -53,11 +55,11 @@ class HybridRetriever:
         if not self.sparse.is_ready:
             self.ensure_sparse_index()
 
-        # 1. Dense
-        dense_results = self.dense.search(query)
+        # 1. Dense (metadata-filtered)
+        dense_results = self.dense.search(query, filter=filter)
 
-        # 2. Sparse
-        sparse_results = self.sparse.search(query)
+        # 2. Sparse (filter applied on top of BM25 candidates)
+        sparse_results = self.sparse.search(query, filter=filter)
 
         # 3. RRF fusion
         fused = reciprocal_rank_fusion(dense_results, sparse_results)
