@@ -36,7 +36,7 @@ _sparse_cfg = _rag_cfg.get("sparse", {})
 _DEFAULT_K1: float = 1.5
 _DEFAULT_B: float = 0.75
 
-_BM25_CACHE_FILE = "data/bm25_index.pkl"
+_BM25_CACHE_FILE = "data/pkl/bm25_index.pkl"
 
 
 def _matches_filter(doc: Document, f: dict) -> bool:

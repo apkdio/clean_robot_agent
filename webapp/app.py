@@ -98,6 +98,9 @@ def ingest():
 def reset():
     try:
         deleted = reset_collection()
+        # Invalidate hot-ingest snapshot so next cycle re-ingests from scratch
+        from tools.hot_ingest import invalidate_snapshot
+        invalidate_snapshot()
         return jsonify({"status": "ok", "deleted": deleted})
     except Exception as e:
         logger.error(f"[Reset] {e}")
@@ -136,8 +139,8 @@ def chat_stream():
 
 @app.route("/api/ingest/batch", methods=["POST"])
 def ingest_batch():
-    """Ingest all supported files from the data/ directory at once."""
-    data_dir = os.path.join(_PROJECT_ROOT, "data")
+    """Ingest all supported files from the knowledge dir at once."""
+    data_dir = os.path.join(_PROJECT_ROOT, "data", "knowledge")
     try:
         results = ingest_data_dir(data_dir)
         return jsonify({"status": "ok", "results": results})
@@ -168,4 +171,9 @@ def agent_config():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))
     logger.info(f"[WebApp] Starting on http://localhost:{port}")
+
+    # Start hot ingestion daemon (scans data/knowledge every 30 min)
+    from tools.hot_ingest import start_hot_ingest
+    start_hot_ingest()
+
     app.run(host="0.0.0.0", port=port, debug=False)

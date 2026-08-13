@@ -147,28 +147,21 @@ def ingest_directory(dir_path: str) -> list[dict]:
 
 
 def ingest_data_dir(data_dir: str = None) -> list[dict]:
-    """One-click: ingest all files from data/ (and data/external/) into the vector store.
+    """Ingest all supported files from the knowledge dir into the vector store.
 
     Args:
-        data_dir: Path to the data directory. Defaults to project_root/data.
+        data_dir: Path to the knowledge directory. Defaults to project_root/data/knowledge.
 
     Returns:
         List of ingest results, one dict per file.
     """
     if data_dir is None:
-        data_dir = get_abs_path("data")
+        data_dir = get_abs_path("data/knowledge")
     if not os.path.isdir(data_dir):
         logger.error(f"[IngestDataDir] {data_dir} is not a directory.")
         return [{"status": "error", "message": f"{data_dir} is not a directory."}]
 
-    results = []
-    # Ingest files directly in data/
-    results.extend(ingest_directory(data_dir))
-    # Also ingest data/external/ if it exists
-    external = os.path.join(data_dir, "external")
-    if os.path.isdir(external):
-        results.extend(ingest_directory(external))
-    return results
+    return ingest_directory(data_dir)
 
 
 # ---------------------------------------------------------------------------
