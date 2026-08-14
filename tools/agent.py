@@ -2,17 +2,15 @@
 
 Flow:
   user query
-    → hybrid_retriever.search(query)          # dense + sparse → RRF fusion
-    → rag_summarize prompt + chunks            # fill template
-    → main_prompt (system) + user message      # build messages
-    → LLM generate                              # Ollama qwen2.5:3b
-    → answer
+    → intent_router.route_intent()              # local classifier head: robot/casual/other/unknown
+    → hybrid_retriever.search()                 # dense + sparse → RRF fusion
+    → structured budget output OR RAG            # generate
 """
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config_tool import load_agent_config
-from llm_tool import get_chat_model, stream_chat
+from llm_tool import stream_chat
 from log_tool import get_logger
 from prompts_tool import load_main_prompts
 
@@ -35,38 +33,36 @@ def _get_retriever():
     return _hybrid_retriever
 
 
-# 常见打招呼/闲聊模式，命中则跳过检索，直接自然回应
-_GREETING_PATTERNS = [
-    "你好", "您好","你好啊", "嗨", "哈喽", "hello", "hi", "在吗", "在不在",
-    "谢谢", "感谢", "辛苦了", "再见", "拜拜", "晚安", "早上好", "中午好", "晚上好",
-    "你是谁", "你叫什么", "你能做什么", "你会什么", "介绍一下你自己",
-]
-
-
-def _is_casual_talk(query: str) -> bool:
-    """Detect greetings / thanks / self-intro queries that need no retrieval."""
-    q = query.strip().lower()
-    return any(p in q for p in _GREETING_PATTERNS)
-
-
 def ask_stream(query: str):
-    """Streaming version of ask() — yields answer chunks as LLM generates them.
+    """Streaming version of ask() — intent-routed via local classifier head.
 
-    In retrieval_only mode, yields the full chunk text at once.
-    In RAG mode, yields partial answer tokens from the LLM.
+    other → polite decline; casual → small talk;
+    unknown → soft hint + RAG; robot → structured budget output or RAG.
     """
-    # Greetings / small talk: skip retrieval, answer naturally
-    if _is_casual_talk(query):
+    from intent_router import route_intent, get_guess_hint
+    intent = route_intent(query)
+
+    # Out-of-domain: polite decline
+    if intent == "other":
+        yield "抱歉，我是扫地机器人专属助手，对这方面不太了解哦～你可以问我扫地机器人的选购、故障排查、使用维护等问题。"
+        return
+
+    # Casual greetings / small talk: answer naturally, skip retrieval
+    if intent == "casual":
         for chunk in stream_chat(
             [
                 SystemMessage(content=load_main_prompts()),
                 HumanMessage(content=query),
             ],
-            model=_llm_cfg.get("model", "qwen2.5:3b"),
+            model=_llm_cfg.get("model", "qwen2.5:7b"),
             temperature=_llm_cfg.get("temperature", 0.3),
         ):
             yield chunk
         return
+
+    # Unknown intent: prefix a soft hint, then answer via RAG
+    if intent == "unknown":
+        yield get_guess_hint() + "\n\n"
 
     hr = _get_retriever()
     from metadata_extractor import build_filter
@@ -100,7 +96,7 @@ def ask_stream(query: str):
                 SystemMessage(content=load_main_prompts()),
                 HumanMessage(content=f"知识库中暂无相关内容，请简短回答：{query}"),
             ],
-            model=_llm_cfg.get("model", "qwen2.5:3b"),
+            model=_llm_cfg.get("model", "qwen2.5:7b"),
             temperature=_llm_cfg.get("temperature", 0.3),
         ):
             yield chunk
@@ -132,31 +128,7 @@ def ask_stream(query: str):
             SystemMessage(content=load_main_prompts()),
             HumanMessage(content=user_message),
         ],
-        model=_llm_cfg.get("model", "qwen2.5:3b"),
+        model=_llm_cfg.get("model", "qwen2.5:7b"),
         temperature=_llm_cfg.get("temperature", 0.3),
     ):
         yield chunk
-
-
-def _direct_answer(query: str) -> str:
-    """Fallback: answer without retrieval (when vector store is empty or no hits)."""
-    system_prompt = load_main_prompts()
-    llm = get_chat_model(
-        model=_llm_cfg.get("model", "qwen3:1.7b"),
-        base_url=_llm_cfg.get("base_url", "http://localhost:11434/v1"),
-        api_key=_llm_cfg.get("api_key", "ollama"),
-        temperature=_llm_cfg.get("temperature", 0.3),
-    )
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(
-            content=f"知识库中暂无相关内容，请根据你的常识简短回答以下问题：{query}"
-            if _behavior.get("rag_enabled", True)
-            else query
-        ),
-    ]
-    try:
-        return llm.invoke(messages).content.strip()
-    except Exception as e:
-        logger.error(f"[Agent] Direct answer failed: {e}")
-        return "抱歉，模型暂时不可用，请稍后再试。"

@@ -3,9 +3,9 @@ logs/
 data/vector_store/
 data/pkl/
 data/state/
+data/bgm_model/
 __pycache__/
 *.pyc
-__pycache__/
 
 # config
 config/agent.yaml

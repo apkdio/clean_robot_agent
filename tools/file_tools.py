@@ -36,21 +36,6 @@ def get_file_md5_hex(file_path: str):
         return None
 
 
-def allow_file_type_list(path: str, allow_types: tuple[str]):
-    """List files in a directory matching the given extensions."""
-    type_list = []
-    if not os.path.isdir(path):
-        logger.error(f"[File Type] {path} is not a directory.")
-        return type_list
-    if not os.path.exists(path):
-        logger.error(f"[File Type] {path} does not exist.")
-        return type_list
-    for file in os.listdir(path):
-        if file.lower().endswith(allow_types):
-            type_list.append(os.path.join(path, file))
-    return type_list
-
-
 def _read_text_file(file_path: str) -> list[Document]:
     """Read a plain-text file via stdlib with explicit UTF-8 to avoid garbled Chinese."""
     docs = []

@@ -18,8 +18,8 @@ logger = get_logger(name="llm_tool")
 # Ollama default connection settings (local, no real API key needed)
 _DEFAULT_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1")
 _DEFAULT_API_KEY = os.environ.get("LLM_API_KEY", "ollama")
-_DEFAULT_CHAT_MODEL = os.environ.get("LLM_CHAT_MODEL", "qwen3:1.7b")
-_DEFAULT_EMBED_MODEL = os.environ.get("LLM_EMBED_MODEL", "qwen3-embedding:0.6b")
+_DEFAULT_CHAT_MODEL = os.environ.get("LLM_CHAT_MODEL", "qwen2.5:7b")
+_DEFAULT_EMBED_MODEL = os.environ.get("LLM_EMBED_MODEL", "bge-m3")
 
 
 def get_chat_model(
