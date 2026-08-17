@@ -1,9 +1,9 @@
-"""Hybrid retriever: dense (vector) + sparse (BM25) → RRF fusion.
+"""混合检索器：稠密（向量）+ 稀疏（BM25）→ RRF 融合。
 
-Usage:
+用法：
     hr = HybridRetriever()
-    hr.ensure_sparse_index()       # build BM25 from Chroma chunks
-    chunks = hr.search("边刷多久换")  # returns fused top-k Documents
+    hr.ensure_sparse_index()       # 从 Chroma chunk 构建 BM25
+    chunks = hr.search("边刷多久换")  # 返回融合后的 top-k Document
 """
 
 from __future__ import annotations
@@ -21,50 +21,50 @@ logger = get_logger(name="hybrid_retriever")
 
 
 class HybridRetriever:
-    """Orchestrates dual-route retrieval: dense + sparse → RRF fusion."""
+    """编排双路召回：稠密 + 稀疏 → RRF 融合。"""
 
     def __init__(self) -> None:
         self.dense = DenseRetriever()
         self.sparse = SparseRetriever()
 
     # ------------------------------------------------------------------
-    # Index
+    # 索引
     # ------------------------------------------------------------------
 
     def ensure_sparse_index(self) -> int:
-        """Build the BM25 index from Chroma-stored chunks (one-liner)."""
+        """从 Chroma 存储的 chunk 构建 BM25 索引（一行搞定）。"""
         n = build_hybrid_index(self.sparse)
         logger.info("[Hybrid] Sparse index ready: %d chunks", n)
         return n
 
     # ------------------------------------------------------------------
-    # Search
+    # 检索
     # ------------------------------------------------------------------
 
     def search(self, query: str, filter: dict | None = None) -> List[Document]:
-        """Run dense + sparse retrieval, fuse via RRF, return Document list.
+        """执行稠密 + 稀疏检索，经 RRF 融合，返回 Document 列表。
 
-        Args:
-            query: User question.
-            filter: Optional Chroma `where` filter for structured dimensions
-                    (e.g. {"min_price": {"$lte": 1000}}).
+        参数：
+            query: 用户问题。
+            filter: 可选的 Chroma `where` 过滤器，用于结构化维度
+                    （例如 {"min_price": {"$lte": 1000}}）。
 
-        Returns:
-            Top-k fused Documents (count controlled by rag.yaml → final_top_k).
+        返回：
+            Top-k 融合后的 Document（数量由 rag.yaml → final_top_k 控制）。
         """
         if not self.sparse.is_ready:
             self.ensure_sparse_index()
 
-        # 1. Dense (metadata-filtered)
+        # 1. 稠密（带 metadata 过滤）
         dense_results = self.dense.search(query, filter=filter)
 
-        # 2. Sparse (filter applied on top of BM25 candidates)
+        # 2. 稀疏（在 BM25 候选之上再套用过滤）
         sparse_results = self.sparse.search(query, filter=filter)
 
-        # 3. RRF fusion
+        # 3. RRF 融合
         fused = reciprocal_rank_fusion(dense_results, sparse_results)
 
-        # 4. Return plain Document list
+        # 4. 返回纯 Document 列表
         documents = [doc for doc, _score, _meta in fused]
         logger.info("[Hybrid] query='%s' → %d fused result(s)", query[:40], len(documents))
         return documents

@@ -1,15 +1,14 @@
-"""Sparse retriever: BM25 keyword-based retrieval.
+"""稀疏检索器：基于 BM25 的关键词检索。
 
-BM25 (Best Matching 25) is a probabilistic ranking function, an improved TF-IDF.
-It measures how well a document matches a query based on term frequency,
-inverse document frequency, and document length normalization.
+BM25（Best Matching 25）是一种概率排序函数，是改进版的 TF-IDF。
+它根据词频、逆文档频率以及文档长度归一化来衡量文档与查询的匹配程度。
 
-Tokenization strategy for Chinese + English mixed text:
-- Latin letters / digits → kept as whole tokens (lowercased)
-- Chinese characters → each character is a separate token
-- Punctuation → discarded
+中英文混合文本的分词策略：
+- 拉丁字母 / 数字 → 作为完整 token 保留（转小写）
+- 中文字符 → 每个字符作为一个独立 token
+- 标点符号 → 丢弃
 
-Uses rank_bm25.BM25Okapi internally.
+内部使用 rank_bm25.BM25Okapi。
 """
 
 from __future__ import annotations
@@ -40,10 +39,10 @@ _BM25_CACHE_FILE = "data/pkl/bm25_index.pkl"
 
 
 def _matches_filter(doc: Document, f: dict) -> bool:
-    """Check if a Document's metadata satisfies a Chroma-style where filter.
+    """检查 Document 的 metadata 是否满足 Chroma 风格的 where 过滤器。
 
-    Supports the subset we generate: {"min_price": {"$lte": N}}, {"$and": [...]},
-    "$gte" / "$lte" / "$eq" comparisons. Unknown operators pass through.
+    支持我们生成的那些子集：{"min_price": {"$lte": N}}、{"$and": [...]}、
+    "$gte" / "$lte" / "$eq" 比较。未知运算符直接放行。
     """
     if not f:
         return True
@@ -69,7 +68,7 @@ def _matches_filter(doc: Document, f: dict) -> bool:
 
 
 class SparseRetriever:
-    """BM25-based sparse (keyword) retriever."""
+    """基于 BM25 的稀疏（关键词）检索器。"""
 
     def __init__(self) -> None:
         self.chunks: List[Document] = []
@@ -77,14 +76,14 @@ class SparseRetriever:
         self.bm25_model: BM25Okapi | None = None
 
     # ------------------------------------------------------------------
-    # Tokenization
+    # 分词
     # ------------------------------------------------------------------
 
     @staticmethod
     def _tokenize(text: str) -> List[str]:
-        """Tokenize Chinese + English mixed text.
+        """对中英文混合文本进行分词。
 
-        Examples:
+        示例：
             "Python 在机器学习中的应用"
             → ["python", "在", "机", "器", "学", "习", "中", "的", "应", "用"]
         """
@@ -101,14 +100,14 @@ class SparseRetriever:
         return tokens
 
     # ------------------------------------------------------------------
-    # Index
+    # 索引
     # ------------------------------------------------------------------
 
     def index_documents(self, documents: List[Document]) -> None:
-        """Build BM25 index from a list of Document chunks.
+        """从 Document chunk 列表构建 BM25 索引。
 
-        1. Tokenize every chunk
-        2. BM25Okapi computes DF/IDF and builds the scoring model
+        1. 对每个 chunk 进行分词
+        2. BM25Okapi 计算 DF/IDF 并构建评分模型
         """
         if not documents:
             logger.warning("[Sparse] No documents to index.")
@@ -123,21 +122,21 @@ class SparseRetriever:
         logger.info("[Sparse] BM25 index built: %d chunks", len(self.chunks))
 
     # ------------------------------------------------------------------
-    # Search
+    # 检索
     # ------------------------------------------------------------------
 
     def search(
         self, query: str, top_k: int | None = None, filter: dict | None = None
     ) -> List[Tuple[Document, float]]:
-        """Execute BM25 retrieval.
+        """执行 BM25 检索。
 
-        Args:
-            query: User query string.
-            top_k: Number of results to return (default from rag.yaml).
-            filter: Optional Chroma-style `where` dict applied to candidates.
+        参数：
+            query: 用户查询字符串。
+            top_k: 返回结果数量（默认来自 rag.yaml）。
+            filter: 可选的 Chroma 风格 `where` 字典，应用于候选结果。
 
-        Returns:
-            [(doc, bm25_score), ...] sorted by score descending.
+        返回：
+            [(doc, bm25_score), ...]，按分数降序排列。
         """
         if self.bm25_model is None:
             logger.error("[Sparse] Index not built yet.")
@@ -150,7 +149,7 @@ class SparseRetriever:
         scored = sorted(
             zip(self.chunks, scores), key=lambda x: x[1], reverse=True
         )
-        # Apply metadata filter over BM25 candidates (fetch a bit more first)
+        # 在 BM25 候选上套用 metadata 过滤（先多取一些再过滤）
         if filter is not None:
             scored = [pair for pair in scored if _matches_filter(pair[0], filter)]
         scored = scored[:k]
@@ -167,7 +166,7 @@ class SparseRetriever:
         return self.bm25_model is not None and len(self.chunks) > 0
 
     # ------------------------------------------------------------------
-    # Pickle persistence
+    # Pickle 持久化
     # ------------------------------------------------------------------
 
     @staticmethod

@@ -1,12 +1,12 @@
-"""Build the intent-classification dataset (comprehensive version).
+"""构建意图分类数据集（综合版）。
 
-Coverage targets (based on test findings):
-  1. Budget recommendation robot samples ("预算XX以内推荐") — previously missing
-  2. Professional terms (HEPA/LDS/dToF/VSLAM) — previously under-covered
-  3. Cross-domain disambiguation (漏水/电池) — previously ambiguous
-  4. Expanded other/casual/unknown seed lists
+覆盖目标（基于测试发现）：
+  1. 预算推荐类 robot 样本（"预算XX以内推荐"）—— 之前缺失
+  2. 专业术语（HEPA/LDS/dToF/VSLAM）—— 之前覆盖不足
+  3. 跨领域歧义消解（漏水/电池）—— 之前存在歧义
+  4. 扩充的 other/casual/unknown 种子词表
 
-Output: data/datasets/intent_dataset.jsonl
+输出：data/datasets/intent_dataset.jsonl
 """
 
 import json
@@ -116,9 +116,24 @@ _ROBOT_BOUNDARY = [
     # 电池类（"电池"与手机/电动车歧义）
     "电池续航下降怎么办", "电池续航时间变短", "电池多久需要更换", "电池老化怎么办",
     "电池充不进电怎么办", "电池续航多久", "机器人电池能用几年", "电池鼓包了怎么办",
+    "扫地机器人电池续航下降", "机器人电池续航变短", "扫地机电池不耐用怎么办",
+    "扫地机器人电池老化", "机器人电池充不进电",
     # 滤网/HEPA类（"HEPA"英文缩写）
     "HEPA滤网多久清洗一次", "HEPA滤网需要更换吗", "HEPA滤网怎么拆", "滤网清洗频率",
     "高效滤网多久换", "HEPA过滤网在哪里", "滤网脏了怎么清理", "滤网水洗还是更换",
+]
+
+# ── 时间类 robot 样本（"最近半年发布"等新品查询，配合日期工具调用）──────
+
+_ROBOT_TIME = [
+    "最近半年发布的产品有哪些", "最近半年发布的扫地机器人推荐",
+    "最近半年发布的产品里有什么1000以内的扫地机器人", "近三个月发布的机器人有哪些",
+    "今年发布的扫地机器人推荐", "最近半年有什么新机器人",
+    "近半年上市的扫地机器人", "今年新出的扫地机器人推荐",
+    "最近半年发布的产品里有什么2000以内的机器人", "近一个月发布的扫地机器人",
+    "去年发布的扫地机器人有哪些", "最近三个月出的新机型",
+    "今年有哪些新发布的扫地机器人", "最近半年发布的新品扫地机器人",
+    "近一年上市的扫地机器人推荐", "最近半年出了哪些新款",
 ]
 
 # ── other：领域外（扩充，含跨领域歧义消解）──────────────────────────────
@@ -126,7 +141,8 @@ _ROBOT_BOUNDARY = [
 _OTHER = [
     # 出行/交通工具
     "有没有飞机卖", "电动车多少钱", "电动车怎么选", "电瓶车充电安全吗", "汽车推荐",
-    "汽车保养多久一次", "自行车推荐", "摩托车怎么选", "火车票怎么买",
+    "汽车保养多久一次", "汽车保养项目有哪些", "汽车多久保养一次", "汽车维修要多少钱",
+    "汽车轮胎多久换一次", "自行车推荐", "摩托车怎么选", "火车票怎么买",
     "电动车电池多久换一次", "电动车续航多少公里",
     # 手机/数码
     "手机哪个牌子好", "手机推荐", "手机屏幕碎了怎么修", "手机卡顿怎么办", "手机电池不耐用",
@@ -178,6 +194,7 @@ def main():
     print(f"robot 预算推荐补充: {len(_ROBOT_BUDGET)}")
     print(f"robot 专业术语补充: {len(_ROBOT_TERMS)}")
     print(f"robot 边界歧义补充: {len(_ROBOT_BOUNDARY)}")
+    print(f"robot 时间类补充: {len(_ROBOT_TIME)}")
 
     rows = []
     for t in robot:
@@ -187,6 +204,8 @@ def main():
     for t in _ROBOT_TERMS:
         rows.append({"text": t, "label": "robot"})
     for t in _ROBOT_BOUNDARY:
+        rows.append({"text": t, "label": "robot"})
+    for t in _ROBOT_TIME:
         rows.append({"text": t, "label": "robot"})
     for t in _OTHER:
         rows.append({"text": t, "label": "other"})

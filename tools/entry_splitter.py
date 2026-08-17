@@ -1,16 +1,16 @@
-"""Numbered-entry splitter.
+"""编号条目切分器。
 
-Splits documents structured as numbered lists into one chunk per entry.
+将结构化为编号列表的文档按条目切分为一个个 chunk。
 
-Handles both variants found in the knowledge base:
-  - "1. **加粗标题**" followed by "- 内容" lines  (FAQ / 型号)
-  - "1. 纯文本内容" single-line entries            (故障排除 / 维护保养 / 选购指南)
+支持知识库中出现的两种形式：
+  - "1. **加粗标题**" 后跟 "- 内容" 行（FAQ / 型号）
+  - "1. 纯文本内容" 单行条目（故障排除 / 维护保养 / 选购指南）
 
-Section headers (## / ###) are kept as a prefix on the first entry that follows,
-so each chunk carries its category context (e.g. "入门级" + 型号内容).
+章节标题（## / ###）会作为前缀保留在其后第一条目上，
+使每个 chunk 都携带其分类上下文（例如 "入门级" + 型号内容）。
 
-A file that does not contain numbered entries (e.g. a plain paragraph or CSV)
-falls back to the caller's generic splitter.
+不含编号条目的文件（例如普通段落或 CSV）
+会回退到调用方的通用切分器。
 """
 
 from __future__ import annotations
@@ -20,16 +20,16 @@ from typing import List
 
 from langchain_core.documents import Document
 
-# An entry starts with "1. ", "2. ", "99. " … (optionally followed by **bold**)
+# 条目以 "1. "、"2. "、"99. " … 开头（可选后跟 **加粗**）
 _ENTRY_RE = re.compile(r"^\d+\.\s+")
-# Section headers: "# 标题", "## 标题", "### 标题"
+# 章节标题："# 标题"、"## 标题"、"### 标题"
 _SECTION_RE = re.compile(r"^#{1,6}\s+")
 
 
 def _detect_entries(text: str) -> List[tuple]:
-    """Scan text and return [(section_prefix, entry_text), ...].
+    """扫描文本并返回 [(章节前缀, 条目文本), ...]。
 
-    section_prefix is the nearest preceding ##/### header, or "" if none.
+    章节前缀是最近的上一级 ##/### 标题，没有则为 ""。
     """
     entries: List[tuple] = []
     current_section = ""
@@ -37,9 +37,9 @@ def _detect_entries(text: str) -> List[tuple]:
     started = False
 
     for line in text.split("\n"):
-        # Section header → remember as prefix, do not start an entry
+        # 章节标题 → 记住作为前缀，不开始新条目
         if _SECTION_RE.match(line.strip()):
-            # Flush a pending entry before switching section
+            # 切换章节前先刷出挂起的条目
             if started and current_lines:
                 entries.append((current_section, "\n".join(current_lines)))
                 current_lines = []
@@ -47,7 +47,7 @@ def _detect_entries(text: str) -> List[tuple]:
             current_section = line.strip()
             continue
 
-        # New numbered entry
+        # 新的编号条目
         if _ENTRY_RE.match(line.strip()):
             if started and current_lines:
                 entries.append((current_section, "\n".join(current_lines)))
@@ -55,15 +55,15 @@ def _detect_entries(text: str) -> List[tuple]:
             started = True
             continue
 
-        # Continuation of current entry ("- 内容", wrapped lines, etc.)
+        # 当前条目的续行（"- 内容"、折行等）
         if started:
-            if line.strip():  # skip blank separator lines inside an entry
+            if line.strip():  # 跳过条目内部的空白分隔行
                 current_lines.append(line.rstrip())
             continue
 
-        # Otherwise: file title / blank line / anything before first entry → skip
+        # 否则：文件标题 / 空行 / 首条之前的任何内容 → 跳过
 
-    # Flush last entry
+    # 刷出最后一条
     if started and current_lines:
         entries.append((current_section, "\n".join(current_lines)))
 
@@ -71,14 +71,14 @@ def _detect_entries(text: str) -> List[tuple]:
 
 
 def split_numbered_entries(text: str, metadata: dict | None = None) -> List[Document]:
-    """Split a numbered-list document into one Document per entry.
+    """将编号列表文档切分为每个条目一个 Document。
 
-    Args:
-        text: Raw document text.
-        metadata: Base metadata dict copied onto every produced Document.
+    参数：
+        text: 原始文档文本。
+        metadata: 复制到每个生成的 Document 上的基础 metadata 字典。
 
-    Returns:
-        List of Documents. Empty list if the text has no numbered entries.
+    返回：
+        Document 列表。如果文本不含编号条目则为空列表。
     """
     entries = _detect_entries(text)
     if not entries:
@@ -87,7 +87,7 @@ def split_numbered_entries(text: str, metadata: dict | None = None) -> List[Docu
     docs: List[Document] = []
     base = dict(metadata or {})
     for section, entry_text in entries:
-        # Attach section as a prefix so the chunk keeps its category context
+        # 将章节作为前缀附加，使 chunk 保留其分类上下文
         content = f"{section}\n{entry_text}" if section else entry_text
         docs.append(Document(page_content=content, metadata=dict(base)))
     return docs

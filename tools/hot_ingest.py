@@ -1,13 +1,13 @@
-"""Hot ingestion: periodically scan the knowledge dir and sync changes into Chroma.
+"""热更新：周期性扫描知识目录并将变更同步到 Chroma。
 
-Every SCAN_INTERVAL seconds (default 30 min), it:
-  1. Scans data/knowledge/ recursively, computing each file's MD5.
-  2. Compares against the last snapshot (data/state/ingest_snapshot.json).
-  3. Incrementally applies the diff: add new files, re-ingest changed files,
-     delete removed files' chunks.
-  4. Rebuilds the sparse (BM25) index and updates the snapshot.
+每隔 SCAN_INTERVAL 秒（默认 30 分钟），它会：
+  1. 递归扫描 data/knowledge/，计算每个文件的 MD5。
+  2. 与上一次快照（data/state/ingest_snapshot.json）进行对比。
+  3. 增量应用差异：添加新文件、重新摄入变更过的文件、
+     删除已移除文件的 chunk。
+  4. 重建稀疏（BM25）索引并更新快照。
 
-Runs on a daemon thread so it never blocks the Flask request loop.
+在守护线程上运行，因此绝不会阻塞 Flask 请求循环。
 """
 
 from __future__ import annotations
@@ -22,20 +22,20 @@ from log_tool import get_logger
 logger = get_logger(name="hot_ingest")
 
 # ──────────────────────────────────────────────────────────────────────────
-# Config
+# 配置
 # ──────────────────────────────────────────────────────────────────────────
 
-_SCAN_INTERVAL = 30 * 60          # 30 minutes
+_SCAN_INTERVAL = 30 * 60          # 30 分钟
 _KNOWLEDGE_DIR = "data/knowledge"
 _SNAPSHOT_FILE = "data/state/ingest_snapshot.json"
 
 _SUPPORTED_EXTS = (".txt", ".md", ".pdf", ".csv", ".docx", ".pptx", ".xlsx")
 
-_lock = threading.Lock()          # serialize ingest vs. reset
+_lock = threading.Lock()          # 序列化摄入与重置操作
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Snapshot
+# 快照
 # ──────────────────────────────────────────────────────────────────────────
 
 def _snapshot_path() -> str:
@@ -49,7 +49,7 @@ def _knowledge_path() -> str:
 
 
 def load_snapshot() -> dict:
-    """Read the last snapshot. Returns {} if absent (first run)."""
+    """读取上一次快照。如果不存在则返回 {}（首次运行）。"""
     path = _snapshot_path()
     if not os.path.isfile(path):
         return {}
@@ -69,7 +69,7 @@ def save_snapshot(snapshot: dict) -> None:
 
 
 def invalidate_snapshot() -> None:
-    """Drop the snapshot so the next cycle does a full re-ingest."""
+    """丢弃快照，使下一个周期执行一次完整的重新摄入。"""
     path = _snapshot_path()
     if os.path.isfile(path):
         os.remove(path)
@@ -77,11 +77,11 @@ def invalidate_snapshot() -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Scan & diff
+# 扫描与差异对比
 # ──────────────────────────────────────────────────────────────────────────
 
 def scan_files(data_dir: str) -> dict:
-    """Recursively scan data_dir → {relative_path: md5}."""
+    """递归扫描 data_dir → {相对路径: md5}。"""
     from file_tools import get_file_md5_hex
 
     result = {}
@@ -98,7 +98,7 @@ def scan_files(data_dir: str) -> dict:
 
 
 def diff_snapshot(old: dict, new: dict):
-    """Return (added, changed, removed) between old and new snapshots."""
+    """返回旧快照与新快照之间的 (added, changed, removed)。"""
     added = {k: v for k, v in new.items() if k not in old}
     changed = {k: v for k, v in new.items() if k in old and old[k] != v}
     removed = [k for k in old if k not in new]
@@ -106,11 +106,11 @@ def diff_snapshot(old: dict, new: dict):
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Apply changes
+# 应用变更
 # ──────────────────────────────────────────────────────────────────────────
 
 def apply_changes(data_dir: str, added: dict, changed: dict, removed: list) -> dict:
-    """Incrementally sync Chroma with the file diff."""
+    """根据文件差异增量同步 Chroma。"""
     from vector_store import get_vector_store, ingest_file
 
     store = get_vector_store()
@@ -140,7 +140,7 @@ def apply_changes(data_dir: str, added: dict, changed: dict, removed: list) -> d
 
 
 def _rebuild_sparse_index() -> None:
-    """Force a fresh BM25 index (drop cache so stale pickle isn't reused)."""
+    """强制重建 BM25 索引（丢弃缓存，避免复用陈旧的 pickle）。"""
     from path_tool import get_abs_path
     cache = get_abs_path("data/pkl/bm25_index.pkl")
     if os.path.isfile(cache):
@@ -148,7 +148,7 @@ def _rebuild_sparse_index() -> None:
     from vector_store import build_hybrid_index
     build_hybrid_index()
 
-    # Reset the agent's lazy retriever singleton so the next query reloads
+    # 重置 agent 的惰性检索器单例，使下一次查询重新加载
     try:
         import agent
         agent._hybrid_retriever = None
@@ -157,11 +157,11 @@ def _rebuild_sparse_index() -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Cycle
+# 周期
 # ──────────────────────────────────────────────────────────────────────────
 
 def run_once(data_dir: str = None) -> bool:
-    """Execute one scan + incremental sync. Returns True if anything changed."""
+    """执行一次扫描 + 增量同步。若有任何变更则返回 True。"""
     data_dir = data_dir or _knowledge_path()
     if not os.path.isdir(data_dir):
         logger.warning("[HotIngest] knowledge dir missing: %s", data_dir)
@@ -187,7 +187,7 @@ def run_once(data_dir: str = None) -> bool:
 
 
 def hot_ingest_loop(data_dir: str = None, interval: int = _SCAN_INTERVAL) -> None:
-    """Background loop: run_once every `interval` seconds."""
+    """后台循环：每隔 `interval` 秒执行一次 run_once。"""
     data_dir = data_dir or _knowledge_path()
     logger.info("[HotIngest] Started, interval=%ds dir=%s", interval, data_dir)
     while True:
@@ -199,7 +199,7 @@ def hot_ingest_loop(data_dir: str = None, interval: int = _SCAN_INTERVAL) -> Non
 
 
 def start_hot_ingest(data_dir: str = None, interval: int = _SCAN_INTERVAL) -> threading.Thread:
-    """Start the hot-ingest daemon thread. Returns the thread object."""
+    """启动热更新守护线程。返回线程对象。"""
     t = threading.Thread(
         target=hot_ingest_loop,
         args=(data_dir or _knowledge_path(), interval),

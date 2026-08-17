@@ -5,24 +5,24 @@ import sys
 
 from path_tool import get_abs_path
 
-# ── ANSI terminal colors ──────────────────────────────────────────────────
+# ── ANSI 终端颜色 ─────────────────────────────────────────────────────────
 _COLORS = {
-    "DEBUG":    "\033[90m",   # gray
-    "INFO":     "\033[0m",    # default (white)
-    "WARNING":  "\033[33m",   # yellow
-    "ERROR":    "\033[31m",   # red
-    "CRITICAL": "\033[35m",   # magenta
+    "DEBUG":    "\033[90m",   # 灰色
+    "INFO":     "\033[0m",    # 默认（白色）
+    "WARNING":  "\033[33m",   # 黄色
+    "ERROR":    "\033[31m",   # 红色
+    "CRITICAL": "\033[35m",   # 洋红色
     "RESET":    "\033[0m",
 }
 
 
 class _ColorFormatter(logging.Formatter):
-    """Wrap the levelname in an ANSI color code for terminal readability."""
+    """将 levelname 包裹在 ANSI 颜色码中，便于终端阅读。"""
 
     def format(self, record: logging.LogRecord) -> str:
         color = _COLORS.get(record.levelname, "")
         reset = _COLORS["RESET"]
-        # Save & restore so the shared record is not mutated for other handlers
+        # 保存并恢复，避免共享的 record 被其他 handler 修改
         original = record.levelname
         record.levelname = f"{color}{original}{reset}"
         result = super().format(record)
@@ -30,7 +30,7 @@ class _ColorFormatter(logging.Formatter):
         return result
 
 
-# ── File log (no colors, full detail) ─────────────────────────────────────
+# ── 文件日志（无颜色，完整详情）───────────────────────────────────────────
 log_path = get_abs_path("logs")
 if not os.path.exists(log_path):
     os.makedirs(log_path)
@@ -39,7 +39,7 @@ file_log_template = logging.Formatter(
     "%(asctime)s - %(name)s - [%(levelname)s] - %(filename)s:%(lineno)d -  %(message)s"
 )
 
-# ── Console log (colored level, compact) ─────────────────────────────────
+# ── 控制台日志（彩色级别，紧凑）───────────────────────────────────────────
 console_log_template = _ColorFormatter(
     "%(asctime)s - %(name)s - %(levelname)s  -  %(message)s"
 )
@@ -49,19 +49,19 @@ def get_logger(name: str = "agent",
                console_level: int = logging.INFO,
                file_level: int = logging.DEBUG,
                log_file=None):
-    """Return a configured logger with colored console + file output."""
+    """返回一个已配置的 logger，包含彩色控制台输出 + 文件输出。"""
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
     if logger.handlers:
         return logger
 
-    # Console: stdout (not stderr → no forced red), colored level
+    # 控制台：输出到 stdout（而非 stderr → 不会强制红色），级别着色
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(console_level)
     console_handler.setFormatter(console_log_template)
     logger.addHandler(console_handler)
 
-    # File: persistent disk log
+    # 文件：持久化磁盘日志
     if not log_file:
         log_file = os.path.join(log_path, f"{name}-{datetime.now().strftime('%Y%m%d')}.log")
     file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")

@@ -1,0 +1,371 @@
+# 扫地机器人智能客服 · 项目设计文档
+
+> 本文档面向新加入的开发者 / AI 模型，帮助快速理解项目架构、关键设计决策与已知问题。
+> 阅读顺序建议：项目概述 → 架构总览 → 模块详解 → 技术决策 → 已知问题 → 未来规划。
+
+---
+
+## 一、项目概述
+
+### 1.1 定位
+
+一个**完全本地化部署**的扫地机器人智能客服系统。用户以自然语言提问，系统通过「意图识别 + 检索增强生成（RAG）」给出回答。
+
+### 1.2 核心能力
+
+| 能力 | 说明 |
+|------|------|
+| 领域问答 | 扫地机器人使用、故障、维护、选购等问答 |
+| 预算推荐 | 识别"预算 1000 以内"等约束，精确枚举预算内产品 |
+| 工具调用 | LLM function calling，内置日期计算工具，支持"最近半年""2025年三月"等新品查询 |
+| 领域边界 | 识别非扫地机器人问题（电动车、手机等）并礼貌拒答 |
+| 闲聊兜底 | 问候、道谢自然回应；模糊问题软引导 |
+| 流式输出 | 前端逐字渲染回答 |
+| 知识库热更新 | 每 30 分钟自动同步 `data/knowledge/` 文件变动 |
+
+### 1.3 技术栈
+
+| 层 | 选型 | 说明 |
+|----|------|------|
+| Web 框架 | Flask | 后端 + SSE 流式接口 |
+| 向量库 | Chroma | 稠密检索持久化，支持 metadata 过滤 |
+| 稀疏检索 | BM25（rank-bm25） | 关键词检索，弥补向量语义检索的精确匹配盲区 |
+| Embedding | bge-m3（Ollama） | 1024 维，多语言，本地运行 |
+| 生成模型 | qwen2.5:7b（Ollama） | 主回答模型 |
+| 意图分类 | bge-m3 + PyTorch Linear 分类头 | 本地推理，毫秒级 |
+| 文档解析 | pypdf + Docling + 标准库 | 多策略按扩展名分发 |
+
+---
+
+## 二、系统架构
+
+### 2.1 总览
+
+```
+┌─────────────┐      ┌──────────────────────────────────────────────┐
+│  前端页面    │ HTTP │              Flask 后端 (webapp/app.py)       │
+│ index.html  │◄────►│  /api/chat/stream   /api/ingest  /api/reset   │
+└─────────────┘ SSE  └───────────────┬──────────────────────────────┘
+                                      │ 调用
+                          ┌───────────▼────────────┐
+                          │   agent.py（编排层）    │
+                          └───────────┬────────────┘
+          ┌───────────────────────────┼───────────────────────────┐
+          │                           │                           │
+   ┌──────▼──────┐          ┌─────────▼─────────┐        ┌────────▼────────┐
+   │ intent_router│          │ metadata_extractor│        │  hybrid_retriever│
+   │ 意图分类      │          │ 价格/预算解析      │        │  双路召回         │
+   └─────────────┘          └───────────────────┘        └────────┬────────┘
+                                                                  │
+                                    ┌─────────────────┬───────────┘
+                              ┌─────▼──────┐   ┌──────▼──────┐   ┌────────────┐
+                              │ DenseRetriever│  │SparseRetriever│ │ rrf_fusion │
+                              │  Chroma 向量  │   │    BM25      │   │   RRF 融合 │
+                              └─────┬──────┘   └──────┬──────┘   └─────┬──────┘
+                                    │                 │                │
+                                    └─────────┬───────┘                │
+                                              ▼                        ▼
+                                      ┌───────────────┐         ┌──────────┐
+                                      │  Chroma 向量库 │         │ 融合结果  │
+                                      └───────────────┘         └──────────┘
+```
+
+### 2.2 问答数据流
+
+```
+用户 query
+  → intent_router.route_intent(query)
+      （bge-m3 embedding → Linear(1024→4) 分类头，输出四类意图）
+      ├─ other（领域外）   → 礼貌拒答，直接返回
+      ├─ casual（闲聊）    → 走 LLM 自然回应
+      ├─ unknown（模糊）   → 随机软引导语 + 继续 RAG
+      └─ robot（领域内）   → 继续
+  → 日期工具调用（function_tools/date_tool）
+      检测时间表达（"最近半年"/"2025年三月"）→ 规则解析或 LLM function calling → 日期范围
+  → metadata_extractor.build_filter(query)
+      检测预算约束（"1000以内" → {"min_price": {"$lte": 1000}}）
+      合并价格 + 日期 filter（$and）
+      ├─ 有结构化约束 → search_by_filter 精确枚举 → 代码拼接列表直出
+      └─ 无约束 → hybrid_retriever.search(query)
+             ├─ DenseRetriever：query 向量化 → Chroma HNSW 检索 top-10
+             ├─ SparseRetriever：BM25 关键词打分 top-10
+             └─ RRF 融合两路排名 → top-8
+  → LLM（qwen2.5:7b）基于检索结果生成自然语言回答
+  → SSE 流式返回，前端逐字渲染
+```
+
+---
+
+## 三、目录结构
+
+```
+clean_robot_agent/
+├── config/                      # 配置（实际 + 模板）
+│   ├── agent.yaml               # LLM 模型、温度、行为开关
+│   ├── rag.yaml                 # 分块、检索、RRF 参数
+│   ├── chroma.yaml              # Chroma 持久化、embedding 模型
+│   ├── prompts.yaml             # prompt 文件路径映射
+│   └── *_template.yaml          # 模板（含注释，git 提交；实际配置 gitignore）
+├── data/
+│   ├── knowledge/               # 知识库源文件（热更新监控目录）
+│   ├── knowledge_example/       # 知识库格式模板示例
+│   ├── datasets/                # 意图分类训练数据集
+│   ├── bgm_model/               # 训练好的意图分类头（gitignore）
+│   ├── pkl/                     # BM25 pickle 缓存（gitignore）
+│   ├── state/                   # 热更新指纹快照（gitignore）
+│   └── vector_store/            # Chroma 向量库（gitignore）
+├── prompts/                     # prompt 模板
+│   ├── main_prompts.txt         # 主 system prompt（角色/规则/闲聊/兜底话术）
+│   ├── rag_summarize_prompts.txt  # 预留：RAG 摘要模板（当前未接线）
+│   └── report_prompts.txt         # 预留：报告生成模板（未接线）
+├── tools/                       # 核心模块（详见第四节）
+├── function_tools/              # LLM 工具调用（function calling）工具
+│   └── date_tool.py             # 日期计算工具（绝对/相对日期 → 日期范围）
+├── intent_classifier_training/  # 意图分类训练工具
+│   ├── build_intent_dataset.py  # 数据集构建
+│   └── train_intent_classifier.py # 分类头训练
+├── webapp/
+│   ├── app.py                   # Flask 后端
+│   └── templates/index.html     # 聊天前端（含抽屉知识库管理）
+├── Multi_Route_Retrieval/       # 独立 demo（双路召回原型，保留未集成）
+├── temp/                        # 数据处理脚本（独立用途，不参与运行）
+├── requirements.txt
+├── .gitignore
+└── README.md / project_detail.md
+```
+
+---
+
+## 四、核心模块详解
+
+### 4.1 agent.py —— 编排层
+
+系统入口 `ask_stream(query)`，是一个生成器，按意图分流：
+
+```python
+def ask_stream(query):
+    intent = route_intent(query)          # 意图分类
+    if intent == "other":                 # 领域外拒答
+        yield 拒答话术; return
+    if intent == "casual":                # 闲聊
+        yield LLM自然回应; return
+    if intent == "unknown":               # 模糊引导
+        yield 随机引导语 + "\n\n"
+    # robot / unknown 继续
+    metadata_filter = build_filter(query)  # 预算检测
+    if metadata_filter:                    # 预算 → 结构化直出
+        models = search_by_filter(...)     # 精确枚举
+        yield 拼接的型号列表; return
+    chunks = hr.search(query)              # 双路召回
+    # 拼接 prompt → LLM 流式生成
+```
+
+**设计要点**：
+- 意图路由前置，避免领域外问题污染检索
+- 预算类问题走「结构化直出」而非 LLM 转述——LLM 会漏型号、混格式、产生幻觉，代码拼接 100% 可靠
+
+### 4.2 intent_router.py —— 意图分类
+
+当前实现：**本地分类头**（bge-m3 embedding + `nn.Linear(1024→4)`）。
+
+```python
+def route_intent(query):
+    head, labels = _load_model()          # 懒加载分类头
+    vec = embed_documents([query])[0]     # bge-m3 向量
+    logits = head(vec)                    # 前向，毫秒级
+    return labels[argmax(logits)]         # robot/other/casual/unknown
+```
+
+**四类意图**：
+
+| 标签 | 含义 | 处理 |
+|------|------|------|
+| robot | 扫地机器人领域 | 正常检索 |
+| other | 明确领域外 | 拒答 |
+| casual | 闲聊问候 | 自然回应 |
+| unknown | 无法确定 | 软引导 + RAG |
+
+**演进历史**（重要，理解为什么这样做）：
+1. 关键词词典 → 覆盖不全（"飞机"漏判）
+2. 3b LLM 分类 → 慢（1-2 秒），专业术语误判（"边刷"判 other）
+3. 深度学习分类头 → 快（约 1.1 秒，瓶颈在 embedding），准确率 96.91%
+
+### 4.3 hybrid_retriever.py —— 双路召回
+
+```python
+def search(query, filter=None):
+    dense_results  = self.dense.search(query, filter=filter)   # 向量 top-10
+    sparse_results = self.sparse.search(query, filter=filter)  # BM25 top-10
+    fused = reciprocal_rank_fusion(dense_results, sparse_results)  # RRF → top-8
+    return [doc for doc, _, _ in fused]
+```
+
+**为什么双路**：稠密检索擅长语义近似（"水痕"≈"水渍"），但精确关键词（"边刷"）会被同类别词稀释；BM25 精确命中关键词，但缺乏同义词理解。两者 RRF 融合取长补短。
+
+### 4.4 vector_store.py —— 稠密检索 + 入库
+
+核心函数：
+
+| 函数 | 职责 |
+|------|------|
+| `ingest_file` | 单文件入库：解析 → 条目分块 → 提取价格 metadata → 向量化写入 Chroma |
+| `ingest_data_dir` | 批量入库 `data/knowledge/` |
+| `DenseRetriever.search` | 向量检索 + metadata 过滤 |
+| `search_by_filter` | **返回所有**符合 metadata 条件的 chunk（无 top-k 限制，用于预算完整枚举） |
+| `build_hybrid_index` | 从 Chroma 读 chunk 构建 BM25 索引（支持 pickle 缓存） |
+
+### 4.5 entry_splitter.py —— 编号条目分块
+
+**核心设计**：知识库是"编号条目列表"格式（`1. **标题**`），用字符数硬切（RecursiveCharacterTextSplitter）会把多个条目切进一个 chunk，导致 metadata 无法精确对应。
+
+分块器识别 `数字. ` 边界，**每个条目一个 chunk**：
+
+```
+1. **米家扫拖机器人 M20**     → chunk1（价格 899）
+   - 吸力：2800Pa
+   - 参考价：899
+2. **追觅 D10s**              → chunk2（价格 1099）
+   - 参考价：1099
+```
+
+这样每个 chunk 的 `min_price == max_price == 该型号价格`，metadata 精确对应。
+
+### 4.6 metadata_extractor.py —— 结构化元数据
+
+三个职责：
+
+1. **入库时提取**（`extract_price_metadata`）：从 chunk 文本扫描"参考价：XXX"，写入 `min_price`/`max_price`
+2. **检索时解析**（`build_filter`）：从 query 提取预算约束（"1000以内" → `{"min_price": {"$lte": 1000}}`），支持中文数字（"一千"→1000）
+3. **直出时格式化**（`extract_model_info` + `format_model_line`）：从型号 chunk 提取型号名/吸力/导航/避障，拼成统一格式
+
+### 4.7 hot_ingest.py —— 热更新
+
+后台 daemon 线程每 30 分钟：
+
+```
+扫描 data/knowledge/ → 计算每个文件 MD5 → 与快照对比
+  ├─ added    → ingest_file 入库
+  ├─ changed  → 删旧 chunk + 重新入库
+  ├─ removed  → 按 file_name 删 chunk
+  └─ 无变化    → 跳过
+更新快照 + 重建 BM25 索引
+```
+
+### 4.8 file_tools.py —— 文档解析
+
+按扩展名多策略分发：
+
+| 格式 | 解析方式 |
+|------|---------|
+| .txt/.md | 标准库直接读（UTF-8，多编码回退） |
+| .pdf | pypdf（文本型 PDF；扫描件回退 Docling OCR） |
+| .csv | 标准库 csv |
+| .docx/.pptx/.xlsx | Docling |
+
+### 4.9 function_tools/date_tool.py —— 日期计算工具
+
+LLM function calling 的日期工具。核心函数：
+
+| 函数 | 职责 |
+|------|------|
+| `parse_absolute_date` | 解析绝对日期："2025年三月"/"2025年3月"/"2025年" → 日期范围 |
+| `parse_relative_date` | 解析相对日期："最近半年"/"近三个月"/"今年"/"去年" → 日期范围 |
+| `parse_date` | 统一入口（先绝对后相对） |
+| `calc_date_range` | 工具执行器（LLM 发出 tool_call 后由 agent 调用） |
+| `build_date_filter` | 日期范围 → Chroma `where` filter |
+
+**设计要点**：
+- 规则解析优先（快、可靠），LLM function calling 兜底（覆盖规则未覆盖的表达）
+- publish_date 以 int（YYYYMMDD）存储，因为 Chroma 的 `$gte/$lte` 只接受 int/float，不接受字符串
+- 日期范围用 `$and` 组合两个单操作符条件（Chroma 要求每个表达式只能有一个操作符）
+
+**调用流程**（agent.py `_resolve_date_filter`）：
+```
+query 含时间表达？
+  → 规则 parse_date 命中 → 直接得到日期范围
+  → 规则未命中 + 含时间 hint → LLM function calling（chat_with_tools + DATE_TOOL_SCHEMA）
+       → LLM 返回 tool_call → calc_date_range 执行 → 日期范围
+  → build_date_filter → 与预算 filter 合并（$and）
+```
+
+---
+
+## 五、技术决策记录（ADR）
+
+> 记录关键决策及原因，帮助新成员理解"为什么这么做"。
+
+### ADR-1：embedding 模型 qwen3-embedding → bge-m3
+
+**原因**：qwen3-embedding:0.6b（600MB）对中文语义分辨力不足，检索相似度分数偏低（最低 0.22）。换 bge-m3（1.2GB）后，语义检索质量显著提升。
+
+### ADR-2：分块从字符硬切 → 编号条目分块
+
+**原因**：知识库是编号条目格式，字符硬切（chunk_size=600）把 3-5 个条目塞进一个 chunk，embedding 语义被稀释，metadata 无法精确对应型号价格。改为每条目一个 chunk 后，预算过滤从"模糊区间"变为"精确价格"。
+
+### ADR-3：预算查询用"结构化直出"而非 LLM 转述
+
+**原因**：小模型（≤7b）转述检索结果时会漏型号、混格式、产生幻觉。既然 metadata 已精确，直接用代码拼接型号列表，100% 可靠。这是"结构化问题用代码，非结构化问题用 LLM"的体现。
+
+### ADR-4：意图分类从 LLM → 深度学习分类头
+
+**原因**：意图分类本质是文本分类任务，不需要大模型。3b LLM 分类慢（1-2 秒）且专业术语误判（"边刷"被判 other）。改为 bge-m3 + Linear 分类头后，速度提升、专业术语可通过训练数据解决。
+
+### ADR-5：训练数据必须与推理分布一致
+
+**原因**：最初从知识库抽取的 robot 样本是陈述句（"故障现象：xxx"），而真实用户问的是疑问句（"xx怎么办"），导致训练 100% 但推理严重误判。通过规则改写（"故障现象：xx"→"xx怎么办？"）对齐分布后，推理恢复正常。
+
+### ADR-6：SSE 流式传输用 JSON 编码
+
+**原因**：结构化直出的大 chunk 含 `\n` 换行，与 SSE 事件分隔符 `\n\n` 冲突，导致前端截断。用 `json.dumps` 编码每个 chunk，换行转义成字面量 `\n`，前端 `JSON.parse` 解码，彻底解决。
+
+### ADR-7：日期工具用规则优先 + LLM function calling 兜底
+
+**原因**：日期表达（"最近半年""2025年三月"）高度规则，正则解析又快又准；但用户表达千变万化，规则无法穷举。因此规则解析优先，命中直接返回；未命中且含时间 hint 时，才走 LLM function calling 兜底，兼顾速度与覆盖。
+
+### ADR-8：publish_date 用 int（YYYYMMDD）存储
+
+**原因**：Chroma 的 `$gte/$lte` 过滤只接受 int/float 操作数，不接受字符串。若 publish_date 存 ISO 字符串（"2025-03-15"），日期过滤会报错。改用 int（20250315）后，数值比较天然满足字典序，且符合 Chroma 的类型约束。
+
+---
+
+## 六、已知问题与坑
+
+### 6.1 当前已知问题
+
+| 问题 | 影响 | 状态 |
+|------|------|------|
+| 意图分类对"电池续航"等无领域词边界 case | "电池续航下降怎么办"偶发误判 other（robot 48% vs other 50%）| 语义固有歧义 |
+| 单轮分类无法处理多轮指代 | "值不值得买"无法指代上文 | 待多轮功能加入 |
+
+### 6.2 开发中的坑（避坑指南）
+
+1. **Ollama embedding 批量崩溃**：一次 embed 500+ 条触发 Ollama 内部 tokenize 服务（62633 端口）崩溃，需分批（64 条/批）处理。
+2. **端口残留**：Flask 多次启动后 5050 端口被旧进程占用，导致请求打到旧代码。排查时先 `netstat -ano | findstr 5050` 清理残留进程。
+3. **CRLF 换行**：Windows 下文件用 CRLF，部分编辑工具按 LF 匹配失败。可用 Python 脚本或完整 Read+Write 重写。
+4. **中文编码**：Windows 默认 GBK，读 txt 用 UTF-8 需显式指定；Docling 处理 PDF 在 GBK 环境下会崩，需 `PYTHONUTF8=1`。
+
+---
+
+## 七、未来规划
+
+### 7.1 多轮对话上下文
+
+当前意图分类是单轮的，无法处理"值不值得买"这类指代上文的问题。方案：分类时拼接最近 1-3 轮历史（bge-m3 支持 8192 token，安全区间 512 token 内），或混合方案（单轮用分类头、多轮用 LLM）。
+
+### 7.2 Function Calling / Tool Use（已部分实现）
+
+已落地日期工具（`function_tools/date_tool.py`），qwen2.5:7b 的 function calling 能力已验证可用。后续可扩展更多工具：`query_products(预算)`、`search_faq(query)`、`check_order(订单号)` 等。新增工具统一放 `function_tools/`，提供 `*_TOOL_SCHEMA` + 执行函数即可。
+
+### 7.3 意图分类数据集扩充
+
+当前 487 条（robot 336 + other 59 + casual 39 + unknown 53），robot 占比偏高。需补充"预算推荐""天气"等边界样本，并考虑数据平衡。
+
+---
+
+## 八、开发约定
+
+1. **日志用英文**：logger 消息统一英文（历史中文已清理）
+2. **日志分级**：召回详情用 DEBUG，汇总数用 INFO；控制台彩色（INFO 白/WARN 黄/ERROR 红）
+3. **配置模板化**：敏感/本地配置写 `*_template.yaml` 提交，实际配置 gitignore
+4. **导入风格**：tools 内部用直接导入（`from log_tool import`），webapp 用包导入（`from tools.xxx import`），两者都靠 sys.path 同时包含项目根和 tools 目录
+5. **知识库格式**：编号条目（`数字. ` + `**标题**` + `- 参数`），详见 `data/knowledge_example/格式模板.txt`

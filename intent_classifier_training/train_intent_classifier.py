@@ -1,12 +1,12 @@
-"""Train a 4-class intent classifier head on top of bge-m3 embeddings.
+"""在 bge-m3 embedding 之上训练一个 4 分类的意图分类头。
 
-Pipeline:
-  1. Load data/datasets/intent_dataset.jsonl
-  2. Embed every sample with local Ollama bge-m3 (1024-dim)
-  3. Split train/test (80/20)
-  4. Train a Linear(1024 → 4) head with torch
-  5. Evaluate accuracy + per-class F1
-  6. Save head weights + label mapping to data/bgm_model/
+流程：
+  1. 加载 data/datasets/intent_dataset.jsonl
+  2. 使用本地 Ollama bge-m3（1024 维）对每个样本进行 embedding
+  3. 划分训练集/测试集（80/20）
+  4. 使用 torch 训练一个 Linear(1024 → 4) 分类头
+  5. 评估准确率 + 每个类别的 F1
+  6. 将分类头权重与标签映射保存到 data/bgm_model/
 """
 
 import json
@@ -25,7 +25,7 @@ from llm_tool import get_embedding_model
 
 _DATASET_PATH = "data/datasets/intent_dataset.jsonl"
 _MODEL_DIR = "data/bgm_model"
-_LABELS = ["robot", "other", "casual", "unknown"]  # fixed order
+_LABELS = ["robot", "other", "casual", "unknown"]  # 固定顺序
 
 _SEED = 42
 _EPOCHS = 200
@@ -58,7 +58,7 @@ def main():
     labels = [_LABELS.index(r["label"]) for r in rows]
     print(f"数据集: {len(rows)} 条")
 
-    # Embed all samples via Ollama bge-m3 (batched to avoid tokenize crash)
+    # 通过 Ollama bge-m3 对所有样本进行 embedding（分批处理以避免分词崩溃）
     print("生成 bge-m3 embedding...")
     emb = get_embedding_model()
     embs = []
@@ -71,7 +71,7 @@ def main():
     y = np.array(labels, dtype=np.int64)
     print(f"embedding 形状: {X.shape}")
 
-    # Stratified train/test split: guarantee every class appears in both sets
+    # 分层划分训练/测试集：确保每个类别都同时出现在两个集合中
     n = len(rows)
     train_idx, test_idx = [], []
     for label in range(len(_LABELS)):
@@ -84,10 +84,10 @@ def main():
     X_test, y_test = X[test_idx], y[test_idx]
     print(f"train={len(train_idx)} test={len(test_idx)}")
 
-    # Model: Linear(1024 -> 4)
+    # 模型：Linear(1024 -> 4)
     model = nn.Linear(X.shape[1], len(_LABELS))
-    # Class-balanced weights to counteract the robot-heavy distribution.
-    # Guard against zero-count classes (would otherwise blow up the weight).
+    # 类别平衡权重，用于抵消 robot 类样本占比过高带来的影响。
+    # 防止出现零样本类别（否则权重会爆炸）。
     class_counts = np.bincount(y_train, minlength=len(_LABELS)).astype(np.float32)
     safe_counts = np.where(class_counts > 0, class_counts, 1.0)
     class_weights = safe_counts.sum() / (len(_LABELS) * safe_counts)
@@ -113,7 +113,7 @@ def main():
         if (epoch + 1) % 10 == 0:
             print(f"  epoch {epoch+1}/{_EPOCHS}  loss={total_loss/len(Xt):.4f}")
 
-    # Evaluate
+    # 评估
     model.eval()
     with torch.no_grad():
         logits = model(torch.tensor(X_test))
@@ -122,7 +122,7 @@ def main():
     acc = (pred == y_test).mean()
     print(f"\n测试集准确率: {acc:.4f}")
 
-    # Per-class F1
+    # 每个类别的 F1
     from collections import defaultdict
     tp = defaultdict(int)
     fp = defaultdict(int)
@@ -140,7 +140,7 @@ def main():
         f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
         print(f"  {name:8s}  F1={f1:.4f}  (tp={tp[i]}, fp={fp[i]}, fn={fn[i]})")
 
-    # Save model + label mapping
+    # 保存模型 + 标签映射
     os.makedirs(_abs(_MODEL_DIR), exist_ok=True)
     torch.save(model.state_dict(), os.path.join(_abs(_MODEL_DIR), "classifier_head.pt"))
     with open(os.path.join(_abs(_MODEL_DIR), "labels.json"), "w", encoding="utf-8") as f:

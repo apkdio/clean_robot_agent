@@ -1,16 +1,15 @@
-"""RRF (Reciprocal Rank Fusion) — merge heterogeneous ranked lists into one.
+"""RRF（倒数排名融合）—— 将异构的排名列表合并为一个。
 
-Merges dense (vector similarity) and sparse (BM25 keyword) result lists
-using only rank positions, not raw scores, so different score scales
-don't interfere with each other.
+仅使用排名位置而非原始分数来合并稠密（向量相似度）与稀疏（BM25 关键词）结果列表，
+这样不同分数尺度就不会相互干扰。
 
-Formula for each candidate document d:
-    RRF_score(d) = sum over retrievers i of:  w_i / (k + rank_i(d))
+每个候选文档 d 的公式：
+    RRF_score(d) = 对每个检索器 i 求和： w_i / (k + rank_i(d))
 
-where:
-    k     = smoothing constant (typ. 60)
-    w_i   = weight for retriever i
-    rank_i(d) = rank of d in retriever i (starting from 1)
+其中：
+    k     = 平滑常数（通常为 60）
+    w_i   = 检索器 i 的权重
+    rank_i(d) = d 在检索器 i 中的排名（从 1 开始）
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ _retrieval_cfg = _rag_cfg.get("retrieval", {})
 
 
 def _doc_id(doc: Document) -> str:
-    """Use page_content hash as document identity for dedup."""
+    """使用 page_content 哈希作为文档身份用于去重。"""
     return doc.page_content
 
 
@@ -42,18 +41,18 @@ def reciprocal_rank_fusion(
     dense_weight: float | None = None,
     sparse_weight: float | None = None,
 ) -> List[Tuple[Document, float, Dict]]:
-    """Fuse dense and sparse retrieval results via RRF.
+    """通过 RRF 融合稠密与稀疏检索结果。
 
-    Args:
-        dense_results:  [(doc, cosine_score), ...] sorted descending
-        sparse_results: [(doc, bm25_score), ...] sorted descending
-        k:              RRF smoothing constant (default from rag.yaml)
-        top_k:          number of results to return (default from rag.yaml)
-        dense_weight:   weight for dense route
-        sparse_weight:  weight for sparse route
+    参数：
+        dense_results:  [(doc, cosine_score), ...] 降序排列
+        sparse_results: [(doc, bm25_score), ...] 降序排列
+        k:              RRF 平滑常数（默认来自 rag.yaml）
+        top_k:          返回结果数量（默认来自 rag.yaml）
+        dense_weight:   稠密通道权重
+        sparse_weight:  稀疏通道权重
 
-    Returns:
-        [(doc, rrf_score, meta), ...] sorted by RRF score descending.
+    返回：
+        [(doc, rrf_score, meta), ...]，按 RRF 分数降序排列。
         meta = {"dense_rank": int|None, "sparse_rank": int|None, "rrf_score": float}
     """
     k = k if k is not None else _rrf_cfg.get("k", 60)
@@ -61,7 +60,7 @@ def reciprocal_rank_fusion(
     dense_weight = dense_weight if dense_weight is not None else _rrf_cfg.get("dense_weight", 1.0)
     sparse_weight = sparse_weight if sparse_weight is not None else _rrf_cfg.get("sparse_weight", 1.0)
 
-    # Build {doc_id → rank} maps
+    # 构建 {doc_id → rank} 映射
     dense_ranks: Dict[str, int] = {}
     for rank, (doc, _) in enumerate(dense_results, start=1):
         dense_ranks[_doc_id(doc)] = rank
@@ -70,14 +69,14 @@ def reciprocal_rank_fusion(
     for rank, (doc, _) in enumerate(sparse_results, start=1):
         sparse_ranks[_doc_id(doc)] = rank
 
-    # Collect all unique candidates
+    # 收集所有去重后的候选
     all_keys = set(dense_ranks.keys()) | set(sparse_ranks.keys())
 
-    # Miss penalty: rank = result_count + 100 → contribution ≈ 0
+    # 缺失惩罚：rank = result_count + 100 → 贡献 ≈ 0
     d_penalty = len(dense_results) + 100
     s_penalty = len(sparse_results) + 100
 
-    # {doc_id → Document} lookup
+    # {doc_id → Document} 查找表
     doc_map: Dict[str, Document] = {}
     for d, _ in dense_results:
         doc_map.setdefault(_doc_id(d), d)

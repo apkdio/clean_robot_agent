@@ -7,6 +7,7 @@
 - **双路召回**：稠密检索（bge-m3 向量）+ 稀疏检索（BM25 关键词）→ RRF 融合，兼顾语义近似与精确关键词匹配
 - **意图分类**：本地深度学习分类头（bge-m3 embedding + Linear 分类器）前置判断用户意图，毫秒级推理
 - **结构化查询**：识别"预算 1000 以内"等价格约束，通过 Chroma metadata 过滤精确枚举预算内产品
+- **工具调用**：LLM function calling，内置日期计算工具，支持"最近半年""2025年三月"等时间范围新品查询
 - **流式输出**：SSE 流式返回答案，前端逐字渲染
 - **知识库热更新**：每 30 分钟自动扫描 `data/knowledge/`，检测文件增删改并增量入库
 - **多轮友好**：领域外问题礼貌拒答，模糊问题软引导，闲聊自然回应
@@ -41,6 +42,8 @@ clean_robot_agent/
 │   └── vector_store/            # Chroma 持久化向量库
 ├── prompts/                     # Prompt 模板（system/摘要/报告）
 ├── tools/                       # 核心工具模块（详见下节）
+├── function_tools/              # LLM 工具调用（function calling）工具
+│   └── date_tool.py             # 日期计算工具（绝对/相对日期 → 日期范围）
 ├── intent_classifier_training/  # 意图分类模型训练工具
 │   ├── build_intent_dataset.py  # 数据集构建（从知识库抽取 + 规则改写）
 │   └── train_intent_classifier.py # 分类头训练脚本
@@ -61,13 +64,19 @@ clean_robot_agent/
 | `vector_store.py` | Chroma 稠密检索、入库、metadata 过滤、稀疏索引构建 |
 | `sparse_retriever.py` | BM25 关键词检索（含 pickle 持久化缓存） |
 | `rrf_fusion.py` | RRF（倒数排名融合）算法 |
-| `metadata_extractor.py` | 结构化元数据：价格提取、预算解析、型号信息抽取 |
+| `metadata_extractor.py` | 结构化元数据：价格提取、预算解析、发布时间提取、型号信息抽取 |
 | `entry_splitter.py` | 编号条目分块器（每个问答/型号一个 chunk） |
 | `hot_ingest.py` | 知识库热更新：定时扫描 + 增量入库 |
 | `file_tools.py` | 文档多策略解析（txt/pdf/csv/docx） |
-| `llm_tool.py` | LLM / embedding 工厂（OpenAI 兼容端点连 Ollama） |
+| `llm_tool.py` | LLM / embedding 工厂（含 function calling） |
 | `log_tool.py` | 日志（控制台彩色 + 文件） |
 | `config_tool.py` / `path_tool.py` / `prompts_tool.py` | 配置 / 路径 / Prompt 加载 |
+
+## 工具调用模块（function_tools/）
+
+| 模块 | 职责 |
+|------|------|
+| `date_tool.py` | 日期计算工具：`calc_date_range` 把"最近半年""2025年三月"等表达换算成日期范围 |
 
 ## 快速开始
 
@@ -128,6 +137,7 @@ python webapp/app.py
 - 型号名/问题用 `**加粗**`
 - 参数用 `｜` 分隔，值内不能有空格
 - 价格独立一行 `参考价：数字`
+- 发布时间独立一行 `发布时间：YYYY-MM-DD`（用于"最近半年""2025年三月"等新品查询）
 
 **热更新**：放入新文件后，系统每 30 分钟自动检测并入库；重启 Flask 会立即触发一次扫描。
 
@@ -164,6 +174,7 @@ python intent_classifier_training/train_intent_classifier.py
       ├─ casual（闲聊）→ 自然回应
       ├─ unknown（模糊）→ 软引导 + RAG
       └─ robot（领域内）
+          ├─ 含日期 → 日期工具（规则解析 / LLM function calling）→ 日期范围
           ├─ 含预算 → metadata 过滤 → 结构化直出型号列表
           └─ 其他 → 双路召回（dense+sparse→RRF）→ LLM 生成
   → 流式输出（SSE）

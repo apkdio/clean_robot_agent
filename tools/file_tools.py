@@ -7,11 +7,11 @@ from log_tool import get_logger
 
 logger = get_logger(name="file_tools")
 
-# Plain text extensions: read directly via stdlib, fast and no GBK garbling
+# 纯文本扩展名：直接用标准库读取，速度快且不会出现 GBK 乱码
 _TEXT_EXTS = (".txt", ".md", ".markdown", ".asciidoc", ".adoc")
-# PDF: prefer pypdf (pure Python, fast, no compiler dependency); fall back to Docling
+# PDF：优先使用 pypdf（纯 Python、速度快、无编译器依赖）；失败时回退到 Docling
 _PDF_EXTS = (".pdf",)
-# Structured document extensions: parsed by Docling (DOCX/PPTX/XLSX/HTML etc.)
+# 结构化文档扩展名：由 Docling 解析（DOCX/PPTX/XLSX/HTML 等）
 _DOC_EXTS = (
     ".docx", ".doc", ".pptx", ".ppt",
     ".xlsx", ".xls", ".odt", ".ods", ".odp", ".html", ".htm", ".epub",
@@ -19,14 +19,14 @@ _DOC_EXTS = (
 
 
 def get_file_md5_hex(file_path: str):
-    """Calculate file MD5 hash. Reads in binary mode, no encoding involved."""
+    """计算文件 MD5 哈希。以二进制模式读取，不涉及编码。"""
     if not os.path.isfile(file_path):
         logger.error(f"[MD5 Module] File {file_path} not found.")
         return None
     md5_obj = hashlib.md5()
     chunk_size = 4096  # 4KB
     try:
-        # Note: binary mode must not take an encoding argument
+        # 注意：二进制模式不能传入 encoding 参数
         with open(file_path, "rb") as f:
             while chunk := f.read(chunk_size):
                 md5_obj.update(chunk)
@@ -37,7 +37,7 @@ def get_file_md5_hex(file_path: str):
 
 
 def _read_text_file(file_path: str) -> list[Document]:
-    """Read a plain-text file via stdlib with explicit UTF-8 to avoid garbled Chinese."""
+    """用标准库读取纯文本文件，显式指定 UTF-8 以避免中文乱码。"""
     docs = []
     for encoding in ("utf-8", "utf-8-sig", "gbk", "gb18030"):
         try:
@@ -55,7 +55,7 @@ def _read_text_file(file_path: str) -> list[Document]:
 
 
 def _read_csv_file(file_path: str) -> list[Document]:
-    """Read a CSV file via stdlib, joining rows into a single text block."""
+    """用标准库读取 CSV 文件，将各行合并为单个文本块。"""
     import csv
     docs = []
     try:
@@ -78,15 +78,15 @@ def _read_csv_file(file_path: str) -> list[Document]:
 
 
 def _read_with_docling(file_path: str) -> list[Document]:
-    """Parse a structured document (PDF/DOCX/PPTX/XLSX etc.) using Docling.
+    """使用 Docling 解析结构化文档（PDF/DOCX/PPTX/XLSX 等）。
 
-    Docling may hit GBK encoding issues on Chinese Windows when reading text/PDF;
-    forcing UTF-8 mode (PYTHONUTF8) prevents the crash.
+    在中文 Windows 上读取文本/PDF 时，Docling 可能会遇到 GBK 编码问题；
+    强制开启 UTF-8 模式（PYTHONUTF8）可避免崩溃。
     """
-    # Ensure the process runs in UTF-8 mode to avoid torch/docling GBK decode crashes
+    # 确保进程以 UTF-8 模式运行，避免 torch/docling 的 GBK 解码崩溃
     os.environ.setdefault("PYTHONUTF8", "1")
     if getattr(sys, "flags", None) is not None and not sys.flags.utf8_mode:
-        # Cannot enable UTF-8 mode after startup; set env var for child processes at least
+        # 启动后无法再开启 UTF-8 模式；至少为子进程设置环境变量
         logger.warning("[Docling] UTF-8 mode not enabled; recommend running with PYTHONUTF8=1.")
 
     try:
@@ -109,10 +109,10 @@ def _read_with_docling(file_path: str) -> list[Document]:
 
 
 def _read_pdf_file(file_path: str) -> list[Document]:
-    """Read a PDF with pypdf (pure Python, fast, no compiler dependency).
+    """使用 pypdf 读取 PDF（纯 Python、速度快、无编译器依赖）。
 
-    pypdf works well for text-based PDFs; if it extracts no text (e.g. scanned PDF),
-    falls back to Docling (requires OCR and may fail without a C++ compiler).
+    pypdf 对基于文本的 PDF 效果良好；如果提取不到文本（例如扫描版 PDF），
+    则回退到 Docling（需要 OCR，且在没有 C++ 编译器时可能失败）。
     """
     try:
         from pypdf import PdfReader
@@ -138,12 +138,12 @@ def _read_pdf_file(file_path: str) -> list[Document]:
 
 
 def extract_file(file_path: str) -> list[Document]:
-    """Choose a parsing strategy by file extension and return a list of langchain Documents.
+    """按文件扩展名选择解析策略，返回 langchain Document 列表。
 
-    - .txt/.md etc.: stdlib direct read (fast, no garbling)
-    - .csv: stdlib csv read
-    - .pdf: pypdf first (fast), scanned fallback to Docling
-    - .docx/.pptx etc.: Docling parse
+    - .txt/.md 等：标准库直接读取（快、不乱码）
+    - .csv：标准库 csv 读取
+    - .pdf：先用 pypdf（快），扫描件回退到 Docling
+    - .docx/.pptx 等：Docling 解析
     """
     if not os.path.isfile(file_path):
         logger.error(f"[Extract File] {file_path} does not exist or is not a file.")
@@ -167,6 +167,6 @@ def extract_file(file_path: str) -> list[Document]:
         logger.info(f"[Extract] Parsing with Docling: {file_path}")
         return _read_with_docling(file_path)
 
-    # Unknown extension, try reading as text
+    # 未知扩展名，尝试按文本读取
     logger.warning(f"[Extract] Unknown extension {ext}; reading as text: {file_path}")
     return _read_text_file(file_path)

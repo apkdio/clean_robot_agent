@@ -1,7 +1,7 @@
-"""Vector store module: chunk, embed, and persist documents into Chroma.
+"""向量库模块：把文档分块、向量化并持久化到 Chroma。
 
-Uses the local Ollama embedding model (qwen3-embedding:0.6b) via the
-OpenAI-compatible endpoint, and Chroma as the persistent vector store.
+通过 OpenAI 兼容端点使用本地 Ollama embedding 模型（bge-m3），
+Chroma 作为持久化向量库。
 """
 
 import os
@@ -23,7 +23,7 @@ _rag_cfg = load_rag_config()
 
 
 def _get_splitter() -> RecursiveCharacterTextSplitter:
-    """Build a text splitter from rag.yaml chunk settings."""
+    """根据 rag.yaml 的分块配置构建文本切分器。"""
     chunk_cfg = _rag_cfg.get("chunk", {})
     return RecursiveCharacterTextSplitter(
         chunk_size=chunk_cfg.get("chunk_size", 500),
@@ -44,7 +44,7 @@ def _get_collection_name() -> str:
 
 
 def get_vector_store() -> Chroma:
-    """Return a Chroma instance backed by the persistent store and local embeddings."""
+    """返回一个基于持久化存储和本地 embedding 的 Chroma 实例。"""
     embedding = get_embedding_model(
         model=_chroma_cfg["embedding"]["model"],
         base_url=_chroma_cfg["embedding"]["base_url"],
@@ -59,15 +59,14 @@ def get_vector_store() -> Chroma:
 
 
 def ingest_file(file_path: str, source_tag: str = "") -> dict:
-    """Parse, chunk, and embed a single file into the vector store.
+    """解析、分块并把单个文件向量化入库。
 
-    Args:
-        file_path: Absolute path to the file to ingest.
-        source_tag: Optional label stored in metadata as 'source'
-                    (defaults to the file name).
+    参数：
+        file_path: 待入库文件的绝对路径。
+        source_tag: 可选标签，作为 metadata 的 'source'（默认用文件名）。
 
-    Returns:
-        dict with status, file, chunks, md5, elapsed.
+    返回：
+        含 status、file、chunks、md5、elapsed 的 dict。
     """
     import time
 
@@ -85,7 +84,7 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
     if not docs:
         return {"status": "error", "file": file_path, "message": "Extraction returned no content."}
 
-    # Chunk the documents: prefer numbered-entry splitter, fall back to generic
+    # 分块：优先用编号条目切分器，失败则回退到通用字符切分
     from entry_splitter import split_numbered_entries
     file_name = os.path.basename(file_path)
     tag = source_tag or file_name
@@ -99,7 +98,7 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
         chunks.extend(entry_chunks)
 
     if not chunks:
-        # No numbered entries → fall back to generic character splitter
+        # 没有编号条目 → 回退到通用字符切分器
         logger.info("[Ingest] No numbered entries, using generic splitter for %s", file_name)
         splitter = _get_splitter()
         chunks = splitter.split_documents(docs)
@@ -111,15 +110,16 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
     if not chunks:
         return {"status": "error", "file": file_path, "message": "Splitting returned no chunks."}
 
-    # Stamp each chunk with structured metadata (price etc.)
-    from metadata_extractor import extract_price_metadata
+    # 给每个 chunk 打上结构化 metadata（价格、发布时间）
+    from metadata_extractor import extract_price_metadata, extract_publish_date
     for chunk in chunks:
         chunk.metadata.setdefault("source", tag)
         chunk.metadata.setdefault("file_name", file_name)
         chunk.metadata["file_md5"] = md5
         chunk.metadata.update(extract_price_metadata(chunk.page_content))
+        chunk.metadata.update(extract_publish_date(chunk.page_content))
 
-    # Persist to Chroma
+    # 持久化到 Chroma
     logger.info(f"[Ingest] Embedding {len(chunks)} chunk(s) from {file_name}")
     store = get_vector_store()
     store.add_documents(chunks)
@@ -136,7 +136,7 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
 
 
 def ingest_directory(dir_path: str) -> list[dict]:
-    """Ingest all supported files in a directory (non-recursive)."""
+    """入库目录下所有支持的文件（非递归）。"""
     exts = tuple(_rag_cfg.get("supported_exts", [".txt", ".pdf"]))
     results = []
     for entry in sorted(os.listdir(dir_path)):
@@ -147,13 +147,13 @@ def ingest_directory(dir_path: str) -> list[dict]:
 
 
 def ingest_data_dir(data_dir: str = None) -> list[dict]:
-    """Ingest all supported files from the knowledge dir into the vector store.
+    """把知识库目录下所有支持的文件入库。
 
-    Args:
-        data_dir: Path to the knowledge directory. Defaults to project_root/data/knowledge.
+    参数：
+        data_dir: 知识库目录路径，默认 project_root/data/knowledge。
 
-    Returns:
-        List of ingest results, one dict per file.
+    返回：
+        入库结果列表，每个文件一个 dict。
     """
     if data_dir is None:
         data_dir = get_abs_path("data/knowledge")
@@ -165,14 +165,14 @@ def ingest_data_dir(data_dir: str = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# DenseRetriever class — wraps Chroma for use in the hybrid (dual-route) pipeline
+# DenseRetriever 类 —— 封装 Chroma，供双路召回流水线使用
 # ---------------------------------------------------------------------------
 
 class DenseRetriever:
-    """Dense retriever backed by the project's Chroma vector store.
+    """基于项目 Chroma 向量库的稠密检索器。
 
-    Provides a clean search() interface that returns (Document, score) tuples,
-    matching the interface expected by rrf_fusion and the hybrid orchestrator.
+    提供简洁的 search() 接口，返回 (Document, score) 元组，
+    与 rrf_fusion 和双路召回编排层期望的接口一致。
     """
 
     def search(
@@ -190,16 +190,16 @@ class DenseRetriever:
 
 
 def search_by_filter(filter: dict) -> list[Document]:
-    """Return ALL chunks matching a metadata filter (no vector ranking).
+    """返回所有匹配 metadata 过滤条件的 chunk（不做向量排序）。
 
-    Used for structured queries (e.g. budget) where we need full enumeration
-    of every in-budget item rather than a similarity-ranked top-k.
+    用于结构化查询（如预算），需要完整枚举每一个预算内条目，
+    而非按相似度排序取 top-k。
 
-    Args:
-        filter: Chroma `where` filter dict, e.g. {"min_price": {"$lte": 1000}}.
+    参数：
+        filter: Chroma `where` 过滤字典，如 {"min_price": {"$lte": 1000}}。
 
-    Returns:
-        List of Documents matching the filter (order not guaranteed).
+    返回：
+        匹配过滤条件的 Document 列表（顺序不保证）。
     """
     store = get_vector_store()
     data = store._collection.get(where=filter, include=["metadatas", "documents"])
@@ -212,27 +212,25 @@ def search_by_filter(filter: dict) -> list[Document]:
 
 
 def build_hybrid_index(sparse_retriever=None) -> int:
-    """Load all stored Chroma chunks and build the BM25 (sparse) index.
+    """读取 Chroma 里所有 chunk，构建 BM25（稀疏）索引。
 
-    This is called after dense ingestion is complete so the sparse retriever
-    has the same chunk set.
+    在稠密入库完成后调用，保证稀疏检索器拥有同一份 chunk 集合。
 
-    Args:
-        sparse_retriever: A SparseRetriever instance. Imported lazily to
-                          avoid circular imports.
+    参数：
+        sparse_retriever: SparseRetriever 实例。懒加载导入以避免循环依赖。
 
-    Returns:
-        Number of chunks indexed in the sparse retriever.
+    返回：
+        稀疏检索器索引的 chunk 数量。
     """
     if sparse_retriever is None:
         from sparse_retriever import SparseRetriever
         sparse_retriever = SparseRetriever()
 
-    # Try to restore from pickle cache first (avoids rebuild on restart)
+    # 先尝试从 pickle 缓存恢复（避免重启后重建）
     if sparse_retriever.load():
         return len(sparse_retriever.chunks)
 
-    # Cache miss or stale — rebuild from Chroma
+    # 缓存缺失或过期 —— 从 Chroma 重建
     store = get_vector_store()
     data = store._collection.get(include=["metadatas", "documents"])
     docs = [
@@ -245,7 +243,7 @@ def build_hybrid_index(sparse_retriever=None) -> int:
 
 
 def list_collections_info() -> dict:
-    """Return basic stats about the current collection."""
+    """返回当前 collection 的基本统计信息。"""
     store = get_vector_store()
     count = store._collection.count()
     return {
@@ -255,10 +253,10 @@ def list_collections_info() -> dict:
 
 
 def reset_collection() -> int:
-    """Delete all chunks in the current collection. Returns previous count."""
+    """清空当前 collection 的所有 chunk。返回清空前的数量。"""
     store = get_vector_store()
     count = store._collection.count()
-    # Delete all by a non-existent id range is unreliable; use metadata filter instead
+    # 用不存在的 id 区间删除不可靠，改用 metadata 过滤删除全部
     store._collection.delete(where={"file_name": {"$ne": "__never__"}})
     logger.warning(f"[Reset] Cleared {count} chunk(s) from collection.")
     return count

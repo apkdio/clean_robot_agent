@@ -1,9 +1,9 @@
-"""Flask web app: knowledge base upload & vectorization management.
+"""Flask Web 应用：知识库上传与向量化管理。
 
-Run:
-  python -m webapp.app          # from project root
-  python webapp/app.py          # or directly
-Then open http://localhost:5050
+运行方式：
+  python -m webapp.app          # 从项目根目录运行
+  python webapp/app.py          # 或直接运行
+然后打开 http://localhost:5050
 """
 
 import os
@@ -11,9 +11,9 @@ import sys
 
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
-# Ensure project root and tools/ are on sys.path.
-# tools/ is needed because modules inside use bare imports
-# (e.g. `from log_tool import`) rather than package-relative imports.
+# 确保项目根目录和 tools/ 位于 sys.path 中。
+# 需要 tools/ 是因为其中的模块使用了裸导入
+# （例如 `from log_tool import`）而非包相对导入。
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _TOOLS_DIR = os.path.join(_PROJECT_ROOT, "tools")
 for _p in (_PROJECT_ROOT, _TOOLS_DIR):
@@ -69,22 +69,22 @@ def ingest():
     if not upload.filename:
         return jsonify({"status": "error", "message": "Empty filename."}), 400
 
-    # Validate extension
+    # 校验扩展名
     ext = os.path.splitext(upload.filename)[1].lower()
     if not ext.endswith(_supported_exts):
         msg = f"Unsupported file type: {ext}. Supported: {', '.join(_supported_exts)}"
         logger.warning(f"[Ingest] {msg}")
         return jsonify({"status": "error", "message": msg}), 400
 
-    # Save to temp/uploads
+    # 保存到 temp/uploads
     save_path = os.path.join(_upload_dir, upload.filename)
     upload.save(save_path)
     logger.info(f"[Ingest] Saved upload: {save_path}")
 
-    # Ingest into vector store
+    # 摄入到向量库
     result = ingest_file(save_path)
 
-    # Clean up temp file after ingestion
+    # 摄入完成后清理临时文件
     try:
         os.remove(save_path)
     except OSError:
@@ -98,7 +98,7 @@ def ingest():
 def reset():
     try:
         deleted = reset_collection()
-        # Invalidate hot-ingest snapshot so next cycle re-ingests from scratch
+        # 使热更新快照失效，以便下一个周期从头重新摄入
         from tools.hot_ingest import invalidate_snapshot
         invalidate_snapshot()
         return jsonify({"status": "ok", "deleted": deleted})
@@ -109,7 +109,7 @@ def reset():
 
 @app.route("/api/chat/stream", methods=["POST"])
 def chat_stream():
-    """Stream answer chunks via Server-Sent Events."""
+    """通过 Server-Sent Events 流式返回回答片段。"""
     data = request.get_json(silent=True)
     if not data or "query" not in data:
         return jsonify({"status": "error", "message": "Missing 'query' in JSON body."}), 400
@@ -123,7 +123,7 @@ def chat_stream():
         import json
         try:
             for chunk in ask_stream(query):
-                # JSON-encode so newlines inside a chunk don't break SSE framing
+                # JSON 编码，避免 chunk 内的换行符破坏 SSE 帧格式
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.error(f"[Stream] {e}")
@@ -139,7 +139,7 @@ def chat_stream():
 
 @app.route("/api/ingest/batch", methods=["POST"])
 def ingest_batch():
-    """Ingest all supported files from the knowledge dir at once."""
+    """一次性摄入知识目录中所有受支持的文件。"""
     data_dir = os.path.join(_PROJECT_ROOT, "data", "knowledge")
     try:
         results = ingest_data_dir(data_dir)
@@ -151,7 +151,7 @@ def ingest_batch():
 
 @app.route("/api/config", methods=["GET"])
 def agent_config():
-    """Return the current agent & retrieval config for the frontend badge."""
+    """返回当前的 agent 与检索配置，用于前端标识。"""
     try:
         agent_cfg = load_agent_config()
         rag_cfg = load_rag_config()
@@ -172,7 +172,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))
     logger.info(f"[WebApp] Starting on http://localhost:{port}")
 
-    # Start hot ingestion daemon (scans data/knowledge every 30 min)
+    # 启动热更新守护线程（每 30 分钟扫描一次 data/knowledge）
     from tools.hot_ingest import start_hot_ingest
     start_hot_ingest()
 

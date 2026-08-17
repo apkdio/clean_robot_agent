@@ -7,7 +7,7 @@ logger = get_logger(name="prompts_tool")
 
 
 def _load_prompt_by_key(key: str) -> str:
-    """Generic loader: look up a path key in prompts.yaml and read the file."""
+    """通用加载器：在 prompts.yaml 中查找路径键并读取文件。"""
     try:
         prompt_path = get_abs_path(prompts_config[key])
     except KeyError as e:
@@ -22,5 +22,5 @@ def _load_prompt_by_key(key: str) -> str:
 
 
 def load_main_prompts() -> str:
-    """Load the main system prompt."""
+    """加载主系统提示词。"""
     return _load_prompt_by_key("main_prompts_path")

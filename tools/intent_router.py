@@ -1,10 +1,9 @@
-"""Intent router: classify query with a local bge-m3 + trained classifier head.
+"""意图路由：用本地 bge-m3 + 训练好的分类头判断用户意图。
 
-The 4-class head (Linear 1024→4) was trained on data/datasets/ and saved to
-data/bgm_model/. At inference we embed the query with Ollama bge-m3 and run
-the head forward — far faster than an LLM classifier.
+四分类头（Linear 1024→4）由 data/datasets/ 训练得到，保存在 data/bgm_model/。
+推理时用 Ollama bge-m3 把 query 向量化，再跑分类头前向——远比 LLM 分类快。
 
-Labels: robot / other / casual / unknown.
+标签：robot / other / casual / unknown。
 """
 
 from __future__ import annotations
@@ -26,12 +25,13 @@ _emb = None
 
 
 def _get_emb():
-    """Lazily init the bge-m3 embedding client (cached across calls)."""
+    """懒加载 bge-m3 embedding 客户端（跨调用缓存复用）。"""
     global _emb
     if _emb is None:
         from llm_tool import get_embedding_model
         _emb = get_embedding_model()
     return _emb
+
 
 _GUESS_HINTS = [
     "我猜你可能想问扫地机器人相关的问题吧，帮你看看～",
@@ -41,7 +41,7 @@ _GUESS_HINTS = [
 
 
 def _load_model():
-    """Lazily load the trained classifier head and label mapping."""
+    """懒加载训练好的分类头和标签映射。"""
     global _head, _labels
     if _head is not None:
         return _head, _labels
@@ -64,14 +64,14 @@ def _load_model():
 
 
 def route_intent(query: str) -> str:
-    """Classify query → robot | other | casual | unknown (local model)."""
+    """把 query 分类为 robot | other | casual | unknown（本地模型）。"""
     import numpy as np
     import torch
 
     head, labels = _load_model()
     emb = _get_emb()
-    # Use embed_documents (same path as training) rather than embed_query,
-    # to keep the embeddings consistent between train and inference.
+    # 用 embed_documents（与训练同一条路径）而非 embed_query，
+    # 保证训练与推理的 embedding 一致。
     vec = emb.embed_documents([query])[0]
 
     x = torch.tensor(np.array([vec], dtype=np.float32))
@@ -85,5 +85,5 @@ def route_intent(query: str) -> str:
 
 
 def get_guess_hint() -> str:
-    """Return a random soft-guess hint for 'unknown' queries."""
+    """为 unknown 类 query 随机返回一条软引导语。"""
     return random.choice(_GUESS_HINTS)
