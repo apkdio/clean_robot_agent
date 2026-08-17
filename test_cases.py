@@ -343,8 +343,105 @@ def test_e2e():
     return passed, total, failed_cases
 
 
+
+
+# ============================================================
+# 极端泛化能力测试集（误写 / 拼音 / 中英混杂 / 描述性指代）
+# ============================================================
+EXTREME_CASES = [
+    # ── robot 极端变体（误写/拼音/中英混杂/描述性）15 个 ──
+    ("扫地鸡器人不会回充了", "robot"),          # 误写：扫地机器人→扫地鸡器人
+    ("机气人边刷不转了咋办", "robot"),           # 误写：机器人→机气人
+    ("拖地厚地面有水银怎么办", "robot"),          # 误写：水痕→水银
+    ("西力下降很厉害怎么修", "robot"),           # 误写：吸力→西力
+    ("尘合多久到一次", "robot"),                # 误写：尘盒→尘合，倒→到
+    ("saodijiqiren zenme huichong", "robot"),  # 全拼音：扫地机器人怎么回充
+    ("边刷多久换 yici", "robot"),               # 中拼音混杂
+    ("jiqiren xili xiajiang le", "robot"),     # 全拼音：机器人吸力下降了
+    ("有没有1000以内的 saodiji", "robot"),      # 中拼音：扫地机
+    ("扫地robot的HEPA filter多久换一次", "robot"),  # 中英混杂
+    ("robot的battery续航下降怎么办", "robot"),   # 中英混杂
+    ("cleaning robot 有没有1000以内的", "robot"),  # 全英文+中文
+    ("我家sweeper的app连不上了", "robot"),       # sweeper=扫地机
+    ("我家那个圆盘自动扫灰的机器不动了", "robot"),   # 描述性指代
+    ("那个会自己跑自己拖地的小玩意儿要清理吗", "robot"),  # 描述性指代
+
+    # ── other 极端变体 5 个 ──
+    ("有没有2000以内的 electric bike", "other"),  # electric bike=电动车
+    ("kongtiao 不制冷了", "other"),               # 拼音：空调
+    ("手几充不进电了", "other"),                  # 误写：手机→手几
+    ("洗一机漏水了", "other"),                    # 误写：洗衣机→洗一机
+    ("帮我写 ge jianli", "other"),               # 拼音：简历
+
+    # ── casual 极端变体 4 个 ──
+    ("ni hao", "casual"),                        # 全拼音：你好
+    ("你hao", "casual"),                         # 中拼音
+    ("内啥，随便问问", "casual"),                  # 口语
+    ("3q", "casual"),                            # 网络用语：谢谢
+
+    # ── unknown 极端变体 6 个 ──
+    ("这个行不行", "unknown"),
+    ("那到底咋弄", "unknown"),
+    ("是不是要换新的了", "unknown"),
+    ("就这", "unknown"),
+    ("能行不", "unknown"),
+    ("这玩意儿突然不干活了", "unknown"),
+]
+
+
+def test_extreme():
+    from tools.intent_router import route_intent
+
+    print("=" * 80)
+    print(f"极端泛化能力测试（共 {len(EXTREME_CASES)} 条）")
+    print("=" * 80)
+
+    correct = 0
+    errors = []
+    stats = defaultdict(lambda: {"total": 0, "correct": 0})
+
+    for query, expected in EXTREME_CASES:
+        try:
+            actual = route_intent(query)
+            ok = actual == expected
+        except Exception as exc:
+            actual = f"EXC:{type(exc).__name__}"
+            ok = False
+
+        stats[expected]["total"] += 1
+        if ok:
+            correct += 1
+            stats[expected]["correct"] += 1
+        else:
+            errors.append((query, expected, actual))
+
+        mark = "OK  " if ok else "FAIL"
+        print(f"{mark} 实际={actual:<10} 预期={expected:<8} 问题：{query}")
+
+    total = len(EXTREME_CASES)
+    print("\n" + "=" * 80)
+    print(f"总准确率：{correct}/{total} = {correct/total*100:.1f}%")
+    print("-" * 80)
+    for cat in ("robot", "other", "casual", "unknown"):
+        s = stats[cat]
+        t = s["total"]
+        print(f"  {cat:<8} {s['correct']:>2}/{t:<2} 准确率：{s['correct']/t*100 if t else 0:>5.1f}%")
+
+    if errors:
+        print("\n误判清单：")
+        for q, e, a in errors:
+            print(f"  预期={e:<8} 实际={a:<10} 问题：{q}")
+    return correct, total, errors
+
+
+if __name__ == "__main__":
+    test_extreme()
+
 if __name__ == "__main__":
     _, _, intent_errors = test_intent()
 
     if "--e2e" in sys.argv:
         test_e2e()
+
+    if "--extreme" in sys.argv:
+        test_extreme()
