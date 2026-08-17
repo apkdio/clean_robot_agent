@@ -483,6 +483,8 @@
     const query = chatInput.value.trim();
     if (!query) return;
     if (welcome) welcome.remove();
+    // 移除之前所有"重新回答"按钮，只保留最新一条
+    document.querySelectorAll('.retry-btn').forEach(el => el.remove());
     appendMessage('user', query);
     chatInput.value = '';
     chatInput.style.height = 'auto';

@@ -12,7 +12,7 @@
   - hot_ingest.py            知识库热更新
   - file_tools.py            文档多策略解析
   - llm_tool.py              LLM / embedding 工厂（含 function calling）
-  - log_tool.py              日志（控制台彩色 + 文件）
+  - log_tool.py              日志
   - config_tool.py           配置加载
   - path_tool.py             路径工具
   - prompts_tool.py          Prompt 加载

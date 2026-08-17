@@ -137,9 +137,23 @@ def parse_relative_date(expression: str) -> tuple[str, str] | None:
         if n:
             return (_subtract_months(today, n * 12).isoformat(), t)
 
+    # X 年内（"一年内"、"两年内"）
+    m = re.search(r"([0-9一二两三四五六七八九十]+)\s*年\s*(?:内|以内|之内|以来)", expr)
+    if m:
+        n = _cn_to_int(m.group(1))
+        if n:
+            return (_subtract_months(today, n * 12).isoformat(), t)
+
     # 半年
     if "半年" in expr:
         return (_subtract_months(today, 6).isoformat(), t)
+
+    # X 个月内（"6个月内"、"三个月以内"）
+    m = re.search(r"([0-9一二两三四五六七八九十]+)\s*个?月\s*(?:内|以内|之内|以来)", expr)
+    if m:
+        n = _cn_to_int(m.group(1))
+        if n:
+            return (_subtract_months(today, n).isoformat(), t)
 
     # 最近/近 X 个月（含"个"月）
     m = re.search(r"(?:最近|近|这)([0-9一二两三四五六七八九十]+)\s*个?月", expr)
@@ -148,12 +162,26 @@ def parse_relative_date(expression: str) -> tuple[str, str] | None:
         if n:
             return (_subtract_months(today, n).isoformat(), t)
 
+    # X 周内（"两周内"）
+    m = re.search(r"([0-9一二两三四五六七八九十]+)\s*个?周\s*(?:内|以内|之内|以来)", expr)
+    if m:
+        n = _cn_to_int(m.group(1))
+        if n:
+            return ((today - timedelta(weeks=n)).isoformat(), t)
+
     # 最近/近 X 周
     m = re.search(r"(?:最近|近|这)([0-9一二两三四五六七八九十]+)\s*个?周", expr)
     if m:
         n = _cn_to_int(m.group(1))
         if n:
             return ((today - timedelta(weeks=n)).isoformat(), t)
+
+    # X 天内（"30天内"）
+    m = re.search(r"([0-9一二两三四五六七八九十]+)\s*天\s*(?:内|以内|之内|以来)", expr)
+    if m:
+        n = _cn_to_int(m.group(1))
+        if n:
+            return ((today - timedelta(days=n)).isoformat(), t)
 
     # 最近/近 X 天
     m = re.search(r"(?:最近|近|这)([0-9一二两三四五六七八九十]+)\s*天", expr)

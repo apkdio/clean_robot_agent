@@ -85,6 +85,7 @@ def extract_model_info(doc) -> Dict:
         "suction": _field("吸力"),
         "navigation": _field("导航"),
         "obstacle": _field("避障"),
+        "publish_date":_field("发布时间")
     }
 
 
@@ -106,6 +107,8 @@ def format_model_line(info: Dict) -> str:
         line += f"：{spec_str}"
     if info.get("price") is not None:
         line += f"，参考价 {info['price']} 元"
+    if info.get("publish_date") is not None:
+        line += f"（发布日期:{info['publish_date']}）"
     return line
 
 
