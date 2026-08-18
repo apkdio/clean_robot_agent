@@ -91,18 +91,45 @@ def _resolve_date_filter(query: str) -> dict | None:
 
 
 def ask_stream(query: str):
-    """流式问答入口 —— 经本地分类头做意图路由。
+    """流式问答入口 —— 经本地分类头做意图路由，支持多轮 SOP 引导。
 
     other → 礼貌拒答；casual → 闲聊；
-    unknown → 软引导 + RAG；robot → 结构化预算直出 或 RAG。
+    unknown → 软引导 + RAG；robot → SOP 引导 / 结构化预算直出 / RAG。
     """
-    from intent_router import route_intent, get_guess_hint
-    intent = route_intent(query)
-
-    # 角色扮演 / 指令注入：直接拒绝，不发给 LLM
+    # 角色扮演 / 指令注入：直接拒绝，不发给 LLM（最先判断）
     if _INJECT_RE.search(query):
         yield "我是扫地机器人助手，只能帮你解答扫地机器人相关的问题，无法扮演其他角色哦～"
         return
+
+    # SOP 会话：有活跃 SOP 时继续该流程（不经过意图路由）
+    from sops import has_active_sop, continue_sop, end_sop, start_sop, match_sop
+    if has_active_sop():
+        if any(w in query for w in ["退出", "算了", "不用了", "取消", "换个问题"]):
+            end_sop()
+        else:
+            result = continue_sop(query)
+            if result is not None:
+                reply, _done = result
+                if reply:
+                    yield reply
+                return
+
+    from intent_router import route_intent, get_guess_hint
+    intent = route_intent(query)
+
+    # SOP 触发：robot/unknown 意图 + 命中场景 trigger
+    # （选购 SOP 需"无预算"才触发，含预算的仍走结构化直出；故障排查等直接触发）
+    if intent in ("robot", "unknown"):
+        sop_id = match_sop(query)
+        if sop_id:
+            from metadata_extractor import build_filter
+            if sop_id == "purchase" and build_filter(query) is not None:
+                pass  # 含预算 → 走结构化直出
+            else:
+                reply, _done = start_sop(sop_id, query)
+                if reply:
+                    yield reply
+                return
 
     # 领域外：礼貌拒答
     if intent == "other":
