@@ -15,6 +15,22 @@ import re
 
 SOPS = {}  # sop_id → sop 定义
 
+# 知识域映射（场景 → 知识库文件名，即"轻量文档隔离"的域）
+DOMAIN_MAP = {
+    "consulting": "选购指南.txt",   # 选购咨询（走 RAG 域过滤）
+    "repair": "故障排除.txt",       # 故障排查（走 SOP，定向该域）
+    "maintain": "维护保养.txt",     # 维护保养（走 RAG 域过滤）
+    "model": "具体型号.txt",        # 购买推荐（走结构化直出，metadata 过滤）
+}
+
+# 故障关键词（路由到 repair 域）
+REPAIR_WORDS = ["故障", "坏了", "不动", "漏水", "异响", "不充电", "异常", "失灵",
+                "不好使", "出问题", "趴窝", "卡住", "噪音"]
+
+# 维护关键词（路由到 maintain 域）
+MAINTAIN_WORDS = ["维护", "保养", "清洗", "清理", "更换", "耗材", "滤网", "边刷",
+                  "主刷", "拖布", "尘盒", "充电座清洁"]
+
 
 def register(sop: dict) -> None:
     """注册一个 SOP 定义。"""
@@ -46,6 +62,11 @@ _session = None
 
 def has_active_sop() -> bool:
     return _session is not None
+
+
+def get_active_sop_id():
+    """返回当前活跃 SOP 的 id；无活跃 SOP 时返回 None。"""
+    return _session["sop_id"] if _session else None
 
 
 def _start(sop_id: str):

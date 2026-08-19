@@ -10,6 +10,7 @@ from sops.base import (  # noqa: F401
     continue_sop,
     end_sop,
     has_active_sop,
+    get_active_sop_id,
     match_sop,
     handle_followup,
 )

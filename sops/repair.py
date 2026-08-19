@@ -43,9 +43,11 @@ def _search_and_generate(slots: dict):
         return {"answer": "抱歉，没识别出具体故障现象，你可以换个说法再描述一下～"}
 
     from tools.hybrid_retriever import HybridRetriever
+    from sops.base import DOMAIN_MAP
     hr = HybridRetriever()
     hr.ensure_sparse_index()
-    chunks = hr.search(query)
+    # 定向故障排除域，避免"吸力下降"等被选购域的"吸力参数"带偏
+    chunks = hr.search(query, filter={"file_name": DOMAIN_MAP["repair"]})
     if not chunks:
         return {"answer": "知识库暂时没有收录这个故障的排查方案，建议联系官方售后进一步咨询～"}
 

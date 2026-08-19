@@ -17,9 +17,9 @@ import sys
 import time
 from collections import defaultdict
 
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, _THIS_DIR)
-sys.path.insert(0, os.path.join(_THIS_DIR, "tools"))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, os.path.join(_ROOT, "tools"))
 
 
 # ============================================================

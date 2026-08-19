@@ -49,6 +49,68 @@ _INJECT_RE = re.compile(
 )
 
 
+def _is_consulting(query: str) -> bool:
+    """判断是否是「选购咨询」（选购要注意什么），而非「选购动作」（我要买）。
+
+    咨询类含"选购/购买"等动作词 + "注意/问题/技巧"等咨询词，
+    这类是 FAQ 问答，不应触发选购 SOP。
+    """
+    buy_words = ["选购", "购买", "买", "挑", "选", "入手", "购", "采购", "拿下", "购置"]
+    consult_words = [
+        "注意", "问题", "技巧", "知识", "要点", "建议", "事项", "讲究", "坑", "避雷",
+        "须知", "诀窍", "门道", "参数", "指标", "怎么选", "如何选", "注意什么",
+        "有什么讲究", "怎么看", "考虑什么", "留意", "注意哪些", "避坑", "挑选技巧",
+        "指南", "攻略", "手册", "清单", "建议清单",
+    ]
+    has_buy = any(w in query for w in buy_words)
+    has_consult = any(w in query for w in consult_words)
+    return has_buy and has_consult
+
+
+def _route_domain(query: str):
+    """按 query 内容路由到对应知识域（返回 file_name）。识别不准返回 None（全库兜底）。
+
+    宁缺毋滥：只对高置信度的场景做域过滤，避免路由错域导致漏召回。
+    """
+    from sops.base import DOMAIN_MAP, REPAIR_WORDS, MAINTAIN_WORDS
+    if _is_consulting(query):
+        return DOMAIN_MAP["consulting"]
+    if any(w in query for w in REPAIR_WORDS):
+        return DOMAIN_MAP["repair"]
+    if any(w in query for w in MAINTAIN_WORDS):
+        return DOMAIN_MAP["maintain"]
+    return None
+
+
+# SOP 退出确认状态：非 None 表示正在询问用户是否退出该 SOP
+_pending_exit = None
+
+# SOP 中文名（用于退出提醒）
+_SOP_NAMES = {"purchase": "选购推荐", "repair": "故障排查"}
+
+
+def _sop_name(sop_id: str) -> str:
+    return _SOP_NAMES.get(sop_id, "当前")
+
+
+def _is_symbols_only(query: str) -> bool:
+    """判断输入是否纯符号（无中文/字母/数字）。"""
+    return not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", query)
+
+
+def _match_exit_intent(query: str) -> bool:
+    """判断用户是想退出（True）还是继续（False）。无法判断时默认退出（True）。"""
+    q = query.strip().lower()
+    # 明确"不是/继续/不用" → 继续（注意："不"单字会误伤"不知道"，故用完整词）
+    if any(w in q for w in ["不是", "继续", "不用", "否", "别退出", "不退出"]):
+        return False
+    # 明确"是/对/要/退出" → 退出
+    if any(w in q for w in ["是", "对", "嗯", "要", "好", "行", "退出", "换", "别的", "其他"]):
+        return True
+    # 无法模糊匹配 → 默认退出
+    return True
+
+
 def _resolve_date_filter(query: str) -> dict | None:
     """把问题里的日期表达（绝对或相对）解析成 Chroma 过滤条件。
 
@@ -96,16 +158,45 @@ def ask_stream(query: str):
     other → 礼貌拒答；casual → 闲聊；
     unknown → 软引导 + RAG；robot → SOP 引导 / 结构化预算直出 / RAG。
     """
+    global _pending_exit
+
     # 角色扮演 / 指令注入：直接拒绝，不发给 LLM（最先判断）
     if _INJECT_RE.search(query):
         yield "我是扫地机器人助手，只能帮你解答扫地机器人相关的问题，无法扮演其他角色哦～"
         return
 
     # SOP 会话：有活跃 SOP 时继续该流程（不经过意图路由）
-    from sops import has_active_sop, continue_sop, end_sop, start_sop, match_sop
+    from sops import has_active_sop, continue_sop, end_sop, start_sop, match_sop, get_active_sop_id
     if has_active_sop():
-        if any(w in query for w in ["退出", "算了", "不用了", "取消", "换个问题"]):
+        # 状态1：正在询问是否退出 → 匹配"是/不是"
+        if _pending_exit is not None:
+            exit_now = _match_exit_intent(query)
+            sop_name = _sop_name(_pending_exit)
+            _pending_exit = None
+            if exit_now:
+                end_sop()
+                yield f"好的，已退出「{sop_name}」环节～有新的问题可以直接问我。"
+            else:
+                yield "好的，那我们继续刚才的话题～"
+            return
+
+        # 状态2：纯符号 → 礼貌询问是否要咨询其他问题
+        if _is_symbols_only(query):
+            sop_id = get_active_sop_id()
+            _pending_exit = sop_id
+            yield (f"没有听懂哦～您当前正在「{_sop_name(sop_id)}」环节。"
+                   f"是否需要咨询其他问题？是的话回复「是」，不是回复「不是」。")
+            return
+
+        # 状态3：明确的退出/纠正词 → 退出并提醒，fall through 重新理解用户的话
+        exit_words = ["退出", "算了", "不用了", "取消", "换个问题", "不是", "不对", "错了",
+                      "我问的是", "你理解错了", "别问了", "别问"]
+        if any(w in query for w in exit_words):
+            sop_id = get_active_sop_id()
             end_sop()
+            yield f"好的，已退出「{_sop_name(sop_id)}」环节～"
+
+        # 状态4：正常继续 SOP
         else:
             result = continue_sop(query)
             if result is not None:
@@ -131,7 +222,9 @@ def ask_stream(query: str):
         sop_id = match_sop(query)
         if sop_id:
             from metadata_extractor import build_filter
-            if sop_id == "purchase" and build_filter(query) is not None:
+            if sop_id == "purchase" and _is_consulting(query):
+                pass  # 选购咨询（"选购要注意什么"）→ 走 RAG
+            elif sop_id == "purchase" and build_filter(query) is not None:
                 pass  # 含预算 → 走结构化直出
             else:
                 reply, _done = start_sop(sop_id, query)
@@ -198,8 +291,9 @@ def ask_stream(query: str):
         # 没有匹配型号 → 回退到普通 RAG
         logger.info("[Agent] Structured filter matched no models, falling back to RAG")
 
-    # 普通 RAG：双路召回
-    chunks = hr.search(query)
+    # 普通 RAG：双路召回（按知识域定向，识别不准则全库兜底）
+    domain = _route_domain(query)
+    chunks = hr.search(query, filter={"file_name": domain} if domain else None)
 
     if not chunks:
         for chunk in stream_chat(

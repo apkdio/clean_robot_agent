@@ -9,6 +9,7 @@
 - **结构化查询**：识别"预算 1000 以内"等价格约束，通过 Chroma metadata 过滤精确枚举预算内产品
 - **工具调用**：LLM function calling，内置日期计算工具，支持"最近半年""2025年三月"等时间范围新品查询
 - **多轮 SOP 引导**：选购推荐、故障排查等场景按标准流程多轮引导，支持追问（比较新/更便宜）与最近发布查询
+- **知识库分域**：按场景（选购/故障/维护/型号）定向检索对应知识域，避免跨域词带偏召回
 - **流式输出**：SSE 流式返回答案，前端逐字渲染
 - **知识库热更新**：每 30 分钟自动扫描 `data/knowledge/`，检测文件增删改并增量入库
 - **多轮友好**：领域外问题礼貌拒答，模糊问题软引导，闲聊自然回应
@@ -46,9 +47,13 @@ clean_robot_agent/
 ├── function_tools/              # LLM 工具调用（function calling）工具
 │   └── date_tool.py             # 日期计算工具（绝对/相对日期 → 日期范围）
 ├── sops/                        # SOP 标准操作流程（多轮引导）
-│   ├── base.py                  # 会话状态 + 执行器
+│   ├── base.py                  # 会话状态 + 执行器 + 知识域定义
 │   ├── purchase.py              # 选购推荐 SOP
 │   └── repair.py                # 故障排查 SOP
+├── test_scripts/                # 测试脚本（意图分类 / SOP / 分域召回）
+│   ├── test_cases.py            # 意图分类 + 端到端泛化测试
+│   ├── test_sop.py              # SOP 状态机测试
+│   └── test_retrieval.py        # 知识库分域召回测试
 ├── intent_classifier_training/  # 意图分类模型训练工具
 │   ├── build_intent_dataset.py  # 数据集构建（从知识库抽取 + 规则改写）
 │   └── train_intent_classifier.py # 分类头训练脚本
@@ -63,7 +68,7 @@ clean_robot_agent/
 
 | 模块 | 职责 |
 |------|------|
-| `agent.py` | RAG 编排：意图路由 → 检索 → 结构化直出或 LLM 生成 |
+| `agent.py` | RAG 编排：意图路由 → 知识域路由 → 检索 → 结构化直出或 LLM 生成 |
 | `intent_router.py` | 意图分类：本地分类头（bge-m3 + Linear）判 robot/casual/other/unknown |
 | `hybrid_retriever.py` | 双路召回编排：dense + sparse → RRF 融合 |
 | `vector_store.py` | Chroma 稠密检索、入库、metadata 过滤、稀疏索引构建 |
@@ -87,7 +92,7 @@ clean_robot_agent/
 
 | 模块 | 职责 |
 |------|------|
-| `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 追问处理（比较新/更便宜）+ 最近发布查询 |
+| `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 知识域定义（DOMAIN_MAP）+ 追问处理（比较新/更便宜）+ 最近发布查询 |
 | `purchase.py` | 选购推荐 SOP：收集预算（上限/区间）+ 宠物 → 结构化推荐 |
 | `repair.py` | 故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤 |
 
@@ -192,7 +197,7 @@ python intent_classifier_training/train_intent_classifier.py
           ├─ 选购意图且无预算 → 进入选购 SOP 多轮引导
           ├─ 含日期 → 日期工具（规则解析 / LLM function calling）→ 日期范围
           ├─ 含预算 → metadata 过滤 → 结构化直出型号列表
-          └─ 其他 → 双路召回（dense+sparse→RRF）→ LLM 生成
+          └─ 其他 → 知识域路由 → 双路召回（dense+sparse→RRF）→ LLM 生成
   → 流式输出（SSE）
 ```
 
