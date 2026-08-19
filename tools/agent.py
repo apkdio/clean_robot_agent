@@ -40,6 +40,15 @@ _TIME_HINT_RE = re.compile(
     r"|发布|上市|新品|\d{4}\s*年|[一二三四五六七八九十0-9]+\s*月|发售"
 )
 
+# 预算提示特征：含货币单位/预算词，或"数字 + 范围词"（用于决定是否走 LLM 预算兜底）
+_BUDGET_HINT_RE = re.compile(
+    r"(?:元|块钱?|预算|价位|多少钱)"
+    r"|(?:\d+|[一二两三四五六七八九十百千万]+)\s*(?:以内|以下|左右|上下|出头|到|至|多)"
+)
+
+# 预算提取兜底用的小模型（3b 更快；精度不够可切回 "qwen2.5:7b"）
+_BUDGET_TOOL_MODEL = "qwen2.5:3b"
+
 # 角色扮演 / 指令注入特征（命中则直接拒绝，不发给 LLM）
 _INJECT_RE = re.compile(
     r"你是一[只个位]|你现在是|从现在开始|你只会|你只能"
@@ -152,6 +161,46 @@ def _resolve_date_filter(query: str) -> dict | None:
     return None
 
 
+def _resolve_budget_filter(query: str) -> dict | None:
+    """把问题里的预算表达解析成 Chroma 过滤条件。
+
+    规则优先（快且可靠，覆盖"1000以内""1000-2000"等常见表达），
+    规则未命中时用 LLM function calling 兜底口语/模糊表达（"一千来块""1500上下"）。
+    只有 query 含预算提示特征时才走 LLM 兜底，普通 query 不白调 LLM。
+    """
+    from metadata_extractor import build_filter
+
+    # 1. 确定性规则（显式区间 / 单一上限）
+    f = build_filter(query)
+    if f is not None:
+        return f
+
+    # 2. 无预算提示特征 → 直接返回，不调 LLM
+    if not _BUDGET_HINT_RE.search(query):
+        return None
+
+    # 3. LLM function calling 兜底
+    try:
+        from function_tools.budget_tool import BUDGET_TOOL_SCHEMA, budget_args_to_filter
+        from llm_tool import chat_with_tools
+        resp = chat_with_tools(
+            [HumanMessage(content=query)],
+            [BUDGET_TOOL_SCHEMA],
+            model=_BUDGET_TOOL_MODEL,
+        )
+        tool_calls = getattr(resp, "tool_calls", None) or []
+        if tool_calls:
+            tc = tool_calls[0]
+            args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
+            f = budget_args_to_filter(args)
+            if f is not None:
+                logger.info("[Agent] Budget resolved via LLM tool: %s", args)
+                return f
+    except Exception as e:
+        logger.warning("[Agent] Budget tool calling failed: %s", e)
+    return None
+
+
 def ask_stream(query: str):
     """流式问答入口 —— 经本地分类头做意图路由，支持多轮 SOP 引导。
 
@@ -221,10 +270,9 @@ def ask_stream(query: str):
     if intent in ("robot", "unknown"):
         sop_id = match_sop(query)
         if sop_id:
-            from metadata_extractor import build_filter
             if sop_id == "purchase" and _is_consulting(query):
                 pass  # 选购咨询（"选购要注意什么"）→ 走 RAG
-            elif sop_id == "purchase" and build_filter(query) is not None:
+            elif sop_id == "purchase" and _resolve_budget_filter(query) is not None:
                 pass  # 含预算 → 走结构化直出
             else:
                 reply, _done = start_sop(sop_id, query)
@@ -255,8 +303,7 @@ def ask_stream(query: str):
         yield get_guess_hint() + "\n\n"
 
     hr = _get_retriever()
-    from metadata_extractor import build_filter
-    metadata_filter = build_filter(query)
+    metadata_filter = _resolve_budget_filter(query)
 
     # 解析日期表达（"最近半年"/"2025年三月"）→ 日期过滤
     date_filter = _resolve_date_filter(query)

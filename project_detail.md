@@ -306,7 +306,30 @@ query 含时间表达？
   → build_date_filter → 与预算 filter 合并（$and）
 ```
 
-### 4.10 sops/ —— SOP 标准操作流程（多轮引导）
+### 4.10 function_tools/budget_tool.py —— 预算提取工具（function calling 兜底）
+
+LLM function calling 的预算工具，作为 `build_filter`（规则）未命中时的兜底。核心：
+
+| 项 | 职责 |
+|----|------|
+| `BUDGET_TOOL_SCHEMA` | 单一 integer 参数 `budget_max` 的 function-calling schema |
+| `budget_args_to_filter` | LLM 返回的 `{budget_max}` → Chroma `where` filter（`min_price ≤ budget_max`）|
+
+**设计要点**：
+- **规则优先**：`build_filter` 能识别的"1000以内""1000-2000"走 0 延迟规则；只有规则 miss 的口语/模糊表达（"一千来块""1500上下""两千出头""八百多"）才走 LLM 兜底
+- **单一 integer 参数**：qwen2.5:3b 的 function calling 只能稳定处理单一 integer 参数——多参数（min/max）会被误填成 `user_input`，string 参数不做数值转换。因此只提取单一上限 `budget_max`，区间下限仍由规则（阿拉伯数字区间）覆盖
+- **3b 而非 7b**：兜底用 `qwen2.5:3b`（~2.3s），比 7b 快 2-3 倍；代价是"出头"这类语义较难表达偶尔 miss（tool_calls 空 → 退化为全库检索，不给错误预算）
+
+**调用流程**（agent.py `_resolve_budget_filter`）：
+```
+query 含预算？
+  → 规则 build_filter 命中 → 直接得到 filter
+  → 规则未命中 + 含预算 hint（_BUDGET_HINT_RE）→ LLM function calling（3b）
+       → LLM 返回 {budget_max} → budget_args_to_filter → filter
+  → 无 hint → None（全库兜底）
+```
+
+### 4.11 sops/ —— SOP 标准操作流程（多轮引导）
 
 **定位**：SOP 是「代码驱动的流程循环」（状态机），与「LLM 驱动的 agent loop」不同——步骤固定、确定性高、不额外调 LLM，延迟可控。适合客服这类有标准流程的场景。
 
@@ -419,6 +442,14 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 **原因**：备选方案有（a）每个域建独立向量库、（b）单库 + metadata `file_name` 过滤、（c）靠 LLM 过滤。选（b）——独立向量库要维护多份索引、跨库合并复杂；LLM 过滤延迟高且不稳定。单库 + `file_name` 过滤成本最低，且保留全库兜底（识别不准则不过滤）。
 
 **域路由设计**：`DOMAIN_MAP`（场景 → 文件名）统一在 `sops/base.py`，`agent._route_domain` 按关键词把 query 路由到对应域，`repair.py` 定向故障域。**宁缺毋滥**——只对高置信度场景过滤（选购咨询/故障/维护），识别不准则全库兜底，是"提纯"而非"硬隔离"。跨域词在错误域仍有少量命中属正常，不影响主要召回。
+
+### ADR-12：槽位提取用"规则优先 + function calling 兜底"，而非整体 function calling 意图路由
+
+**背景**：评估"用 function calling 做意图路由"（让 LLM 一次完成意图 + 槽位提取）迁移到本项目的可行性。
+
+**原因**：整体迁移不划算——意图路由是每个 query 的必经路径，function calling 要额外调 LLM（1~10s），且回答阶段还要再调一次 LLM，延迟翻倍；qwen2.5:7b 的 function calling 稳定性也不如本地分类头（ADR-4/ADR-5 的资产不应丢弃）。**正确姿势是把 function calling 作为分类头/规则之后的兜底层**，与 date_tool（ADR-7「规则优先 + LLM function calling 兜底」）完全同构。
+
+**预算槽位落地**：`build_filter`（规则）优先，规则 miss 且含预算 hint 时，用 `function_tools/budget_tool.py` 的 function calling 兜底提取上限。实测 qwen2.5:3b 只能稳定处理**单一 integer 参数**（多参数被误填 `user_input`、string 参数不做数值转换），故只提取单一上限 `budget_max`，区间下限仍由规则覆盖；3b 比 7b 快 2-3 倍，代价是"出头"这类语义较难表达偶尔 miss（退化为全库检索，不给错误预算）。
 
 ---
 

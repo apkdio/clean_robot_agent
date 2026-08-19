@@ -45,7 +45,8 @@ clean_robot_agent/
 ├── prompts/                     # Prompt 模板（system/摘要/报告）
 ├── tools/                       # 核心工具模块（详见下节）
 ├── function_tools/              # LLM 工具调用（function calling）工具
-│   └── date_tool.py             # 日期计算工具（绝对/相对日期 → 日期范围）
+│   ├── date_tool.py             # 日期计算工具（绝对/相对日期 → 日期范围）
+│   └── budget_tool.py           # 预算提取工具（规则 miss 时 function calling 兜底）
 ├── sops/                        # SOP 标准操作流程（多轮引导）
 │   ├── base.py                  # 会话状态 + 执行器 + 知识域定义
 │   ├── purchase.py              # 选购推荐 SOP
@@ -87,6 +88,7 @@ clean_robot_agent/
 | 模块 | 职责 |
 |------|------|
 | `date_tool.py` | 日期计算工具：`calc_date_range` 把"最近半年""2025年三月"等表达换算成日期范围 |
+| `budget_tool.py` | 预算提取工具：规则 miss 时用 3b function calling 提取预算上限（"一千来块"等） |
 
 ## SOP 模块（sops/）
 
