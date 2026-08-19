@@ -64,12 +64,12 @@ def _search(slots: dict):
             models.append(info)
 
     lines = [format_model_line(m) for m in models]
-    return {"count": len(models), "list": "\n".join(lines)}
+    return {"count": len(models), "list": "\n".join(lines), "models": models}
 
 
 PURCHASE_SOP = {
     "id": "purchase",
-    "trigger": ["推荐", "选购", "买", "预算", "想买", "有没有", "性价比", "帮忙选", "挑"],
+    "trigger": ["推荐", "选购", "买", "预算", "想买", "性价比", "帮忙选", "挑"],
     "steps": [
         {
             "id": "ask_budget",

@@ -11,6 +11,7 @@ from sops.base import (  # noqa: F401
     end_sop,
     has_active_sop,
     match_sop,
+    handle_followup,
 )
 
 # 导入各 SOP 模块，触发 register 注册

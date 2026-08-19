@@ -11,12 +11,33 @@
 会话状态为内存存储（当前单机单用户；多用户时改为按 user_id 隔离）。
 """
 
+import re
+
 SOPS = {}  # sop_id → sop 定义
 
 
 def register(sop: dict) -> None:
     """注册一个 SOP 定义。"""
     SOPS[sop["id"]] = sop
+
+
+# 上一轮推荐的结构化结果（型号列表），用于「追问」处理
+_last_recommend = None
+
+
+def save_recommend(models) -> None:
+    """保存上一轮推荐结果（供追问「有没有更新的/更便宜的」使用）。"""
+    global _last_recommend
+    _last_recommend = models
+
+
+def get_last_recommend():
+    return _last_recommend
+
+
+def clear_recommend() -> None:
+    global _last_recommend
+    _last_recommend = None
 
 
 # 当前活跃会话（单用户）
@@ -100,8 +121,11 @@ def _run(user_input: str):
             continue
 
         elif step["type"] == "action":
-            # 执行 skill，结果存入 result
-            session["result"] = step["action"](session["slots"])
+            # 执行 skill，结果存入 result；若含结构化型号列表则保存供追问
+            result = step["action"](session["slots"])
+            session["result"] = result
+            if isinstance(result, dict) and "models" in result:
+                save_recommend(result["models"])
             session["step"] += 1
             continue
 
@@ -118,3 +142,55 @@ def _run(user_input: str):
     # 步骤走完但无 reply（异常防御），安全结束
     _end()
     return "", True
+
+
+def handle_followup(query: str):
+    """回答追问。返回回复文本或 None。
+
+    两类追问语义不同：
+      - 最近发布/新款 → 重定向：全局按发布时间倒序（不限上一轮预算区间）
+      - 更便宜/划算 → 限定：上一轮结果内按价格升序
+    """
+    # 最近发布类：全局检索（不依赖上一轮上下文）
+    #   - 明确词："新款/最新/比较新/最近发布/新出/上市"
+    #   - 笼统"最近"（后面不带时间单位）+ "发布/新/出"
+    latest_hit = any(w in query for w in ["新款", "最新", "比较新", "最近发布", "新出", "上市"])
+    vague_recent = (
+        "最近" in query
+        and not re.search(r"最近(?:半|几|[0-9一二两三四五六七八九十]|个?[月年周天])", query)
+        and any(w in query for w in ["发布", "新", "出", "上市"])
+    )
+    if latest_hit or vague_recent:
+        return _format_models(_search_latest_global()[:5], "最近发布的机器人有这几款：")
+
+    # 限定追问：更便宜 → 上一轮结果内按价格升序
+    if any(w in query for w in ["便宜", "低价", "划算"]):
+        models = get_last_recommend()
+        if not models:
+            return None
+        sorted_models = sorted(models, key=lambda m: m.get("price") or 0)
+        return _format_models(sorted_models[:3], "在刚才的推荐里，更便宜的有这几款：")
+
+    return None
+
+
+def _format_models(models, header: str) -> str:
+    """把型号列表格式化成回复文本。"""
+    from tools.metadata_extractor import format_model_line
+    lines = [format_model_line(m) for m in models]
+    return header + "\n\n" + "\n".join(lines)
+
+
+def _search_latest_global():
+    """全局检索所有型号，按发布时间倒序。"""
+    from tools.metadata_extractor import extract_model_info
+    from tools.vector_store import search_by_filter
+    docs = search_by_filter({"file_name": {"$ne": "__never__"}})
+    models, seen = [], set()
+    for c in docs:
+        info = extract_model_info(c)
+        if info.get("publish_date") and info.get("name") and info["name"] not in seen:
+            seen.add(info["name"])
+            models.append(info)
+    models.sort(key=lambda m: m.get("publish_date") or "", reverse=True)
+    return models

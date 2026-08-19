@@ -117,6 +117,14 @@ def ask_stream(query: str):
     from intent_router import route_intent, get_guess_hint
     intent = route_intent(query)
 
+    # 追问检测：基于上一轮推荐结果回答（"有没有更新的""有没有更便宜的"等）
+    if intent in ("robot", "unknown"):
+        from sops import handle_followup
+        followup_reply = handle_followup(query)
+        if followup_reply:
+            yield followup_reply
+            return
+
     # SOP 触发：robot/unknown 意图 + 命中场景 trigger
     # （选购 SOP 需"无预算"才触发，含预算的仍走结构化直出；故障排查等直接触发）
     if intent in ("robot", "unknown"):
