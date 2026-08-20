@@ -1,0 +1,14 @@
+sops/repair.py
+  h_17b40a0da2c9a6 33-34,36,38-40,46-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "6a0958f252c880586c6cfaaad84d59557ee59b55",
+  "prompts": {},
+  "humans": {
+    "h_17b40a0da2c9a6": {
+      "author": "wanqw <apkdio@163.com>"
+    }
+  }
+}
