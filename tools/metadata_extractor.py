@@ -14,6 +14,19 @@ from __future__ import annotations
 import re
 from typing import Dict, Optional
 
+from log_tool import get_logger
+
+logger = get_logger(name="metadata_extractor")
+
+# 预算提示特征（决定是否走 LLM 预算兜底）：货币单位/预算词，或"数字 + 范围词"
+_BUDGET_HINT_RE = re.compile(
+    r"(?:元|块钱?|预算|价位|多少钱)"
+    r"|(?:\d+|[一二两三四五六七八九十百千万]+)\s*(?:以内|以下|左右|上下|出头|到|至|多)"
+)
+
+# 预算提取兜底用的小模型（3b 更快；精度不够可切回 "qwen2.5:7b"）
+_BUDGET_TOOL_MODEL = "qwen2.5:3b"
+
 # ──────────────────────────────────────────────────────────────────────────
 # chunk → metadata（入库时）
 # ──────────────────────────────────────────────────────────────────────────
@@ -193,4 +206,43 @@ def build_filter(query: str) -> Optional[Dict]:
     budget = extract_budget(query)
     if budget is not None:
         return {"min_price": {"$lte": budget}}
+    return None
+
+
+def resolve_budget_filter(query: str) -> Optional[Dict]:
+    """把问题里的预算表达解析成 Chroma 过滤条件（规则优先 + LLM 兜底）。
+
+    规则（build_filter）覆盖"1000以内""1000-2000"等常见表达；
+    规则 miss 且含预算提示特征时，用 3b function calling 兜底口语/模糊表达
+    （"一千来块""1500上下"）；无提示特征则直接返回 None，不白调 LLM。
+    """
+    # 1. 确定性规则（显式区间 / 单一上限）
+    f = build_filter(query)
+    if f is not None:
+        return f
+
+    # 2. 无预算提示特征 → 直接返回，不调 LLM
+    if not _BUDGET_HINT_RE.search(query):
+        return None
+
+    # 3. LLM function calling 兜底
+    try:
+        from function_tools.budget_tool import BUDGET_TOOL_SCHEMA, budget_args_to_filter
+        from llm_tool import chat_with_tools
+        from langchain_core.messages import HumanMessage
+        resp = chat_with_tools(
+            [HumanMessage(content=query)],
+            [BUDGET_TOOL_SCHEMA],
+            model=_BUDGET_TOOL_MODEL,
+        )
+        tool_calls = getattr(resp, "tool_calls", None) or []
+        if tool_calls:
+            tc = tool_calls[0]
+            args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
+            f = budget_args_to_filter(args)
+            if f is not None:
+                logger.info("[Budget] resolved via LLM tool: %s", args)
+                return f
+    except Exception as e:
+        logger.warning("[Budget] tool calling failed: %s", e)
     return None

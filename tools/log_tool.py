@@ -1,5 +1,6 @@
 from datetime import datetime
 import logging
+import logging.handlers
 import os
 import sys
 
@@ -35,6 +36,14 @@ log_path = get_abs_path("logs")
 if not os.path.exists(log_path):
     os.makedirs(log_path)
 
+# 文件日志级别：默认 INFO，避免检索结果的 DEBUG 详情（top-N chunk 内容）刷屏撑大日志文件。
+# 排查检索问题时，设环境变量 LOG_LEVEL=DEBUG 临时开启调试细节。
+_DEFAULT_FILE_LEVEL = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
+
+# 单个日志文件上限（字节）与滚动备份数：防止同一天内文件无限增长
+_LOG_MAX_BYTES = 5 * 1024 * 1024   # 5MB
+_LOG_BACKUP_COUNT = 2              # 保留 2 份滚动备份
+
 file_log_template = logging.Formatter(
     "%(asctime)s - %(name)s - [%(levelname)s] - %(filename)s:%(lineno)d -  %(message)s"
 )
@@ -47,9 +56,12 @@ console_log_template = _ColorFormatter(
 
 def get_logger(name: str = "agent",
                console_level: int = logging.INFO,
-               file_level: int = logging.DEBUG,
+               file_level: int | None = None,
                log_file=None):
-    """返回一个已配置的 logger，包含彩色控制台输出 + 文件输出。"""
+    """返回一个已配置的 logger，包含彩色控制台输出 + 文件输出。
+
+    file_level 默认取环境变量 LOG_LEVEL（默认 INFO）；传显式值时覆盖。
+    """
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
     if logger.handlers:
@@ -61,10 +73,15 @@ def get_logger(name: str = "agent",
     console_handler.setFormatter(console_log_template)
     logger.addHandler(console_handler)
 
-    # 文件：持久化磁盘日志
+    # 文件：按大小滚动（超过上限切到 .1/.2），避免单文件无限增长
+    if file_level is None:
+        file_level = _DEFAULT_FILE_LEVEL
     if not log_file:
         log_file = os.path.join(log_path, f"{name}-{datetime.now().strftime('%Y%m%d')}.log")
-    file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_file, mode="a", encoding="utf-8",
+        maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUP_COUNT,
+    )
     file_handler.setLevel(file_level)
     file_handler.setFormatter(file_log_template)
     logger.addHandler(file_handler)

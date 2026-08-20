@@ -7,9 +7,10 @@
 - **双路召回**：稠密检索（bge-m3 向量）+ 稀疏检索（BM25 关键词）→ RRF 融合，兼顾语义近似与精确关键词匹配
 - **意图分类**：本地深度学习分类头（bge-m3 embedding + Linear 分类器）前置判断用户意图，毫秒级推理
 - **结构化查询**：识别"预算 1000 以内"等价格约束，通过 Chroma metadata 过滤精确枚举预算内产品
-- **工具调用**：LLM function calling，内置日期计算工具，支持"最近半年""2025年三月"等时间范围新品查询
-- **多轮 SOP 引导**：选购推荐、故障排查等场景按标准流程多轮引导，支持追问（比较新/更便宜）与最近发布查询
+- **工具调用**：LLM function calling，内置日期/预算/故障分类工具，支持"最近半年""一千来块"等口语化结构化提取
+- **多轮 SOP 引导**：选购推荐、故障排查等场景按标准流程多轮引导，进入时给开场提示，支持追问（比较新/更便宜/最贵）与最近发布查询
 - **知识库分域**：按场景（选购/故障/维护/型号）定向检索对应知识域，避免跨域词带偏召回
+- **情绪安抚**：识别负面情绪（投诉/烦躁等）前置安抚，只安抚不拦截
 - **流式输出**：SSE 流式返回答案，前端逐字渲染
 - **知识库热更新**：每 30 分钟自动扫描 `data/knowledge/`，检测文件增删改并增量入库
 - **多轮友好**：领域外问题礼貌拒答，模糊问题软引导，闲聊自然回应
@@ -46,7 +47,8 @@ clean_robot_agent/
 ├── tools/                       # 核心工具模块（详见下节）
 ├── function_tools/              # LLM 工具调用（function calling）工具
 │   ├── date_tool.py             # 日期计算工具（绝对/相对日期 → 日期范围）
-│   └── budget_tool.py           # 预算提取工具（规则 miss 时 function calling 兜底）
+│   ├── budget_tool.py           # 预算提取工具（规则 miss 时 function calling 兜底）
+│   └── symptom_tool.py          # 故障现象分类工具（规则 miss 时 function calling 兜底）
 ├── sops/                        # SOP 标准操作流程（多轮引导）
 │   ├── base.py                  # 会话状态 + 执行器 + 知识域定义
 │   ├── purchase.py              # 选购推荐 SOP
@@ -89,6 +91,7 @@ clean_robot_agent/
 |------|------|
 | `date_tool.py` | 日期计算工具：`calc_date_range` 把"最近半年""2025年三月"等表达换算成日期范围 |
 | `budget_tool.py` | 预算提取工具：规则 miss 时用 3b function calling 提取预算上限（"一千来块"等） |
+| `symptom_tool.py` | 故障分类工具：规则 miss 时用 3b function calling 归类口语故障（"奇怪的声音"等） |
 
 ## SOP 模块（sops/）
 

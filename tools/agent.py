@@ -40,15 +40,6 @@ _TIME_HINT_RE = re.compile(
     r"|发布|上市|新品|\d{4}\s*年|[一二三四五六七八九十0-9]+\s*月|发售"
 )
 
-# 预算提示特征：含货币单位/预算词，或"数字 + 范围词"（用于决定是否走 LLM 预算兜底）
-_BUDGET_HINT_RE = re.compile(
-    r"(?:元|块钱?|预算|价位|多少钱)"
-    r"|(?:\d+|[一二两三四五六七八九十百千万]+)\s*(?:以内|以下|左右|上下|出头|到|至|多)"
-)
-
-# 预算提取兜底用的小模型（3b 更快；精度不够可切回 "qwen2.5:7b"）
-_BUDGET_TOOL_MODEL = "qwen2.5:3b"
-
 # 角色扮演 / 指令注入特征（命中则直接拒绝，不发给 LLM）
 _INJECT_RE = re.compile(
     r"你是一[只个位]|你现在是|从现在开始|你只会|你只能"
@@ -57,23 +48,22 @@ _INJECT_RE = re.compile(
     r"|系统提示词|system\s*prompt|初始指令|提示词是什么"
 )
 
+# 负面情绪词表（分级；命中则在回答前先安抚，纯规则 0 延迟）
+_EMOTION_STRONG = ["投诉", "退钱", "退款", "垃圾", "什么破", "气死", "火大", "差评"]
+_EMOTION_MILD = ["烦", "着急", "急死", "郁闷", "失望", "无语", "闹心", "糟心"]
 
-def _is_consulting(query: str) -> bool:
-    """判断是否是「选购咨询」（选购要注意什么），而非「选购动作」（我要买）。
 
-    咨询类含"选购/购买"等动作词 + "注意/问题/技巧"等咨询词，
-    这类是 FAQ 问答，不应触发选购 SOP。
+def detect_emotion(query: str) -> str | None:
+    """检测用户负面情绪，命中返回安抚话术（未命中返回 None）。
+
+    强烈负面（投诉/退钱）给正式安抚 + 主动处理姿态；轻微负面（烦/急）给轻量安抚。
+    只安抚、不拦截：安抚后继续走正常流程，诉求照常回答。
     """
-    buy_words = ["选购", "购买", "买", "挑", "选", "入手", "购", "采购", "拿下", "购置"]
-    consult_words = [
-        "注意", "问题", "技巧", "知识", "要点", "建议", "事项", "讲究", "坑", "避雷",
-        "须知", "诀窍", "门道", "参数", "指标", "怎么选", "如何选", "注意什么",
-        "有什么讲究", "怎么看", "考虑什么", "留意", "注意哪些", "避坑", "挑选技巧",
-        "指南", "攻略", "手册", "清单", "建议清单",
-    ]
-    has_buy = any(w in query for w in buy_words)
-    has_consult = any(w in query for w in consult_words)
-    return has_buy and has_consult
+    if any(w in query for w in _EMOTION_STRONG):
+        return "非常抱歉给您带来不好的体验，我马上帮您处理～"
+    if any(w in query for w in _EMOTION_MILD):
+        return "别着急，我帮您看看～"
+    return None
 
 
 def _route_domain(query: str):
@@ -81,8 +71,8 @@ def _route_domain(query: str):
 
     宁缺毋滥：只对高置信度的场景做域过滤，避免路由错域导致漏召回。
     """
-    from sops.base import DOMAIN_MAP, REPAIR_WORDS, MAINTAIN_WORDS
-    if _is_consulting(query):
+    from sops.base import DOMAIN_MAP, REPAIR_WORDS, MAINTAIN_WORDS, is_consulting
+    if is_consulting(query):
         return DOMAIN_MAP["consulting"]
     if any(w in query for w in REPAIR_WORDS):
         return DOMAIN_MAP["repair"]
@@ -161,46 +151,6 @@ def _resolve_date_filter(query: str) -> dict | None:
     return None
 
 
-def _resolve_budget_filter(query: str) -> dict | None:
-    """把问题里的预算表达解析成 Chroma 过滤条件。
-
-    规则优先（快且可靠，覆盖"1000以内""1000-2000"等常见表达），
-    规则未命中时用 LLM function calling 兜底口语/模糊表达（"一千来块""1500上下"）。
-    只有 query 含预算提示特征时才走 LLM 兜底，普通 query 不白调 LLM。
-    """
-    from metadata_extractor import build_filter
-
-    # 1. 确定性规则（显式区间 / 单一上限）
-    f = build_filter(query)
-    if f is not None:
-        return f
-
-    # 2. 无预算提示特征 → 直接返回，不调 LLM
-    if not _BUDGET_HINT_RE.search(query):
-        return None
-
-    # 3. LLM function calling 兜底
-    try:
-        from function_tools.budget_tool import BUDGET_TOOL_SCHEMA, budget_args_to_filter
-        from llm_tool import chat_with_tools
-        resp = chat_with_tools(
-            [HumanMessage(content=query)],
-            [BUDGET_TOOL_SCHEMA],
-            model=_BUDGET_TOOL_MODEL,
-        )
-        tool_calls = getattr(resp, "tool_calls", None) or []
-        if tool_calls:
-            tc = tool_calls[0]
-            args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
-            f = budget_args_to_filter(args)
-            if f is not None:
-                logger.info("[Agent] Budget resolved via LLM tool: %s", args)
-                return f
-    except Exception as e:
-        logger.warning("[Agent] Budget tool calling failed: %s", e)
-    return None
-
-
 def ask_stream(query: str):
     """流式问答入口 —— 经本地分类头做意图路由，支持多轮 SOP 引导。
 
@@ -213,6 +163,11 @@ def ask_stream(query: str):
     if _INJECT_RE.search(query):
         yield "我是扫地机器人助手，只能帮你解答扫地机器人相关的问题，无法扮演其他角色哦～"
         return
+
+    # 负面情绪：先安抚一句，再继续正常流程（只安抚、不拦截）
+    emotion_reply = detect_emotion(query)
+    if emotion_reply:
+        yield emotion_reply + "\n\n"
 
     # SOP 会话：有活跃 SOP 时继续该流程（不经过意图路由）
     from sops import has_active_sop, continue_sop, end_sop, start_sop, match_sop, get_active_sop_id
@@ -238,8 +193,9 @@ def ask_stream(query: str):
             return
 
         # 状态3：明确的退出/纠正词 → 退出并提醒，fall through 重新理解用户的话
-        exit_words = ["退出", "算了", "不用了", "取消", "换个问题", "不是", "不对", "错了",
-                      "我问的是", "你理解错了", "别问了", "别问"]
+        exit_words = ["退出", "算了", "不用了", "取消", "换个问题", "换一个问题", "换个话题",
+                      "换话题", "问别的", "问个别的", "不是", "不对", "错了", "我问的是",
+                      "你理解错了", "别问了", "别问", "换一个"]
         if any(w in query for w in exit_words):
             sop_id = get_active_sop_id()
             end_sop()
@@ -265,20 +221,14 @@ def ask_stream(query: str):
             yield followup_reply
             return
 
-    # SOP 触发：robot/unknown 意图 + 命中场景 trigger
-    # （选购 SOP 需"无预算"才触发，含预算的仍走结构化直出；故障排查等直接触发）
+    # SOP 触发：robot/unknown 意图 + 命中场景 trigger（guards 已由 match_sop 评估）
     if intent in ("robot", "unknown"):
         sop_id = match_sop(query)
         if sop_id:
-            if sop_id == "purchase" and _is_consulting(query):
-                pass  # 选购咨询（"选购要注意什么"）→ 走 RAG
-            elif sop_id == "purchase" and _resolve_budget_filter(query) is not None:
-                pass  # 含预算 → 走结构化直出
-            else:
-                reply, _done = start_sop(sop_id, query)
-                if reply:
-                    yield reply
-                return
+            reply, _done = start_sop(sop_id, query)
+            if reply:
+                yield reply
+            return
 
     # 领域外：礼貌拒答
     if intent == "other":
@@ -303,7 +253,8 @@ def ask_stream(query: str):
         yield get_guess_hint() + "\n\n"
 
     hr = _get_retriever()
-    metadata_filter = _resolve_budget_filter(query)
+    from metadata_extractor import resolve_budget_filter
+    metadata_filter = resolve_budget_filter(query)
 
     # 解析日期表达（"最近半年"/"2025年三月"）→ 日期过滤
     date_filter = _resolve_date_filter(query)

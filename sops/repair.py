@@ -25,14 +25,45 @@ _SYMPTOM_MAP = {
     "拖不干净": "清扫不干净怎么办",
     "异味": "拖布有异味怎么办",
     "发臭": "拖布有异味怎么办",
+    "水痕": "拖地后地面有明显水痕",
+    "水印": "拖地后地面有明显水痕",
 }
 
 
+# 故障现象兜底用的小模型（3b 更快；精度不够可切回 "qwen2.5:7b"）
+_SYMPTOM_TOOL_MODEL = "qwen2.5:3b"
+
+
 def _extract_symptom(text: str, slots: dict):
-    """从用户描述提取故障现象，映射成标准检索 query。"""
+    """从用户描述提取故障现象，映射成标准检索 query。
+
+    规则（关键词）优先；规则 miss 时用 3b function calling 兜底归类口语故障。
+    """
+    # 1. 关键词规则
     for kw, query in _SYMPTOM_MAP.items():
         if kw in text:
             return query
+
+    # 2. LLM function calling 兜底
+    try:
+        from function_tools.symptom_tool import SYMPTOM_TOOL_SCHEMA, symptom_id_to_query
+        from tools.llm_tool import chat_with_tools
+        from langchain_core.messages import HumanMessage
+        resp = chat_with_tools(
+            [HumanMessage(content=text)],
+            [SYMPTOM_TOOL_SCHEMA],
+            model=_SYMPTOM_TOOL_MODEL,
+        )
+        tool_calls = getattr(resp, "tool_calls", None) or []
+        if tool_calls:
+            tc = tool_calls[0]
+            args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
+            query = symptom_id_to_query(args)
+            if query:
+                return query
+    except Exception as e:
+        from tools.log_tool import get_logger
+        get_logger(name="repair").warning("[Repair] symptom tool calling failed: %s", e)
     return None
 
 
@@ -70,7 +101,8 @@ def _search_and_generate(slots: dict):
 REPAIR_SOP = {
     "id": "repair",
     "trigger": ["故障", "坏了", "不动", "漏水", "异响", "不充电", "异常", "失灵",
-                "不好使", "出问题", "趴窝", "卡住", "噪音"],
+                "不好使", "出问题", "趴窝", "卡住", "噪音", "水痕", "水印"],
+    "intro": "我来帮您排查一下故障～",
     "steps": [
         {
             "id": "ask_symptom",

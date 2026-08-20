@@ -67,9 +67,19 @@ def _search(slots: dict):
     return {"count": len(models), "list": "\n".join(lines), "models": models}
 
 
+def _guard_is_consulting(query: str) -> bool:
+    """选购咨询（"选购要注意什么"）→ 不触发选购 SOP，走 RAG。"""
+    from sops.base import is_consulting
+    return is_consulting(query)
+
+
 PURCHASE_SOP = {
     "id": "purchase",
-    "trigger": ["推荐", "选购", "买", "预算", "想买", "性价比", "帮忙选", "挑"],
+    "trigger": ["推荐", "选购", "买", "预算", "想买", "性价比", "帮忙选", "挑", "有没有"],
+    "guards": [
+        {"check": _guard_is_consulting},
+    ],
+    "intro": "好的，我来帮您推荐一款合适的扫地机器人～",
     "steps": [
         {
             "id": "ask_budget",

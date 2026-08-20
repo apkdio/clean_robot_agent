@@ -31,6 +31,24 @@ REPAIR_WORDS = ["故障", "坏了", "不动", "漏水", "异响", "不充电", "
 MAINTAIN_WORDS = ["维护", "保养", "清洗", "清理", "更换", "耗材", "滤网", "边刷",
                   "主刷", "拖布", "尘盒", "充电座清洁"]
 
+# 选购动作词 / 咨询词（判定「选购咨询」vs「选购动作」）
+_BUY_WORDS = ["选购", "购买", "买", "挑", "选", "入手", "购", "采购", "拿下", "购置"]
+_CONSULT_WORDS = ["注意", "问题", "技巧", "知识", "要点", "建议", "事项", "讲究", "坑", "避雷",
+                  "须知", "诀窍", "门道", "参数", "指标", "怎么选", "如何选", "注意什么",
+                  "有什么讲究", "怎么看", "考虑什么", "留意", "注意哪些", "避坑", "挑选技巧",
+                  "指南", "攻略", "手册", "清单", "建议清单"]
+
+
+def is_consulting(query: str) -> bool:
+    """判断是否是「选购咨询」（选购要注意什么），而非「选购动作」（我要买）。
+
+    咨询类含"选购/购买"等动作词 + "注意/问题/技巧"等咨询词，
+    这类是 FAQ 问答，不应触发选购 SOP。
+    """
+    has_buy = any(w in query for w in _BUY_WORDS)
+    has_consult = any(w in query for w in _CONSULT_WORDS)
+    return has_buy and has_consult
+
 
 def register(sop: dict) -> None:
     """注册一个 SOP 定义。"""
@@ -88,11 +106,15 @@ def end_sop():
 def start_sop(sop_id: str, query: str):
     """进入一个 SOP。返回 (reply, done)。
 
-    第一轮直接问第一个问题（不把触发 query 当作槽位回答，
-    避免用户刚说「想买」就被回「预算没听清」）。
+    首轮先尝试用触发 query 提取第一个槽位（预填用户已给的信息），
+    提取失败再问第一个问题。开场提示（intro）可选，有则先输出。
     """
     _start(sop_id)
-    return _run(None)
+    reply, done = _run(query)
+    intro = SOPS[sop_id].get("intro")
+    if intro:
+        return intro + "\n\n" + reply, done
+    return reply, done
 
 
 def continue_sop(query: str):
@@ -103,9 +125,15 @@ def continue_sop(query: str):
 
 
 def match_sop(query: str):
-    """按 trigger 关键词匹配一个 SOP。返回 sop_id 或 None。"""
+    """按 trigger 匹配 SOP，并评估 guards（排除条件）。
+
+    trigger 命中但任一 guard 命中 → 返回 None（该场景不触发 SOP，走后续分支）；
+    trigger 命中且 guards 均未命中 → 返回 sop_id。
+    """
     for sop in SOPS.values():
         if any(kw in query for kw in sop.get("trigger", [])):
+            if any(g["check"](query) for g in sop.get("guards", [])):
+                return None
             return sop["id"]
     return None
 
@@ -133,6 +161,10 @@ def _run(user_input: str):
                     session["retry_count"] = 0
                     user_input = None
                     continue
+                # 首轮提取失败（retry_count==1）→ 用 ask 话术（还没问过用户）
+                # 后续提取失败（retry_count≥2）→ 用 retry 话术（重问）
+                if session["retry_count"] == 1:
+                    return step["ask"], False
                 return step.get("retry", step["ask"]), False
             # 提取成功，重置重试计数
             session["slots"][step["slot"]] = value
@@ -184,6 +216,16 @@ def handle_followup(query: str):
     if latest_hit or vague_recent:
         return _format_models(_search_latest_global()[:5], "最近发布的机器人有这几款：")
 
+    # 全局价格极值：最贵/最便宜 → 全局按价格排序取极值（不依赖上一轮）
+    if "最贵" in query:
+        models = _search_price_global()
+        if models:
+            return _format_models(models[-1:], "目前最贵的是这一款：")
+    if "最便宜" in query:
+        models = _search_price_global()
+        if models:
+            return _format_models(models[:1], "目前最便宜的是这一款：")
+
     # 限定追问：更便宜 → 上一轮结果内按价格升序
     if any(w in query for w in ["便宜", "低价", "划算"]):
         models = get_last_recommend()
@@ -214,4 +256,19 @@ def _search_latest_global():
             seen.add(info["name"])
             models.append(info)
     models.sort(key=lambda m: m.get("publish_date") or "", reverse=True)
+    return models
+
+
+def _search_price_global():
+    """全局检索所有型号，按价格升序（供「最贵/最便宜」极值查询）。"""
+    from tools.metadata_extractor import extract_model_info
+    from tools.vector_store import search_by_filter
+    docs = search_by_filter({"file_name": {"$ne": "__never__"}})
+    models, seen = [], set()
+    for c in docs:
+        info = extract_model_info(c)
+        if info.get("price") is not None and info.get("name") and info["name"] not in seen:
+            seen.add(info["name"])
+            models.append(info)
+    models.sort(key=lambda m: m.get("price") or 0)
     return models
