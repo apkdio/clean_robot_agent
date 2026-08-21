@@ -7,10 +7,9 @@ from config.word_dict_config import PURCHASE_TRIGGER
 from tools.metadata_extractor import (
     extract_budget,
     extract_price_range,
-    extract_model_info,
+    enumerate_models,
     format_model_line,
 )
-from tools.vector_store import search_by_filter
 
 
 def _extract_budget(text: str, slots: dict):
@@ -55,14 +54,7 @@ def _search(slots: dict):
     else:
         # 无任何过滤条件（预算未知）→ 全匹配检索所有产品
         filter_dict = {"file_name": {"$ne": "__never__"}}
-    docs = search_by_filter(filter_dict)
-
-    models, seen = [], set()
-    for c in docs:
-        info = extract_model_info(c)
-        if info.get("price") is not None and info.get("name") and info["name"] not in seen:
-            seen.add(info["name"])
-            models.append(info)
+    models = enumerate_models(filter_dict)
 
     lines = [format_model_line(m) for m in models]
     return {"count": len(models), "list": "\n".join(lines), "models": models}

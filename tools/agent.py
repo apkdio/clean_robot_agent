@@ -276,15 +276,8 @@ def ask_stream(query: str):
 
     # 结构化查询：按 metadata 枚举所有匹配型号（绕过 top-k，避免漏掉条目）
     if metadata_filter is not None:
-        from vector_store import search_by_filter
-        from metadata_extractor import extract_model_info, format_model_line
-        filtered = search_by_filter(metadata_filter)
-        models, seen = [], set() # seen保证输出的结果唯一，防止一个型号多次输出的情况
-        for c in filtered:
-            info = extract_model_info(c)
-            if info.get("price") is not None and info.get("name") and info["name"] not in seen:
-                seen.add(info["name"])
-                models.append(info)
+        from metadata_extractor import enumerate_models, format_model_line
+        models = enumerate_models(metadata_filter)
         if models:
             lines = [format_model_line(m) for m in models]
             prefix = {

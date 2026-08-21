@@ -125,6 +125,23 @@ def format_model_line(info: Dict) -> str:
     return line
 
 
+def enumerate_models(filter: dict, require_field: str = "price") -> list[Dict]:
+    """按 filter 枚举所有匹配型号（去重、校验必需字段）。
+
+    require_field 指定必需字段（"price" 或 "publish_date"），缺该字段的 chunk 跳过，
+    避免把非型号条目当成型号。返回结构化型号信息列表。
+    """
+    from vector_store import search_by_filter
+    docs = search_by_filter(filter)
+    models, seen = [], set()
+    for c in docs:
+        info = extract_model_info(c)
+        if info.get(require_field) and info.get("name") and info["name"] not in seen:
+            seen.add(info["name"])
+            models.append(info)
+    return models
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # query → Chroma filter（检索时）
 # ──────────────────────────────────────────────────────────────────────────

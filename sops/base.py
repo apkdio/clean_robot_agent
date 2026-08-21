@@ -234,29 +234,15 @@ def _format_models(models, header: str) -> str:
 
 def _search_latest_global():
     """全局检索所有型号，按发布时间倒序。"""
-    from tools.metadata_extractor import extract_model_info
-    from tools.vector_store import search_by_filter
-    docs = search_by_filter({"file_name": {"$ne": "__never__"}})
-    models, seen = [], set()
-    for c in docs:
-        info = extract_model_info(c)
-        if info.get("publish_date") and info.get("name") and info["name"] not in seen:
-            seen.add(info["name"])
-            models.append(info)
+    from tools.metadata_extractor import enumerate_models
+    models = enumerate_models({"file_name": {"$ne": "__never__"}}, require_field="publish_date")
     models.sort(key=lambda m: m.get("publish_date") or "", reverse=True)
     return models
 
 
 def _search_price_global():
     """全局检索所有型号，按价格升序（供「最贵/最便宜」极值查询）。"""
-    from tools.metadata_extractor import extract_model_info
-    from tools.vector_store import search_by_filter
-    docs = search_by_filter({"file_name": {"$ne": "__never__"}})
-    models, seen = [], set()
-    for c in docs:
-        info = extract_model_info(c)
-        if info.get("price") is not None and info.get("name") and info["name"] not in seen:
-            seen.add(info["name"])
-            models.append(info)
+    from tools.metadata_extractor import enumerate_models
+    models = enumerate_models({"file_name": {"$ne": "__never__"}})
     models.sort(key=lambda m: m.get("price") or 0)
     return models
