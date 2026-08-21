@@ -17,19 +17,7 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 
-# 故障类型编号 → 标准检索 query（与 repair._SYMPTOM_MAP 的 value 对齐）
-SYMPTOM_QUERY_MAP = {
-    1: "机器人不移动怎么办",
-    2: "水箱漏水怎么办",
-    3: "扫地机器人异响怎么办",
-    4: "机器人充不进电怎么办",
-    5: "机器人找不到充电座怎么办",
-    6: "APP无法连接机器人怎么办",
-    7: "吸力下降怎么办",
-    8: "建图不完整怎么办",
-    9: "清扫不干净怎么办",
-    10: "拖布有异味怎么办",
-}
+from config.word_dict_config import SYMPTOM_QUERY_MAP  # 故障类型编号 → 标准检索 query
 
 
 SYMPTOM_TOOL_SCHEMA = {

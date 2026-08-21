@@ -15,6 +15,7 @@ from config_tool import load_agent_config
 from llm_tool import stream_chat
 from log_tool import get_logger
 from prompts_tool import load_main_prompts
+from config.word_dict_config import EMOTION_STRONG, EMOTION_MILD, EXIT_WORDS
 
 logger = get_logger(name="agent")
 
@@ -48,9 +49,7 @@ _INJECT_RE = re.compile(
     r"|系统提示词|system\s*prompt|初始指令|提示词是什么"
 )
 
-# 负面情绪词表（分级；命中则在回答前先安抚，纯规则 0 延迟）
-_EMOTION_STRONG = ["投诉", "退钱", "退款", "垃圾", "什么破", "气死", "火大", "差评"]
-_EMOTION_MILD = ["烦", "着急", "急死", "郁闷", "失望", "无语", "闹心", "糟心"]
+# 情绪词表见 config.word_dict_config.EMOTION_STRONG / EMOTION_MILD
 
 
 def detect_emotion(query: str) -> str | None:
@@ -59,11 +58,21 @@ def detect_emotion(query: str) -> str | None:
     强烈负面（投诉/退钱）给正式安抚 + 主动处理姿态；轻微负面（烦/急）给轻量安抚。
     只安抚、不拦截：安抚后继续走正常流程，诉求照常回答。
     """
-    if any(w in query for w in _EMOTION_STRONG):
+    if any(w in query for w in EMOTION_STRONG):
+        logger.info("[Emotion] Strong Negative")
         return "非常抱歉给您带来不好的体验，我马上帮您处理～"
-    if any(w in query for w in _EMOTION_MILD):
+    if any(w in query for w in EMOTION_MILD):
+        logger.info("[Emotion] Negative")
         return "别着急，我帮您看看～"
+    logger.info("[Emotion] Normal")
     return None
+
+
+def _strip_emotion(query: str) -> str:
+    """剥离情绪词，让后续流程聚焦具体诉求（避免 LLM 把抱怨当独立问题）。"""
+    for w in EMOTION_STRONG + EMOTION_MILD:
+        query = query.replace(w, "")
+    return query
 
 
 def _route_domain(query: str):
@@ -168,6 +177,7 @@ def ask_stream(query: str):
     emotion_reply = detect_emotion(query)
     if emotion_reply:
         yield emotion_reply + "\n\n"
+        query = _strip_emotion(query)  # 剥离情绪词，避免 LLM 把抱怨当独立问题
 
     # SOP 会话：有活跃 SOP 时继续该流程（不经过意图路由）
     from sops import has_active_sop, continue_sop, end_sop, start_sop, match_sop, get_active_sop_id
@@ -193,10 +203,8 @@ def ask_stream(query: str):
             return
 
         # 状态3：明确的退出/纠正词 → 退出并提醒，fall through 重新理解用户的话
-        exit_words = ["退出", "算了", "不用了", "取消", "换个问题", "换一个问题", "换个话题",
-                      "换话题", "问别的", "问个别的", "不是", "不对", "错了", "我问的是",
-                      "你理解错了", "别问了", "别问", "换一个"]
-        if any(w in query for w in exit_words):
+        # 注意：不含"不是/不对/错了"——它们会误伤反问句（"是不是该换了""对不对"）
+        if any(w in query for w in EXIT_WORDS):
             sop_id = get_active_sop_id()
             end_sop()
             yield f"好的，已退出「{_sop_name(sop_id)}」环节～"
@@ -271,7 +279,7 @@ def ask_stream(query: str):
         from vector_store import search_by_filter
         from metadata_extractor import extract_model_info, format_model_line
         filtered = search_by_filter(metadata_filter)
-        models, seen = [], set()
+        models, seen = [], set() # seen保证输出的结果唯一，防止一个型号多次输出的情况
         for c in filtered:
             info = extract_model_info(c)
             if info.get("price") is not None and info.get("name") and info["name"] not in seen:
@@ -317,13 +325,13 @@ def ask_stream(query: str):
         "参考资料：\n" + context_block + "\n\n"
         "问题：" + query + "\n\n"
         "回答规则：\n"
-        "1. 若用户是推荐/选购类问题（如「推荐几款」「有什么机器人」「预算XX」「买哪个」），"
-        "必须逐条列出参考资料中所有符合条件（价格在预算内）的型号，至少 3 条，能列 4-5 条更好，"
-        "每个型号单独一行，格式为「型号名：吸力、导航、避障等关键参数，参考价 XX 元」。"
-        "严禁只介绍一个型号；型号之间、引导语与列表之间、列表与结尾之间都不要加空行，保持紧凑排列。\n"
-        "2. 若是一般事实性问题，简要使用中文回答，注意分行。\n"
-        "3. 如果参考资料与问题无关：先判断是否打招呼/闲聊，是则按系统提示词「闲聊与问候」自然回应；"
+        "1. 基于参考资料简要回答用户问题，使用中文，注意分行。\n"
+        "2. 如果参考资料与问题无关：先判断是否打招呼/闲聊，是则按系统提示词「闲聊与问候」自然回应；"
         "若是扫地机器人相关事实性问题，从系统提示词「暂无信息回复」列表随机选一句。"
+        "判断「相关」只看问题的具体诉求（故障现象、异味、功能、参数等），"
+        "用户的情绪抱怨（如「烂透了」「气死我了」）不算无关，不要因此误答「暂无信息」。\n"
+        "3. 严禁同时输出「暂无信息」和具体答案：参考资料有相关内容就只给具体答案，"
+        "没有相关内容才用「暂无信息」话术，二者只能选一个。"
     )
 
     for chunk in stream_chat(

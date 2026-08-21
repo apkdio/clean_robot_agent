@@ -3,6 +3,7 @@
 import re
 
 from sops.base import register
+from config.word_dict_config import PURCHASE_TRIGGER
 from tools.metadata_extractor import (
     extract_budget,
     extract_price_range,
@@ -73,11 +74,18 @@ def _guard_is_consulting(query: str) -> bool:
     return is_consulting(query)
 
 
+def _guard_aftersales(query: str) -> bool:
+    """售后咨询（"有没有保修/售后"）→ 不触发选购 SOP，走 RAG。"""
+    from sops.base import is_aftersales
+    return is_aftersales(query)
+
+
 PURCHASE_SOP = {
     "id": "purchase",
-    "trigger": ["推荐", "选购", "买", "预算", "想买", "性价比", "帮忙选", "挑", "有没有"],
+    "trigger": PURCHASE_TRIGGER,
     "guards": [
         {"check": _guard_is_consulting},
+        {"check": _guard_aftersales},
     ],
     "intro": "好的，我来帮您推荐一款合适的扫地机器人～",
     "steps": [

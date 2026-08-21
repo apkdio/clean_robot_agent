@@ -13,30 +13,13 @@
 
 import re
 
+from config.word_dict_config import (
+    DOMAIN_MAP, REPAIR_WORDS, MAINTAIN_WORDS, AFTERSALES_WORDS,
+    BUY_WORDS, CONSULT_WORDS,
+    LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS,
+)
+
 SOPS = {}  # sop_id → sop 定义
-
-# 知识域映射（场景 → 知识库文件名，即"轻量文档隔离"的域）
-DOMAIN_MAP = {
-    "consulting": "选购指南.txt",   # 选购咨询（走 RAG 域过滤）
-    "repair": "故障排除.txt",       # 故障排查（走 SOP，定向该域）
-    "maintain": "维护保养.txt",     # 维护保养（走 RAG 域过滤）
-    "model": "具体型号.txt",        # 购买推荐（走结构化直出，metadata 过滤）
-}
-
-# 故障关键词（路由到 repair 域）
-REPAIR_WORDS = ["故障", "坏了", "不动", "漏水", "异响", "不充电", "异常", "失灵",
-                "不好使", "出问题", "趴窝", "卡住", "噪音"]
-
-# 维护关键词（路由到 maintain 域）
-MAINTAIN_WORDS = ["维护", "保养", "清洗", "清理", "更换", "耗材", "滤网", "边刷",
-                  "主刷", "拖布", "尘盒", "充电座清洁"]
-
-# 选购动作词 / 咨询词（判定「选购咨询」vs「选购动作」）
-_BUY_WORDS = ["选购", "购买", "买", "挑", "选", "入手", "购", "采购", "拿下", "购置"]
-_CONSULT_WORDS = ["注意", "问题", "技巧", "知识", "要点", "建议", "事项", "讲究", "坑", "避雷",
-                  "须知", "诀窍", "门道", "参数", "指标", "怎么选", "如何选", "注意什么",
-                  "有什么讲究", "怎么看", "考虑什么", "留意", "注意哪些", "避坑", "挑选技巧",
-                  "指南", "攻略", "手册", "清单", "建议清单"]
 
 
 def is_consulting(query: str) -> bool:
@@ -45,9 +28,14 @@ def is_consulting(query: str) -> bool:
     咨询类含"选购/购买"等动作词 + "注意/问题/技巧"等咨询词，
     这类是 FAQ 问答，不应触发选购 SOP。
     """
-    has_buy = any(w in query for w in _BUY_WORDS)
-    has_consult = any(w in query for w in _CONSULT_WORDS)
+    has_buy = any(w in query for w in BUY_WORDS)
+    has_consult = any(w in query for w in CONSULT_WORDS)
     return has_buy and has_consult
+
+
+def is_aftersales(query: str) -> bool:
+    """判断是否是「售后咨询」（保修/售后/退换货），而非「选购咨询」。"""
+    return any(w in query for w in AFTERSALES_WORDS)
 
 
 def register(sop: dict) -> None:
@@ -207,11 +195,11 @@ def handle_followup(query: str):
     # 最近发布类：全局检索（不依赖上一轮上下文）
     #   - 明确词："新款/最新/比较新/最近发布/新出/上市"
     #   - 笼统"最近"（后面不带时间单位）+ "发布/新/出"
-    latest_hit = any(w in query for w in ["新款", "最新", "比较新", "最近发布", "新出", "上市"])
+    latest_hit = any(w in query for w in LATEST_WORDS)
     vague_recent = (
         "最近" in query
         and not re.search(r"最近(?:半|几|[0-9一二两三四五六七八九十]|个?[月年周天])", query)
-        and any(w in query for w in ["发布", "新", "出", "上市"])
+        and any(w in query for w in RECENT_VAGUE_WORDS)
     )
     if latest_hit or vague_recent:
         return _format_models(_search_latest_global()[:5], "最近发布的机器人有这几款：")
@@ -227,7 +215,7 @@ def handle_followup(query: str):
             return _format_models(models[:1], "目前最便宜的是这一款：")
 
     # 限定追问：更便宜 → 上一轮结果内按价格升序
-    if any(w in query for w in ["便宜", "低价", "划算"]):
+    if any(w in query for w in CHEAPER_WORDS):
         models = get_last_recommend()
         if not models:
             return None

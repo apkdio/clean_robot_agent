@@ -35,6 +35,7 @@ clean_robot_agent/
 │   ├── rag.yaml                 # RAG 配置（分块、检索、RRF 参数）
 │   ├── chroma.yaml              # Chroma/embedding 配置
 │   ├── prompts.yaml             # Prompt 文件路径
+│   ├── word_dict_config.py      # 词表配置中心（情绪/退出/域/触发/症状等词表集中管理）
 │   └── *_template.yaml          # 对应模板（含注释说明，复制后填值）
 ├── data/
 │   ├── knowledge/               # 知识库源文件（txt/pdf，热更新监控目录）

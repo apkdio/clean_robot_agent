@@ -1,34 +1,7 @@
 """故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤。"""
 
 from sops.base import register
-
-# 现象关键词 → 标准检索 query（查询改写，与知识库条目标题对齐）
-_SYMPTOM_MAP = {
-    "不动": "机器人不移动怎么办",
-    "不走了": "机器人不移动怎么办",
-    "趴窝": "机器人不移动怎么办",
-    "卡住": "机器人不移动怎么办",
-    "漏水": "水箱漏水怎么办",
-    "漏水了": "水箱漏水怎么办",
-    "异响": "扫地机器人异响怎么办",
-    "噪音": "扫地机器人异响怎么办",
-    "不充电": "机器人充不进电怎么办",
-    "充不进电": "机器人充不进电怎么办",
-    "找不到充电座": "机器人找不到充电座怎么办",
-    "回不了充": "机器人找不到充电座怎么办",
-    "连不上": "APP无法连接机器人怎么办",
-    "联网失败": "APP无法连接机器人怎么办",
-    "吸力": "吸力下降怎么办",
-    "建图": "建图不完整怎么办",
-    "地图": "建图不完整怎么办",
-    "不干净": "清扫不干净怎么办",
-    "拖不干净": "清扫不干净怎么办",
-    "异味": "拖布有异味怎么办",
-    "发臭": "拖布有异味怎么办",
-    "水痕": "拖地后地面有明显水痕",
-    "水印": "拖地后地面有明显水痕",
-}
-
+from config.word_dict_config import SYMPTOM_MAP, REPAIR_TRIGGER
 
 # 故障现象兜底用的小模型（3b 更快；精度不够可切回 "qwen2.5:7b"）
 _SYMPTOM_TOOL_MODEL = "qwen2.5:3b"
@@ -40,7 +13,7 @@ def _extract_symptom(text: str, slots: dict):
     规则（关键词）优先；规则 miss 时用 3b function calling 兜底归类口语故障。
     """
     # 1. 关键词规则
-    for kw, query in _SYMPTOM_MAP.items():
+    for kw, query in SYMPTOM_MAP.items():
         if kw in text:
             return query
 
@@ -100,8 +73,7 @@ def _search_and_generate(slots: dict):
 
 REPAIR_SOP = {
     "id": "repair",
-    "trigger": ["故障", "坏了", "不动", "漏水", "异响", "不充电", "异常", "失灵",
-                "不好使", "出问题", "趴窝", "卡住", "噪音", "水痕", "水印"],
+    "trigger": REPAIR_TRIGGER,
     "intro": "我来帮您排查一下故障～",
     "steps": [
         {
