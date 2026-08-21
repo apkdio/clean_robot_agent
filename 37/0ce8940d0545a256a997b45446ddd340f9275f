@@ -1,0 +1,18 @@
+config/word_dict_config.py
+  h_17b40a0da2c9a6 1-108
+tools/agent.py
+  h_17b40a0da2c9a6 18,52,61-62,64-65,67,71-77,180,206-207,282,328-329,331-334
+sops/base.py
+  h_17b40a0da2c9a6 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "370ce8940d0545a256a997b45446ddd340f9275f",
+  "prompts": {},
+  "humans": {
+    "h_17b40a0da2c9a6": {
+      "author": "wanqw <apkdio@163.com>"
+    }
+  }
+}
