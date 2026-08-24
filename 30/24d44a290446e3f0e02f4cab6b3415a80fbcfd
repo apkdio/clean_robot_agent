@@ -1,0 +1,52 @@
+tools/agent.py
+  s_40681318f5a20b::t_969e0056b50325 94,163,168,170,177-189,198,200,202-203,205,213-214,222-223,228,241,250
+project_detail.md
+  s_8c01c3f9a2b091::t_b3106889977bf2 29,40,83-85,126,150-151,168-169,189,265,332
+  s_8c01c3f9a2b091::t_a9a0f73715bb28 365,403,416,422-442,539-547,557,570-572,574,582
+  h_17b40a0da2c9a6 17,28
+data/datasets/intent_dataset.jsonl
+  h_17b40a0da2c9a6 206
+README.md
+  s_8c01c3f9a2b091::t_d14d4d489e72e1 17,43,45,57,68-69,74-75,93,130,203-204,221
+test_scripts/test_sop.py
+  s_8c01c3f9a2b091::t_da0e2f1ab69949 543-544,558-559
+  s_8c01c3f9a2b091::t_bdf95730ea61ae 167-169,291
+  s_40681318f5a20b::t_deef9115dccbac 262,311,314,322-323,333-334,344,351-355,362-366,377,380,383,386,392,400,402,405,410,418,420-421,471,474,479,484,489,494,545,595-596,599,603,606
+sops/repair.py
+  h_17b40a0da2c9a6 8-9,19,21,39,41,43
+sops/base.py
+  h_17b40a0da2c9a6 15,22,102,127
+  s_40681318f5a20b::t_8f3a7aaaf23596 47-48,51-53,56-57,60-61,64-65,68-69,72-75,78-80,83-84,87-92,95,101,103,110-112,114,132-134,172,183,187,191,222
+  s_8c01c3f9a2b091::t_8a86c61ac6038c 11
+webapp/app.py
+  s_40681318f5a20b::t_f62c9283b74127 138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "3024d44a290446e3f0e02f4cab6b3415a80fbcfd",
+  "prompts": {},
+  "humans": {
+    "h_17b40a0da2c9a6": {
+      "author": "wanqw <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4-Pro-discount"
+      },
+      "human_author": "wanqw <apkdio@163.com>"
+    },
+    "s_8c01c3f9a2b091": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_7v1d1sbpt25p",
+        "model": "auto(free)"
+      },
+      "human_author": "wanqw <apkdio@163.com>"
+    }
+  }
+}
