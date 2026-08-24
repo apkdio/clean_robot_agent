@@ -5,7 +5,8 @@ from config.word_dict_config import SYMPTOM_MAP, REPAIR_TRIGGER
 
 # 故障现象兜底用的小模型（3b 更快；精度不够可切回 "qwen2.5:7b"）
 _SYMPTOM_TOOL_MODEL = "qwen2.5:3b"
-
+from tools.log_tool import get_logger
+logger = get_logger(name="repair_sop")
 
 def _extract_symptom(text: str, slots: dict):
     """从用户描述提取故障现象，映射成标准检索 query。
@@ -15,7 +16,9 @@ def _extract_symptom(text: str, slots: dict):
     # 1. 关键词规则
     for kw, query in SYMPTOM_MAP.items():
         if kw in text:
+            logger.info(f"[Repair] symptom {kw}: {query}")
             return query
+    logger.warning("[Repair] Keyword match failed! Using LLM to match!")
 
     # 2. LLM function calling 兜底
     try:
@@ -33,10 +36,11 @@ def _extract_symptom(text: str, slots: dict):
             args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
             query = symptom_id_to_query(args)
             if query:
+                logger.info(f"[Repair] LLM modify query: {query}")
                 return query
+            logger.warning("[Repair] LLM modify query failed!")
     except Exception as e:
-        from tools.log_tool import get_logger
-        get_logger(name="repair").warning("[Repair] symptom tool calling failed: %s", e)
+        logger.warning("[Repair] symptom tool calling failed: %s", e)
     return None
 
 

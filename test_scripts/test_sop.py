@@ -164,7 +164,9 @@ def _mock_search(slots: Dict[str, Any]) -> Dict[str, Any]:
 
 _TEST_SOP = {
     "id": "test_sop",
-    "trigger": ["测试版", "试验场景", "试一下", "模拟选购"],
+    "trigger": ["测试版", "试验场景", "试一下", "模拟测试"],
+    # 允许重试 3 次（覆盖默认 max_retry=2，验证 retry 循环与放弃槽位的边界）
+    "max_retry": 3,
     "steps": [
         {
             "id": "ask_budget",
@@ -257,7 +259,7 @@ def _assert_eq(a, b, msg: str):
 def _cleanup():
     """清除 SOP 会话状态（导入 base 模块后直接操作 _session）。"""
     import sops.base
-    sops.base._session = None
+    sops.base._sessions = {}
 
 
 # ================================================================
@@ -286,7 +288,7 @@ def test_match_sop_hit():
     import sops.base
     _assert_eq(sops.base.match_sop("测试版"), "test_sop", "命中「测试版」")
     _assert_eq(sops.base.match_sop("试一下"), "test_sop", "命中「试一下」")
-    _assert_eq(sops.base.match_sop("模拟选购"), "test_sop", "命中「模拟选购」")
+    _assert_eq(sops.base.match_sop("模拟测试"), "test_sop", "命中「模拟测试」")
     _assert(sops.base.match_sop("帮我推荐一款") is not None, "真实 trigger 也会命中 purchase SOP")
 
 
@@ -306,10 +308,10 @@ def test_start_sop():
     """测试启动 SOP：第一轮返回 ask 文本，不尝试提取"""
     _cleanup()
     import sops.base
-    reply, done = sops.base.start_sop("test_sop", "帮忙推荐一下")
+    reply, done = sops.base.start_sop("test_session", "test_sop", "帮忙推荐一下")
     _assert_eq(reply, "好呀，先了解一下您的预算大概是多少呢？", "返回 ask 文本")
     _assert(not done, "done=False，SOP 未结束")
-    _assert(sops.base.has_active_sop(), "有活跃会话")
+    _assert(sops.base.has_active_sop("test_session"), "有活跃会话")
     _cleanup()
 
 
@@ -317,8 +319,8 @@ def test_continue_sop_success():
     """测试继续 SOP：提取成功并推进到下一步"""
     _cleanup()
     import sops.base
-    sops.base.start_sop("test_sop", "随便")
-    reply, done = sops.base.continue_sop("1000以内")
+    sops.base.start_sop("test_session", "test_sop", "随便")
+    reply, done = sops.base.continue_sop("test_session", "1000以内")
     _assert_eq(reply, "家里有养宠物吗？（有猫狗的话，我会优先推荐防毛发缠绕的机型）", "推进到 ask_pet")
     _assert(not done, "done=False")
     _cleanup()
@@ -328,8 +330,8 @@ def test_continue_sop_extract_fail():
     """测试继续 SOP：提取失败，触发 retry"""
     _cleanup()
     import sops.base
-    sops.base.start_sop("test_sop", "随便")
-    reply, done = sops.base.continue_sop("不知道")  # 无法提取预算
+    sops.base.start_sop("test_session", "test_sop", "随便")
+    reply, done = sops.base.continue_sop("test_session", "不知道")  # 无法提取预算
     _assert_eq(reply, "预算我没太听清，能说个具体数字吗？比如「1000以内」「2000元左右」。", "触发 retry 话术")
     _assert(not done, "done=False，会话未结束")
     _cleanup()
@@ -339,29 +341,29 @@ def test_continue_sop_no_session():
     """测试无活跃会话时 continue_sop 返回 None"""
     _cleanup()
     import sops.base
-    _assert(sops.base.continue_sop("随便") is None, "无会话时返回 None")
+    _assert(sops.base.continue_sop("test_session", "随便") is None, "无会话时返回 None")
 
 
 def test_end_sop():
     """测试主动结束会话"""
     _cleanup()
     import sops.base
-    sops.base.start_sop("test_sop", "随便")
-    _assert(sops.base.has_active_sop(), "启动后有会话")
-    sops.base.end_sop()
-    _assert(not sops.base.has_active_sop(), "结束会话后无活跃会话")
-    _assert(sops.base.continue_sop("随便") is None, "结束后 continue 返回 None")
+    sops.base.start_sop("test_session", "test_sop", "随便")
+    _assert(sops.base.has_active_sop("test_session"), "启动后有会话")
+    sops.base.end_sop("test_session")
+    _assert(not sops.base.has_active_sop("test_session"), "结束会话后无活跃会话")
+    _assert(sops.base.continue_sop("test_session", "随便") is None, "结束后 continue 返回 None")
 
 
 def test_has_active_sop():
     """测试 has_active_sop 状态"""
     _cleanup()
     import sops.base
-    _assert(not sops.base.has_active_sop(), "初始无会话")
-    sops.base.start_sop("test_sop", "随便")
-    _assert(sops.base.has_active_sop(), "启动后有会话")
-    sops.base.end_sop()
-    _assert(not sops.base.has_active_sop(), "结束后无会话")
+    _assert(not sops.base.has_active_sop("test_session"), "初始无会话")
+    sops.base.start_sop("test_session", "test_sop", "随便")
+    _assert(sops.base.has_active_sop("test_session"), "启动后有会话")
+    sops.base.end_sop("test_session")
+    _assert(not sops.base.has_active_sop("test_session"), "结束后无会话")
 
 
 # ================================================================
@@ -372,22 +374,22 @@ def test_full_flow():
     """测试完整 SOP 流程：ask_budget → ask_pet → do_search → reply"""
     _cleanup()
     import sops.base
-    sops.base.start_sop("test_sop", "帮我推荐")
+    sops.base.start_sop("test_session", "test_sop", "帮我推荐")
 
     # 第 1 轮：给预算
-    reply, done = sops.base.continue_sop("1000以内")
+    reply, done = sops.base.continue_sop("test_session", "1000以内")
     _assert(not done, "预算收集后未结束")
     _assert("宠物" in reply, "下一步问宠物")
-    _assert(sops.base.has_active_sop(), "会话仍在活跃")
+    _assert(sops.base.has_active_sop("test_session"), "会话仍在活跃")
 
     # 第 2 轮：给宠物信息
-    reply, done = sops.base.continue_sop("没有宠物")
+    reply, done = sops.base.continue_sop("test_session", "没有宠物")
     _assert(done, "SOP 结束")
     _assert("共找到" in reply, "回复包含统计")
     _assert("米家扫拖机器人 M20" in reply, "回复包含 899 元以内型号")
     _assert("美的 i5 Pro" in reply, "回复包含 799 元型号")
     _assert("米家扫拖 M10 Lite" in reply, "回复包含 699 元型号")
-    _assert(not sops.base.has_active_sop(), "会话已结束")
+    _assert(not sops.base.has_active_sop("test_session"), "会话已结束")
     _cleanup()
 
 
@@ -395,17 +397,17 @@ def test_full_flow_with_range():
     """测试区间预算的完整流程"""
     _cleanup()
     import sops.base
-    sops.base.start_sop("test_sop", "帮我推荐")
+    sops.base.start_sop("test_session", "test_sop", "帮我推荐")
 
-    reply, done = sops.base.continue_sop("2000-3000")
+    reply, done = sops.base.continue_sop("test_session", "2000-3000")
     _assert(not done, "预算收集后未结束")
 
-    reply, done = sops.base.continue_sop("有宠物")
+    reply, done = sops.base.continue_sop("test_session", "有宠物")
     _assert(done, "SOP 结束")
     _assert("共找到" in reply, "回复包含统计")
     _assert("科沃斯 T30 Mini" in reply, "回复包含区间内型号")
     _assert("石头 P10" in reply, "回复包含区间内型号")
-    _assert(not sops.base.has_active_sop(), "会话已结束")
+    _assert(not sops.base.has_active_sop("test_session"), "会话已结束")
     _cleanup()
 
 
@@ -413,10 +415,10 @@ def test_full_flow_no_pet():
     """测试无宠物场景的完整流程"""
     _cleanup()
     import sops.base
-    sops.base.start_sop("test_sop", "随便")
+    sops.base.start_sop("test_session", "test_sop", "随便")
 
-    sops.base.continue_sop("1000以内")
-    reply, done = sops.base.continue_sop("没有")
+    sops.base.continue_sop("test_session", "1000以内")
+    reply, done = sops.base.continue_sop("test_session", "没有")
     _assert(done, "SOP 结束")
     _assert("共找到" in reply, "即使无宠物也能正常推荐")
     _cleanup()
@@ -466,30 +468,30 @@ def test_retry_cycle():
     """测试连续提取失败后最终成功"""
     _cleanup()
     import sops.base
-    sops.base.start_sop("test_sop", "随便")
+    sops.base.start_sop("test_session", "test_sop", "随便")
 
     # 第 1 次失败
-    reply, done = sops.base.continue_sop("不知道")
+    reply, done = sops.base.continue_sop("test_session", "不知道")
     _assert(not done, "第 1 次失败后未结束")
     _assert("预算我没太听清" in reply, "第 1 次失败触发 retry")
 
     # 第 2 次失败
-    reply, done = sops.base.continue_sop("随便")
+    reply, done = sops.base.continue_sop("test_session", "随便")
     _assert(not done, "第 2 次失败后未结束")
     _assert("预算我没太听清" in reply, "第 2 次失败仍触发 retry")
 
     # 第 3 次成功
-    reply, done = sops.base.continue_sop("1500以内")
+    reply, done = sops.base.continue_sop("test_session", "1500以内")
     _assert(not done, "预算成功收集后未结束")
     _assert("宠物" in reply, "推进到 ask_pet")
 
     # 宠物提取失败
-    reply2, done2 = sops.base.continue_sop("随便说说")
+    reply2, done2 = sops.base.continue_sop("test_session", "随便说说")
     _assert(not done2, "宠物提取失败后未结束")
     _assert("宠物" in reply2, "宠物 retry 话术")
 
     # 宠物提取成功
-    reply3, done3 = sops.base.continue_sop("有猫")
+    reply3, done3 = sops.base.continue_sop("test_session", "有猫")
     _assert(done3, "全部集齐，SOP 结束")
     _assert("共找到" in reply3, "回复包含统计")
     _cleanup()
@@ -538,8 +540,9 @@ def test_template_fallback():
     _cleanup()
     import sops.base
     sops.base.register(_TEST_SOP_BAD_TEMPLATE)
-    sops.base.start_sop("test_sop_bad_template", "测试")
-    reply, done = sops.base.continue_sop("张三")
+    # 首轮给空串（提取失败 → ask 话术，会话保持），再给名字推进到 reply 触发 fallback
+    sops.base.start_sop("test_session", "test_sop_bad_template", "")
+    reply, done = sops.base.continue_sop("test_session", "张三")
     _assert(done, "SOP 结束")
     _assert_eq(reply, "抱歉，出了一点小问题，请重新提问～", "触发 fallback 话术")
 
@@ -552,8 +555,8 @@ def test_unknown_sop_id():
         # 注册一个 SOP
         sops.base.register(_TEST_SOP)
         # 尝试启动不存在的 SOP（但 base._start 不会做校验）
-        sops.base._start("nonexistent_sop")
-        reply, done = sops.base._run(None)
+        sops.base._start("test_session", "nonexistent_sop")
+        reply, done = sops.base._run("test_session", None)
         # 此时 _run 会尝试访问 SOPS["nonexistent_sop"]，期待 KeyError
         _assert(False, "应该抛出 KeyError")
     except KeyError:
@@ -589,18 +592,18 @@ def test_e2e_purchase_sop():
     _cleanup()
 
     # 第 1 轮：触发
-    sops.base.start_sop("purchase", "帮我推荐一款")
-    _assert(sops.base.has_active_sop(), "purchase SOP 已启动")  # 注：故意写错，应为 has_active_sop
+    sops.base.start_sop("test_session", "purchase", "帮我推荐一款")
+    _assert(sops.base.has_active_sop("test_session"), "purchase SOP 已启动")  # 注：故意写错，应为 has_active_sop
 
     # 第 2 轮：给预算
-    reply, done = sops.base.continue_sop("1000以内")
+    reply, done = sops.base.continue_sop("test_session", "1000以内")
     _assert(not done, "预算收集后未结束")
 
     # 第 3 轮：给宠物 + 生成结果
-    reply, done = sops.base.continue_sop("没有宠物")
+    reply, done = sops.base.continue_sop("test_session", "没有宠物")
     _assert(done, "SOP 结束")
     _assert("共找到" in reply, "回复包含统计")
-    _assert(not sops.base.has_active_sop(), "会话已结束")
+    _assert(not sops.base.has_active_sop("test_session"), "会话已结束")
     _cleanup()
 
 

@@ -22,6 +22,7 @@ for _p in (_PROJECT_ROOT, _TOOLS_DIR):
 
 from tools.agent import ask_stream
 from tools.config_tool import load_agent_config, load_rag_config
+from tools.context_store import ensure_session_id, list_sessions
 from tools.log_tool import get_logger
 from tools.vector_store import (
     ingest_data_dir,
@@ -116,18 +117,25 @@ def chat_stream():
     query = data["query"].strip()
     if not query:
         return jsonify({"status": "error", "message": "Empty query."}), 400
+    session_id = ensure_session_id(data.get("session_id", ""))
 
-    logger.info(f"[Stream] query: {query[:60]}...")
+    logger.info(f"[Stream] query: {query[:60]}... session={session_id}")
 
     def generate():
         import json
+        from tools.context_store import append_message
+        from sops.base import get_last_recommend
+        parts = []
         try:
-            for chunk in ask_stream(query):
+            for chunk in ask_stream(query, session_id):
+                parts.append(chunk)
                 # JSON 编码，避免 chunk 内的换行符破坏 SSE 帧格式
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.error(f"[Stream] {e}")
             yield f"data: {json.dumps(f'[错误: {e}]', ensure_ascii=False)}\n\n"
+        # 记录 assistant 完整回答 + 结构化推荐（供自由指代消解）
+        append_message(session_id, "assistant", "".join(parts), models=get_last_recommend(session_id))
         yield "data: [DONE]\n\n"
 
     return Response(
@@ -135,6 +143,28 @@ def chat_stream():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/api/sessions", methods=["GET"])
+def sessions():
+    """列出所有历史会话（供前端对话列表）。"""
+    try:
+        return jsonify({"status": "ok", "sessions": list_sessions()})
+    except Exception as e:
+        logger.error(f"[Sessions] {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/sessions/<sid>/messages", methods=["GET"])
+def session_messages(sid):
+    """返回指定会话的完整消息（供前端加载历史对话）。"""
+    from tools.context_store import get_recent
+    try:
+        msgs = get_recent(sid, n=1000)  # 文件保留全量，这里取足够多
+        return jsonify({"status": "ok", "messages": msgs})
+    except Exception as e:
+        logger.error(f"[SessionMessages] {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/api/ingest/batch", methods=["POST"])

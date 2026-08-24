@@ -8,17 +8,18 @@
   - action  ：调用 skill 执行动作（如按预算检索）
   - reply   ：输出最终结果并结束 SOP
 
-会话状态为内存存储（当前单机单用户；多用户时改为按 user_id 隔离）。
+会话状态为内存存储，按 session_id 隔离（支持多会话；服务重启后清空）。
 """
 
 import re
-
+from tools.log_tool import get_logger
 from config.word_dict_config import (
     DOMAIN_MAP, REPAIR_WORDS, MAINTAIN_WORDS, AFTERSALES_WORDS,
     BUY_WORDS, CONSULT_WORDS,
     LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS,
 )
 
+logger = get_logger(name="sops")
 SOPS = {}  # sop_id → sop 定义
 
 
@@ -43,73 +44,74 @@ def register(sop: dict) -> None:
     SOPS[sop["id"]] = sop
 
 
-# 上一轮推荐的结构化结果（型号列表），用于「追问」处理
-_last_recommend = None
+# 上一轮推荐的结构化结果（型号列表），用于「追问」处理，按 session_id 隔离
+_last_recommends = {}
 
 
-def save_recommend(models) -> None:
-    """保存上一轮推荐结果（供追问「有没有更新的/更便宜的」使用）。"""
-    global _last_recommend
-    _last_recommend = models
+def save_recommend(session_id: str, models) -> None:
+    """保存指定会话的上一轮推荐结果（供追问「有没有更新的/更便宜的」使用）。"""
+    _last_recommends[session_id] = models
 
 
-def get_last_recommend():
-    return _last_recommend
+def get_last_recommend(session_id: str):
+    return _last_recommends.get(session_id)
 
 
-def clear_recommend() -> None:
-    global _last_recommend
-    _last_recommend = None
+def clear_recommend(session_id: str) -> None:
+    _last_recommends.pop(session_id, None)
 
 
-# 当前活跃会话（单用户）
-_session = None
+# 当前活跃会话，按 session_id 隔离
+_sessions = {}
 
 
-def has_active_sop() -> bool:
-    return _session is not None
+def has_active_sop(session_id: str) -> bool:
+    return session_id in _sessions
 
 
-def get_active_sop_id():
-    """返回当前活跃 SOP 的 id；无活跃 SOP 时返回 None。"""
-    return _session["sop_id"] if _session else None
+def get_active_sop_id(session_id: str):
+    """返回指定会话活跃 SOP 的 id；无活跃 SOP 时返回 None。"""
+    s = _sessions.get(session_id)
+    return s["sop_id"] if s else None
 
 
-def _start(sop_id: str):
-    global _session
-    _session = {"sop_id": sop_id, "step": 0, "slots": {}, "retry_count": 0}
-    return _session
+def _start(session_id: str, sop_id: str):
+    _sessions[session_id] = {"sop_id": sop_id, "step": 0, "slots": {}, "retry_count": 0}
+    return _sessions[session_id]
 
 
-def _end():
-    global _session
-    _session = None
+def _end(session_id: str):
+    _sessions.pop(session_id, None)
 
 
-def end_sop():
-    """主动结束当前 SOP（用户说「算了/退出」等场景）。"""
-    _end()
+def end_sop(session_id: str):
+    """主动结束指定会话的 SOP（用户说「算了/退出」等场景）。"""
+    s = _sessions.get(session_id)
+    if s:
+        logger.info(f"[SOP] SOP End:{s['sop_id']}")
+    _end(session_id)
 
 
-def start_sop(sop_id: str, query: str):
+def start_sop(session_id: str, sop_id: str, query: str):
     """进入一个 SOP。返回 (reply, done)。
 
     首轮先尝试用触发 query 提取第一个槽位（预填用户已给的信息），
     提取失败再问第一个问题。开场提示（intro）可选，有则先输出。
     """
-    _start(sop_id)
-    reply, done = _run(query)
+    _start(session_id, sop_id)
+    logger.info(f"[SOP] Start SOP: {sop_id}")
+    reply, done = _run(session_id, query)
     intro = SOPS[sop_id].get("intro")
     if intro:
         return intro + "\n\n" + reply, done
     return reply, done
 
 
-def continue_sop(query: str):
-    """继续当前 SOP。返回 (reply, done)；无活跃 SOP 时返回 None。"""
-    if _session is None:
+def continue_sop(session_id: str, query: str):
+    """继续指定会话的 SOP。返回 (reply, done)；无活跃 SOP 时返回 None。"""
+    if session_id not in _sessions:
         return None
-    return _run(query)
+    return _run(session_id, query)
 
 
 def match_sop(query: str):
@@ -122,13 +124,14 @@ def match_sop(query: str):
         if any(kw in query for kw in sop.get("trigger", [])):
             if any(g["check"](query) for g in sop.get("guards", [])):
                 return None
+            logger.info(f"[SOP] Match SOP:{sop['id']}")
             return sop["id"]
     return None
 
 
-def _run(user_input: str):
-    """执行/推进当前 SOP。返回 (reply_text, done)。"""
-    session = _session
+def _run(session_id: str, user_input: str):
+    """执行/推进指定会话的 SOP。返回 (reply_text, done)。"""
+    session = _sessions[session_id]
     sop = SOPS[session["sop_id"]]
     steps = sop["steps"]
 
@@ -166,7 +169,7 @@ def _run(user_input: str):
             result = step["action"](session["slots"])
             session["result"] = result
             if isinstance(result, dict) and "models" in result:
-                save_recommend(result["models"])
+                save_recommend(session_id, result["models"])
             session["step"] += 1
             continue
 
@@ -177,15 +180,15 @@ def _run(user_input: str):
                 reply = step["template"].format(**ctx)
             except (KeyError, IndexError):
                 reply = step.get("fallback", "抱歉，出了一点小问题，请重新提问～")
-            _end()
+            _end(session_id)
             return reply, True
 
     # 步骤走完但无 reply（异常防御），安全结束
-    _end()
+    _end(session_id)
     return "", True
 
 
-def handle_followup(query: str):
+def handle_followup(session_id: str, query: str):
     """回答追问。返回回复文本或 None。
 
     两类追问语义不同：
@@ -216,7 +219,7 @@ def handle_followup(query: str):
 
     # 限定追问：更便宜 → 上一轮结果内按价格升序
     if any(w in query for w in CHEAPER_WORDS):
-        models = get_last_recommend()
+        models = get_last_recommend(session_id)
         if not models:
             return None
         sorted_models = sorted(models, key=lambda m: m.get("price") or 0)

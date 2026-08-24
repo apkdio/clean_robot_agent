@@ -148,6 +148,17 @@
       flex: 1; overflow-y: auto;
     }
 
+    /* Session list */
+    .session-item {
+      padding: 12px 14px; border-radius: 8px; background: #fff;
+      border: 1px solid #e4e7ed; cursor: pointer; font-size: 14px;
+      transition: .2s; margin-bottom: 8px;
+    }
+    .session-item:hover { background: #ecf5ff; border-color: #409eff; }
+    .session-item.active { background: #ecf5ff; border-color: #409eff; }
+    .session-item .s-summary { color: #303133; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .session-item .s-meta { font-size: 11px; color: #909399; margin-top: 4px; }
+
     /* Cards inside drawer */
     .card {
       background: #fff; border-radius: 10px; padding: 16px;
@@ -221,6 +232,8 @@
       <span class="logo">🤖</span>
       <span class="title">扫地机器人智能助手</span>
       <span class="badge" id="modeBadge">加载中…</span>
+      <button class="kb-btn" id="newChatBtn" title="新建对话">➕</button>
+      <button class="kb-btn" id="sessionToggle" title="历史对话">🗂️</button>
       <button class="kb-btn" id="drawerToggle" title="知识库管理">
         <span class="chunk-dot" id="headerDot" style="background:#e6a23c"></span>📚
       </button>
@@ -303,9 +316,25 @@
     </div>
   </div>
 
+  <!-- ====================  DRAWER: Sessions  ====================  -->
+  <div class="drawer-overlay" id="sessionOverlay" onclick="closeSessions()"></div>
+  <div class="drawer" id="sessionDrawer">
+    <div class="drawer-header">
+      <h3>🗂️ 历史对话</h3>
+      <button class="drawer-close" onclick="closeSessions()">✕</button>
+    </div>
+    <div class="drawer-body" id="sessionList">
+      <div class="log-line">加载中…</div>
+    </div>
+  </div>
+
 </div>
 
 <script>
+  // ── Session ID ──
+  // 页面加载时用 UUID 生成一次（刷新即新会话）；切换对话时更新
+  let sessionId = crypto.randomUUID();
+
   // ── Drawer ──
   const drawer = document.getElementById('drawer');
   const overlay = document.getElementById('drawerOverlay');
@@ -316,6 +345,72 @@
   });
   // ESC to close
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+  // ── Sessions ──
+  const sessionDrawer = document.getElementById('sessionDrawer');
+  const sessionOverlay = document.getElementById('sessionOverlay');
+  function openSessions()  { sessionDrawer.classList.add('open'); sessionOverlay.classList.add('show'); loadSessions(); }
+  function closeSessions() { sessionDrawer.classList.remove('open'); sessionOverlay.classList.remove('show'); }
+  document.getElementById('sessionToggle').addEventListener('click', () => {
+    sessionDrawer.classList.contains('open') ? closeSessions() : openSessions();
+  });
+  document.getElementById('newChatBtn').addEventListener('click', newChat);
+
+  async function loadSessions() {
+    const list = document.getElementById('sessionList');
+    try {
+      const r = await fetch('/api/sessions');
+      const data = await r.json();
+      const sessions = data.sessions || [];
+      list.innerHTML = '';
+      sessions.forEach(s => {
+        const item = document.createElement('div');
+        item.className = 'session-item' + (s.session_id === sessionId ? ' active' : '');
+        const sum = document.createElement('div');
+        sum.className = 's-summary';
+        sum.textContent = s.summary || '（空会话）';
+        const meta = document.createElement('div');
+        meta.className = 's-meta';
+        meta.textContent = s.messages + ' 条消息';
+        item.appendChild(sum);
+        item.appendChild(meta);
+        item.addEventListener('click', () => switchSession(s.session_id));
+        list.appendChild(item);
+      });
+      if (!sessions.length) list.innerHTML = '<div class="log-line">暂无历史对话</div>';
+    } catch (e) {
+      list.innerHTML = '<div class="log-line">加载失败</div>';
+    }
+  }
+
+  function newChat() {
+    sessionId = crypto.randomUUID();
+    clearChat();
+    loadSessions();
+  }
+
+  function switchSession(sid) {
+    sessionId = sid;
+    clearChat();
+    loadSessionMessages(sid);
+    closeSessions();
+  }
+
+  function clearChat() {
+    document.querySelectorAll('#chatMessages .msg').forEach(el => el.remove());
+    welcome.style.display = 'block';
+  }
+
+  async function loadSessionMessages(sid) {
+    try {
+      const r = await fetch('/api/sessions/' + encodeURIComponent(sid) + '/messages');
+      const data = await r.json();
+      welcome.style.display = 'none';
+      (data.messages || []).forEach(m => {
+        appendMessage(m.role === 'user' ? 'user' : 'bot', m.content || '');
+      });
+    } catch (e) { /* 忽略加载失败 */ }
+  }
 
   // ── Collapsible ──
   function toggleSection(id, toggle) {
@@ -447,7 +542,7 @@
       const r = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query })
+        body: JSON.stringify({ query, session_id: sessionId })
       });
 
       const reader = r.body.getReader();

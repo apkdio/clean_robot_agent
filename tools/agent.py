@@ -91,7 +91,7 @@ def _route_domain(query: str):
 
 
 # SOP 退出确认状态：非 None 表示正在询问用户是否退出该 SOP
-_pending_exit = None
+_pending_exits = {}
 
 # SOP 中文名（用于退出提醒）
 _SOP_NAMES = {"purchase": "选购推荐", "repair": "故障排查"}
@@ -160,18 +160,32 @@ def _resolve_date_filter(query: str) -> dict | None:
     return None
 
 
-def ask_stream(query: str):
+def ask_stream(query: str, session_id: str = "default"):
     """流式问答入口 —— 经本地分类头做意图路由，支持多轮 SOP 引导。
 
     other → 礼貌拒答；casual → 闲聊；
     unknown → 软引导 + RAG；robot → SOP 引导 / 结构化预算直出 / RAG。
+    session_id 用于区分对话会话（上下文按会话持久化到 data/context/）。
     """
-    global _pending_exit
+    global _pending_exits
 
     # 角色扮演 / 指令注入：直接拒绝，不发给 LLM（最先判断）
     if _INJECT_RE.search(query):
         yield "我是扫地机器人助手，只能帮你解答扫地机器人相关的问题，无法扮演其他角色哦～"
         return
+
+    # 上下文：记录用户消息 + 自由指代消解（"它怎么样" → "<型号名>怎么样"）
+    from context_store import append_message, get_last_models
+    from config.word_dict_config import REFERENCE_WORDS
+    append_message(session_id, "user", query)
+    if any(w in query for w in REFERENCE_WORDS):
+        models = get_last_models(session_id)
+        if models:
+            name = models[0].get("name", "")
+            if name:
+                for w in REFERENCE_WORDS:
+                    query = query.replace(w, name)
+                logger.info("[Agent] Reference resolved: %s", query)
 
     # 负面情绪：先安抚一句，再继续正常流程（只安抚、不拦截）
     emotion_reply = detect_emotion(query)
@@ -181,14 +195,14 @@ def ask_stream(query: str):
 
     # SOP 会话：有活跃 SOP 时继续该流程（不经过意图路由）
     from sops import has_active_sop, continue_sop, end_sop, start_sop, match_sop, get_active_sop_id
-    if has_active_sop():
+    if has_active_sop(session_id):
         # 状态1：正在询问是否退出 → 匹配"是/不是"
-        if _pending_exit is not None:
+        if session_id in _pending_exits:
             exit_now = _match_exit_intent(query)
-            sop_name = _sop_name(_pending_exit)
-            _pending_exit = None
+            sop_name = _sop_name(_pending_exits.get(session_id))
+            _pending_exits.pop(session_id, None)
             if exit_now:
-                end_sop()
+                end_sop(session_id)
                 yield f"好的，已退出「{sop_name}」环节～有新的问题可以直接问我。"
             else:
                 yield "好的，那我们继续刚才的话题～"
@@ -196,8 +210,8 @@ def ask_stream(query: str):
 
         # 状态2：纯符号 → 礼貌询问是否要咨询其他问题
         if _is_symbols_only(query):
-            sop_id = get_active_sop_id()
-            _pending_exit = sop_id
+            sop_id = get_active_sop_id(session_id)
+            _pending_exits[session_id] = sop_id
             yield (f"没有听懂哦～您当前正在「{_sop_name(sop_id)}」环节。"
                    f"是否需要咨询其他问题？是的话回复「是」，不是回复「不是」。")
             return
@@ -205,13 +219,13 @@ def ask_stream(query: str):
         # 状态3：明确的退出/纠正词 → 退出并提醒，fall through 重新理解用户的话
         # 注意：不含"不是/不对/错了"——它们会误伤反问句（"是不是该换了""对不对"）
         if any(w in query for w in EXIT_WORDS):
-            sop_id = get_active_sop_id()
-            end_sop()
+            sop_id = get_active_sop_id(session_id)
+            end_sop(session_id)
             yield f"好的，已退出「{_sop_name(sop_id)}」环节～"
 
         # 状态4：正常继续 SOP
         else:
-            result = continue_sop(query)
+            result = continue_sop(session_id, query)
             if result is not None:
                 reply, _done = result
                 if reply:
@@ -224,7 +238,7 @@ def ask_stream(query: str):
     # 追问检测：基于上一轮推荐结果回答（"有没有更新的""有没有更便宜的"等）
     if intent in ("robot", "unknown"):
         from sops import handle_followup
-        followup_reply = handle_followup(query)
+        followup_reply = handle_followup(session_id, query)
         if followup_reply:
             yield followup_reply
             return
@@ -233,7 +247,7 @@ def ask_stream(query: str):
     if intent in ("robot", "unknown"):
         sop_id = match_sop(query)
         if sop_id:
-            reply, _done = start_sop(sop_id, query)
+            reply, _done = start_sop(session_id, sop_id, query)
             if reply:
                 yield reply
             return

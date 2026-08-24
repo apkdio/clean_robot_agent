@@ -14,6 +14,7 @@
 - **流式输出**：SSE 流式返回答案，前端逐字渲染
 - **知识库热更新**：每 30 分钟自动扫描 `data/knowledge/`，检测文件增删改并增量入库
 - **多轮友好**：领域外问题礼貌拒答，模糊问题软引导，闲聊自然回应
+- **多会话与上下文**：按会话（session_id）隔离多轮对话，对话持久化到本地，支持新建/切换历史会话；自由指代自动消解（"它怎么样"→"<型号名>怎么样"）
 
 ## 技术栈
 
@@ -39,7 +40,9 @@ clean_robot_agent/
 │   └── *_template.yaml          # 对应模板（含注释说明，复制后填值）
 ├── data/
 │   ├── knowledge/               # 知识库源文件（txt/pdf，热更新监控目录）
+│   ├── knowledge_example/       # 知识库格式模板示例
 │   ├── datasets/                # 意图分类训练数据集（JSONL）
+│   ├── context/                 # 对话上下文持久化（jsonl，按会话分文件）
 │   ├── bgm_model/               # 训练好的分类头模型
 │   ├── pkl/                     # BM25 pickle 缓存
 │   ├── state/                   # 热更新指纹快照
@@ -51,7 +54,7 @@ clean_robot_agent/
 │   ├── budget_tool.py           # 预算提取工具（规则 miss 时 function calling 兜底）
 │   └── symptom_tool.py          # 故障现象分类工具（规则 miss 时 function calling 兜底）
 ├── sops/                        # SOP 标准操作流程（多轮引导）
-│   ├── base.py                  # 会话状态 + 执行器 + 知识域定义
+│   ├── base.py                  # 会话状态（按 session_id 隔离）+ 执行器 + 知识域定义
 │   ├── purchase.py              # 选购推荐 SOP
 │   └── repair.py                # 故障排查 SOP
 ├── test_scripts/                # 测试脚本（意图分类 / SOP / 分域召回）
@@ -62,11 +65,13 @@ clean_robot_agent/
 │   ├── build_intent_dataset.py  # 数据集构建（从知识库抽取 + 规则改写）
 │   └── train_intent_classifier.py # 分类头训练脚本
 ├── webapp/
-│   ├── app.py                   # Flask 后端（上传/问答/流式接口）
-│   └── templates/index.html     # 聊天前端
+│   ├── app.py                   # Flask 后端（上传/问答/流式接口 + 会话 API）
+│   └── templates/index.html     # 聊天前端（新建/历史对话）
 ├── requirements.txt
 └── .gitignore
 ```
+
+> `temp/`（数据处理脚本）、`Multi_Route_Retrieval/`（双路召回 demo）为独立用途遗留目录，已 gitignore，不参与运行。
 
 ## 核心模块说明（tools）
 
@@ -85,6 +90,7 @@ clean_robot_agent/
 | `llm_tool.py` | LLM / embedding 工厂（含 function calling） |
 | `log_tool.py` | 日志（控制台彩色 + 文件） |
 | `config_tool.py` / `path_tool.py` / `prompts_tool.py` | 配置 / 路径 / Prompt 加载 |
+| `context_store.py` | 会话上下文：按 session_id 持久化最近 6 轮对话（jsonl）+ 自由指代消解数据源 |
 
 ## 工具调用模块（function_tools/）
 
@@ -121,7 +127,7 @@ pip install -r requirements.txt
 ```bash
 ollama pull bge-m3        # embedding 模型
 ollama pull qwen2.5:7b    # 生成模型
-ollama pull qwen2.5:3b    # 意图分类兜底（可选）
+ollama pull qwen2.5:3b    # 预算/故障现象 function calling 兜底（可选）
 ```
 
 ### 4. 配置
@@ -194,6 +200,8 @@ python intent_classifier_training/train_intent_classifier.py
 ```
 用户提问
   → 提示词注入检测（命中直接拒绝）
+  → 记录用户消息 + 自由指代消解（"它怎么样"→"<型号名>怎么样"）
+  → 负面情绪安抚（只安抚不拦截）
   → SOP 会话检查（有活跃 SOP → 继续多轮引导）
   → intent_router（本地分类头）
       ├─ other（领域外）→ 礼貌拒答
@@ -210,5 +218,5 @@ python intent_classifier_training/train_intent_classifier.py
 ## 注意事项
 
 - 所有模型本地运行，无云端依赖
-- `data/vector_store/`、`data/pkl/`、`data/state/`、`data/bgm_model/` 为运行时产物，已加入 `.gitignore`
+- `data/vector_store/`、`data/pkl/`、`data/state/`、`data/bgm_model/`、`data/context/` 为运行时产物，已加入 `.gitignore`
 - 配置文件 `config/*.yaml`（非 template）含本地环境信息，已加入 `.gitignore`
