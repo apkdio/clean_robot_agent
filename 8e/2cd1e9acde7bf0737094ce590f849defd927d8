@@ -1,0 +1,33 @@
+README.md
+  s_40681318f5a20b::t_fa1b01773fbd8f 17,93,203
+tools/agent.py
+  s_40681318f5a20b::t_7fc5a30a444681 321-328,330
+  s_40681318f5a20b::t_9d0a5af9cdc7a1 176-177
+project_detail.md
+  s_40681318f5a20b::t_36360e2c4d4fec 29,83,169,422,430,435,440,539,546,557,570,572,574
+tools/context_store.py
+  s_40681318f5a20b::t_b9c6194a3ddf55 77
+sops/base.py
+  s_40681318f5a20b::t_6f297f40a71ade 208-210,216,221,230
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "8e2cd1e9acde7bf0737094ce590f849defd927d8",
+  "prompts": {},
+  "humans": {
+    "h_17b40a0da2c9a6": {
+      "author": "wanqw <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4-Pro-discount"
+      },
+      "human_author": "wanqw <apkdio@163.com>"
+    }
+  }
+}
