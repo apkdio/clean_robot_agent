@@ -74,7 +74,7 @@ def get_recent(session_id: str, n: int = None) -> list:
 
 
 def get_last_models(session_id: str) -> list:
-    """取最近一次推荐的结构化型号列表（供自由指代消解）。
+    """取最近一次推荐的结构化型号列表。
 
     从最近的消息倒序找第一条带 models 的 assistant 消息，返回其 models。
     """

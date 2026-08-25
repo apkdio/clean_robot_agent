@@ -14,7 +14,7 @@
 - **流式输出**：SSE 流式返回答案，前端逐字渲染
 - **知识库热更新**：每 30 分钟自动扫描 `data/knowledge/`，检测文件增删改并增量入库
 - **多轮友好**：领域外问题礼貌拒答，模糊问题软引导，闲聊自然回应
-- **多会话与上下文**：按会话（session_id）隔离多轮对话，对话持久化到本地，支持新建/切换历史会话；自由指代自动消解（"它怎么样"→"<型号名>怎么样"）
+- **多会话与上下文**：按会话（session_id）隔离多轮对话，对话持久化到本地，支持新建/切换历史会话；自由指代通过拼接历史由 LLM 自主消解
 
 ## 技术栈
 
@@ -90,7 +90,7 @@ clean_robot_agent/
 | `llm_tool.py` | LLM / embedding 工厂（含 function calling） |
 | `log_tool.py` | 日志（控制台彩色 + 文件） |
 | `config_tool.py` / `path_tool.py` / `prompts_tool.py` | 配置 / 路径 / Prompt 加载 |
-| `context_store.py` | 会话上下文：按 session_id 持久化最近 6 轮对话（jsonl）+ 自由指代消解数据源 |
+| `context_store.py` | 会话上下文：按 session_id 持久化最近 6 轮对话（jsonl）+ 历史拼接数据源 |
 
 ## 工具调用模块（function_tools/）
 
@@ -200,7 +200,7 @@ python intent_classifier_training/train_intent_classifier.py
 ```
 用户提问
   → 提示词注入检测（命中直接拒绝）
-  → 记录用户消息 + 自由指代消解（"它怎么样"→"<型号名>怎么样"）
+  → 记录用户消息（RAG 生成时拼接历史，LLM 自主消解指代）
   → 负面情绪安抚（只安抚不拦截）
   → SOP 会话检查（有活跃 SOP → 继续多轮引导）
   → intent_router（本地分类头）

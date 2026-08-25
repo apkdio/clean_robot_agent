@@ -205,16 +205,20 @@ def handle_followup(session_id: str, query: str):
         and any(w in query for w in RECENT_VAGUE_WORDS)
     )
     if latest_hit or vague_recent:
-        return _format_models(_search_latest_global()[:5], "最近发布的机器人有这几款：")
+        models = _search_latest_global()[:5]
+        save_recommend(session_id, models)
+        return _format_models(models, "最近发布的机器人有这几款：")
 
     # 全局价格极值：最贵/最便宜 → 全局按价格排序取极值（不依赖上一轮）
     if "最贵" in query:
         models = _search_price_global()
         if models:
+            save_recommend(session_id, models[-1:])
             return _format_models(models[-1:], "目前最贵的是这一款：")
     if "最便宜" in query:
         models = _search_price_global()
         if models:
+            save_recommend(session_id, models[:1])
             return _format_models(models[:1], "目前最便宜的是这一款：")
 
     # 限定追问：更便宜 → 上一轮结果内按价格升序
@@ -223,6 +227,7 @@ def handle_followup(session_id: str, query: str):
         if not models:
             return None
         sorted_models = sorted(models, key=lambda m: m.get("price") or 0)
+        save_recommend(session_id, sorted_models[:3])
         return _format_models(sorted_models[:3], "在刚才的推荐里，更便宜的有这几款：")
 
     return None

@@ -168,24 +168,14 @@ def ask_stream(query: str, session_id: str = "default"):
     session_id 用于区分对话会话（上下文按会话持久化到 data/context/）。
     """
     global _pending_exits
-
     # 角色扮演 / 指令注入：直接拒绝，不发给 LLM（最先判断）
     if _INJECT_RE.search(query):
         yield "我是扫地机器人助手，只能帮你解答扫地机器人相关的问题，无法扮演其他角色哦～"
         return
 
-    # 上下文：记录用户消息 + 自由指代消解（"它怎么样" → "<型号名>怎么样"）
-    from context_store import append_message, get_last_models
-    from config.word_dict_config import REFERENCE_WORDS
+    # 上下文：记录用户消息（对话历史持久化，供 RAG 生成拼接，由 LLM 自主消解指代）
+    from context_store import append_message
     append_message(session_id, "user", query)
-    if any(w in query for w in REFERENCE_WORDS):
-        models = get_last_models(session_id)
-        if models:
-            name = models[0].get("name", "")
-            if name:
-                for w in REFERENCE_WORDS:
-                    query = query.replace(w, name)
-                logger.info("[Agent] Reference resolved: %s", query)
 
     # 负面情绪：先安抚一句，再继续正常流程（只安抚、不拦截）
     emotion_reply = detect_emotion(query)
@@ -328,7 +318,16 @@ def ask_stream(query: str, session_id: str = "default"):
 
     chunk_texts = [c.page_content for c in chunks]
     context_block = "\n\n".join(chunk_texts)
+
+    # 拼接最近对话历史，供 LLM 自主消解指代（如"它怎么样"指代上文型号）
+    from context_store import get_recent
+    history_block = "\n".join(
+        f"{'用户' if m.get('role') == 'user' else '客服'}：{(m.get('content') or '')[:200]}"
+        for m in get_recent(session_id)
+    )
+
     user_message = (
+        "对话历史：\n" + history_block + "\n\n"
         "参考资料：\n" + context_block + "\n\n"
         "问题：" + query + "\n\n"
         "回答规则：\n"
