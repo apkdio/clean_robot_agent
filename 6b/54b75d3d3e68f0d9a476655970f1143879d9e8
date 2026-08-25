@@ -1,0 +1,16 @@
+intent_classifier_training/train_intent_classifier.py
+  h_17b40a0da2c9a6 24,31
+data/datasets/intent_dataset.jsonl
+  h_17b40a0da2c9a6 418-420
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "6b54b75d3d3e68f0d9a476655970f1143879d9e8",
+  "prompts": {},
+  "humans": {
+    "h_17b40a0da2c9a6": {
+      "author": "wanqw <apkdio@163.com>"
+    }
+  }
+}
