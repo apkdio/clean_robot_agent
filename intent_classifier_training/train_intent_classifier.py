@@ -21,14 +21,14 @@ import torch.nn as nn
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 
-from llm_tool import get_embedding_model
+from tools.llm_tool import get_embedding_model
 
 _DATASET_PATH = "data/datasets/intent_dataset.jsonl"
 _MODEL_DIR = "data/bgm_model"
 _LABELS = ["robot", "other", "casual", "unknown"]  # 固定顺序
 
 _SEED = 42
-_EPOCHS = 200
+_EPOCHS = 500
 _LR = 1e-3
 _BATCH = 64
 _TEST_RATIO = 0.2
