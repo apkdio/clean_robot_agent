@@ -75,9 +75,18 @@ def _search_and_generate(slots: dict):
     return {"answer": (resp.content or "").strip()}
 
 
+def _guard_aftersales(query: str) -> bool:
+    """售后咨询（报修/更换零件）→ 不触发维修 SOP，走 RAG 售后域。"""
+    from sops.base import is_aftersales
+    return is_aftersales(query)
+
+
 REPAIR_SOP = {
     "id": "repair",
     "trigger": REPAIR_TRIGGER,
+    "guards": [
+        {"check": _guard_aftersales},
+    ],
     "intro": "我来帮您排查一下故障～",
     "steps": [
         {

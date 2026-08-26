@@ -72,12 +72,19 @@ def _guard_aftersales(query: str) -> bool:
     return is_aftersales(query)
 
 
+def _guard_brand(query: str) -> bool:
+    """品牌咨询（"为什么买/优势"）→ 不触发选购 SOP，走 RAG 品牌介绍。"""
+    from sops.base import is_brand
+    return is_brand(query)
+
+
 PURCHASE_SOP = {
     "id": "purchase",
     "trigger": PURCHASE_TRIGGER,
     "guards": [
         {"check": _guard_is_consulting},
         {"check": _guard_aftersales},
+        {"check": _guard_brand},
     ],
     "intro": "好的，我来帮您推荐一款合适的扫地机器人～",
     "steps": [

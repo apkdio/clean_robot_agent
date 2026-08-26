@@ -15,7 +15,7 @@ import re
 from tools.log_tool import get_logger
 from config.word_dict_config import (
     DOMAIN_MAP, REPAIR_WORDS, MAINTAIN_WORDS, AFTERSALES_WORDS,
-    BUY_WORDS, CONSULT_WORDS,
+    BUY_WORDS, CONSULT_WORDS, BRAND_WORDS,
     LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS,
 )
 
@@ -37,6 +37,11 @@ def is_consulting(query: str) -> bool:
 def is_aftersales(query: str) -> bool:
     """判断是否是「售后咨询」（保修/售后/退换货），而非「选购咨询」。"""
     return any(w in query for w in AFTERSALES_WORDS)
+
+
+def is_brand(query: str) -> bool:
+    """判断是否是「品牌咨询」（为什么买/优势/介绍），而非「选购动作」。"""
+    return any(w in query for w in BRAND_WORDS)
 
 
 def register(sop: dict) -> None:
@@ -92,6 +97,11 @@ def end_sop(session_id: str):
     _end(session_id)
 
 
+def _with_exit_hint(intro: str) -> str:
+    """给 SOP 开场语追加退出提示（所有 SOP 通用，用户可回复「0」退出）。"""
+    return intro + "\n\n（随时可回复「0」退出本环节）"
+
+
 def start_sop(session_id: str, sop_id: str, query: str):
     """进入一个 SOP。返回 (reply, done)。
 
@@ -103,7 +113,7 @@ def start_sop(session_id: str, sop_id: str, query: str):
     reply, done = _run(session_id, query)
     intro = SOPS[sop_id].get("intro")
     if intro:
-        return intro + "\n\n" + reply, done
+        return _with_exit_hint(intro) + "\n\n" + reply, done
     return reply, done
 
 
@@ -210,12 +220,12 @@ def handle_followup(session_id: str, query: str):
         return _format_models(models, "最近发布的机器人有这几款：")
 
     # 全局价格极值：最贵/最便宜 → 全局按价格排序取极值（不依赖上一轮）
-    if "最贵" in query:
+    if "最贵" in query or "价格最高" in query:
         models = _search_price_global()
         if models:
             save_recommend(session_id, models[-1:])
             return _format_models(models[-1:], "目前最贵的是这一款：")
-    if "最便宜" in query:
+    if "最便宜" in query or "价格最低" in query:
         models = _search_price_global()
         if models:
             save_recommend(session_id, models[:1])

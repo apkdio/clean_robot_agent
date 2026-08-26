@@ -25,13 +25,15 @@ _OUT_PATH = "data/datasets/intent_dataset.jsonl"
 
 
 def _extract_title(entry_text: str) -> str | None:
-    first_line = entry_text.split("\n")[0].strip()
-    m = re.match(r"^\d+\.\s+\*\*(.+?)\*\*", first_line)
-    if m:
-        return m.group(1).strip()
-    m = re.match(r"^\d+\.\s+(.+?)[；;。]", entry_text)
-    if m:
-        return m.group(1).strip()
+    # 章节前缀（"## 一、品牌定位"）可能拼在条目首行之前，逐行找第一个编号条目标题
+    for line in entry_text.split("\n"):
+        line = line.strip()
+        m = re.match(r"^\d+\.\s+\*\*(.+?)\*\*", line)
+        if m:
+            return m.group(1).strip()
+        m = re.match(r"^\d+\.\s+(.+?)[；;。]", line)
+        if m:
+            return m.group(1).strip()
     return None
 
 
@@ -138,6 +140,19 @@ _ROBOT_TIME = [
     "近一年上市的扫地机器人推荐", "最近半年出了哪些新款",
 ]
 
+# ── 品牌咨询 + 售后报修类 robot 样本（品牌化"不染一尘"后补充）──────────
+_ROBOT_BRAND = [
+    # 品牌咨询（问题5：品牌介绍被判 unknown）
+    "不染一尘是什么品牌", "不染一尘品牌介绍", "介绍一下不染一尘",
+    "不染一尘怎么样", "不染一尘有什么优势", "为什么要买不染一尘",
+    "不染一尘好在哪里", "不染一尘的口碑怎么样", "不染一尘靠谱吗",
+    "不染一尘是哪个公司的", "不染一尘和云境智能什么关系",
+    # 售后报修（问题2：售后场景）
+    "零件掉了可以报修吗", "机器人怎么报修", "可以售后更换零件吗",
+    "怎么申请售后维修", "报修流程是什么", "售后怎么联系",
+    "保修期内维修要钱吗", "怎么查询保修期", "可以退货吗",
+]
+
 # ── other：领域外（扩充，含跨领域歧义消解）──────────────────────────────
 
 _OTHER = [
@@ -219,6 +234,7 @@ def main():
     print(f"robot 专业术语补充: {len(_ROBOT_TERMS)}")
     print(f"robot 边界歧义补充: {len(_ROBOT_BOUNDARY)}")
     print(f"robot 时间类补充: {len(_ROBOT_TIME)}")
+    print(f"robot 品牌/售后补充: {len(_ROBOT_BRAND)}")
 
     rows = []
     for t in robot:
@@ -230,6 +246,8 @@ def main():
     for t in _ROBOT_BOUNDARY:
         rows.append({"text": t, "label": "robot"})
     for t in _ROBOT_TIME:
+        rows.append({"text": t, "label": "robot"})
+    for t in _ROBOT_BRAND:
         rows.append({"text": t, "label": "robot"})
     for t in _OTHER:
         rows.append({"text": t, "label": "other"})

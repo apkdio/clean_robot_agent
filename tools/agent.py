@@ -80,7 +80,16 @@ def _route_domain(query: str):
 
     宁缺毋滥：只对高置信度的场景做域过滤，避免路由错域导致漏召回。
     """
-    from sops.base import DOMAIN_MAP, REPAIR_WORDS, MAINTAIN_WORDS, is_consulting
+    from sops.base import (
+        DOMAIN_MAP, REPAIR_WORDS, MAINTAIN_WORDS,
+        AFTERSALES_WORDS, BRAND_WORDS, is_consulting,
+    )
+    # 品牌咨询（"为什么买""优势"）→ 品牌介绍域，优先（"买"会被误判选购）
+    if any(w in query for w in BRAND_WORDS):
+        return DOMAIN_MAP["brand"]
+    # 售后咨询（保修/报修/更换）→ 售后域，优先于维修（"报修"含"修"会被误判维修）
+    if any(w in query for w in AFTERSALES_WORDS):
+        return DOMAIN_MAP["aftersales"]
     if is_consulting(query):
         return DOMAIN_MAP["consulting"]
     if any(w in query for w in REPAIR_WORDS):
@@ -173,6 +182,13 @@ def ask_stream(query: str, session_id: str = "default"):
         yield "我是扫地机器人助手，只能帮你解答扫地机器人相关的问题，无法扮演其他角色哦～"
         return
 
+    # 危险现象：安全优先，在一切改写/路由之前拦截，立即停机联系售后
+    from config.word_dict_config import DANGER_WORDS
+    if any(w in query for w in DANGER_WORDS):
+        yield ("请立即停止使用机器人并断开电源！涉及冒烟/烧焦/进水等安全风险，"
+               "不要自行拆机或继续充电，请马上联系官方售后（400-860-1314）处理。")
+        return
+
     # 上下文：记录用户消息（对话历史持久化，供 RAG 生成拼接，由 LLM 自主消解指代）
     from context_store import append_message
     append_message(session_id, "user", query)
@@ -208,7 +224,8 @@ def ask_stream(query: str, session_id: str = "default"):
 
         # 状态3：明确的退出/纠正词 → 退出并提醒，fall through 重新理解用户的话
         # 注意：不含"不是/不对/错了"——它们会误伤反问句（"是不是该换了""对不对"）
-        if any(w in query for w in EXIT_WORDS):
+        # "0" 精确匹配退出（SOP 开场语里提示的退出方式），避免"1000"含"0"误伤
+        if query.strip() == "0" or any(w in query for w in EXIT_WORDS):
             sop_id = get_active_sop_id(session_id)
             end_sop(session_id)
             yield f"好的，已退出「{_sop_name(sop_id)}」环节～"
