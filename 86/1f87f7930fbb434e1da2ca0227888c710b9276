@@ -1,0 +1,14 @@
+sops/base.py
+  h_17b40a0da2c9a6 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "861f87f7930fbb434e1da2ca0227888c710b9276",
+  "prompts": {},
+  "humans": {
+    "h_17b40a0da2c9a6": {
+      "author": "wanqw <apkdio@163.com>"
+    }
+  }
+}
