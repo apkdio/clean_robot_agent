@@ -1,0 +1,47 @@
+tools/agent.py
+  s_40681318f5a20b::t_93f51072422848 172-189,196-199,201,203-204
+  s_40681318f5a20b::t_7ccbe6547f0b19 190-195,200,202,205-236
+  s_40681318f5a20b::t_f04fb36dad7a1e 318-324
+README.md
+  s_40681318f5a20b::t_aaf85b08c36d4d 18,95
+  s_40681318f5a20b::t_27dfab61e3d3b2 10,56-57,104,132
+config/word_dict_config.py
+  s_40681318f5a20b::t_759f21018c4c02 117-119
+  s_40681318f5a20b::t_93895f78699c27 120-133
+project_detail.md
+  s_40681318f5a20b::t_01755acbe18f2d 20,140-143,363-390,455,595-603,644
+  s_40681318f5a20b::t_b9abb35ba088a5 638
+  s_40681318f5a20b::t_82193f9214ef2b 32,457,465-468,472,604-612
+webapp/templates/index.html
+  s_40681318f5a20b::t_3f38bc3ba5319e 153,159-174,373-394,405-425,428-431,442-460,680
+function_tools/model_tool.py
+  s_40681318f5a20b::t_28538720e94ae2 33-36,76-77,84-89
+  s_40681318f5a20b::t_e1ae416f54dfd1 11-14,24-25,27,43,50-53,55-62,64-71,83,91-103
+  s_40681318f5a20b::t_dfd6be8a2f27c1 1-10,15-23,26,28-32,37-42,44-49,63,72-75,78-82,90
+  h_17b40a0da2c9a6 54
+tools/context_store.py
+  s_40681318f5a20b::t_fbb37dd6529e15 34-111,184,204-214,217-218,220-221,223
+webapp/app.py
+  s_40681318f5a20b::t_a09e338d9ad94e 138-147,179-187
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "0818b0536c833cd4d84fea84a05cef371e1a6784",
+  "prompts": {},
+  "humans": {
+    "h_17b40a0da2c9a6": {
+      "author": "wanqw <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "gemini-3.7-flash"
+      },
+      "human_author": "wanqw <apkdio@163.com>"
+    }
+  }
+}
