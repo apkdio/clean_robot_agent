@@ -17,7 +17,7 @@
 |-----------|-------------------------------------------------------------|
 | 领域问答      | 扫地机器人使用、故障、维护、选购等问答                                         |
 | 预算推荐      | 识别"预算 1000 以内"等约束，精确枚举预算内产品                                 |
-| 工具调用      | LLM function calling，内置日期/预算/故障分类工具，支持"最近半年""一千来块"等口语化结构化提取 |
+| 工具调用      | LLM function calling，内置日期/预算/故障分类/型号提取工具，支持"最近半年""一千来块"等口语化结构化提取 |
 | 多轮 SOP 引导 | 选购推荐等场景按标准流程逐步收集需求（预算/宠物），多轮引导，进入时给开场提示                     |
 | 知识库分域     | 按场景（品牌/选购/型号/故障/售后/维护 6 域）定向检索对应知识域，避免跨域词带偏召回              |
 | 情绪安抚      | 识别负面情绪（投诉/烦躁等）前置安抚，只安抚不拦截                                   |
@@ -29,7 +29,7 @@
 | 闲聊兜底      | 问候、道谢自然回应；模糊问题软引导                                           |
 | 流式输出      | 前端逐字渲染回答                                                    |
 | 知识库热更新    | 每 30 分钟自动同步 `data/knowledge/` 文件变动                          |
-| 多会话与上下文   | 按 session_id 隔离会话，对话持久化到本地（最近6轮），前端可新建/切换历史会话；自由指代（"它怎么样"）通过拼接历史让 LLM 自主消解 |
+| 多会话与上下文   | 按 session_id 隔离会话，对话持久化到本地（jsonl+meta），前端支持新建/切换/删除历史会话，首轮回答后自动生成 LLM 语义标题与更新时间；自由指代通过拼接历史让 LLM 自主消解 |
 ### 1.3 技术栈
 
 | 层 | 选型 | 说明 |
@@ -137,7 +137,10 @@ clean_robot_agent/
 │   └── report_prompts.txt         # 预留：报告生成模板（未接线）
 ├── tools/                       # 核心模块（详见第四节）
 ├── function_tools/              # LLM 工具调用（function calling）工具
-│   └── date_tool.py             # 日期计算工具（绝对/相对日期 → 日期范围）
+│   ├── date_tool.py             # 日期计算工具（绝对/相对日期 → 日期范围）
+│   ├── budget_tool.py           # 预算提取工具（规则 miss 时 3b function calling 兜底）
+│   ├── symptom_tool.py          # 故障现象分类工具（规则 miss 时 3b function calling 兜底）
+│   └── model_tool.py            # 型号提取工具（7b 提取型号名，精准检索型号详情）
 ├── sops/                        # SOP 标准操作流程（多轮引导）
 │   ├── base.py                  # 会话状态 + 执行器（ask/action/reply 步骤）
 │   ├── purchase.py              # 选购推荐 SOP（预算 + 宠物槽位）
@@ -357,7 +360,34 @@ LLM function calling 的故障分类工具，作为 repair SOP `_SYMPTOM_MAP`（
 - **挂载点**：`_extract_symptom` 只在 repair SOP 的 ask_symptom 步骤调用（此时用户已在描述故障），无需 hint 前置判断
 - **miss 安全退化**：3b 归类为"无明确故障"（id=0）→ None → SOP 走 retry 重新问，不给错误答案
 
-### 4.12 sops/ —— SOP 标准操作流程（多轮引导）
+### 4.12 function_tools/model_tool.py —— 型号提取工具（function calling 兜底）
+
+LLM function calling 的型号提取工具，作为"型号详情咨询 / 上下文对比"的兜底。核心：
+
+| 项 | 职责 |
+|----|------|
+| `MODEL_TOOL_SCHEMA` | 单一 string 参数 `model_names` 的 function-calling schema |
+| `MODEL_TOOL_MODEL` | 提取型号用 `qwen2.5:7b`（string 参数 + 上下文指代理解，3b 不稳定）|
+| `get_all_model_names` | 全量型号名列表（模块级缓存，`require_field="price"` 过滤 FAQ 无价格条目）|
+| `search_models_by_names` | 型号名列表 → 精准检索型号详情（去「系列」后缀宽容匹配）|
+| `model_name_in_query` | 判断 query 是否直接报型号名（去品牌前缀「不染一尘」子串匹配）|
+
+**设计要点**：
+- **7b 而非 3b**：型号名是 string 参数，且要理解上下文指代（"这两个"指谁）——3b 的 function calling 对 string 参数会原样返回 query、不做提取，不稳定；7b 实测能正确提取"云顶 X2,净白 S1"
+- **触发分两档（agent.py `_resolve_model_query`）**：强触发（对比/明确指代，`MODEL_QUERY_WORDS`：这两个/区别/对比/这款/那款…）直接走；弱触发（咨询词，`MODEL_CONSULT_WORDS`：怎么样/参数/配置…）需 `_has_model_ref` 确认 query 有型号上下文（指代词或直接报型号名）才走，避免"扫地机器人怎么样"这类泛咨询误触发
+- **挂载点**：在追问检测（handle_followup）之后、SOP 触发之前——专门承接追问之外的"型号详情/对比"兜底
+- **miss 安全退化**：LLM 提取不到型号（tool_calls 空 / 型号名空）→ None → 退回正常 RAG 历史拼接，不给错误答案；指代模糊（"这两个"之后问"这款"）时 LLM 提取空，自然退化为反问澄清
+
+**调用流程**：
+```
+query 命中 MODEL_QUERY_WORDS（强触发）
+  或 命中 MODEL_CONSULT_WORDS（弱触发）+ _has_model_ref(query)
+  → 拼最近 6 轮历史 → chat_with_tools（7b, extract_models）
+       → 提取 model_names → search_models_by_names → _format_models 结构化直出
+  → 提取不到 → None → 退回 RAG 历史拼接
+```
+
+### 4.13 sops/ —— SOP 标准操作流程（多轮引导）
 
 **定位**：SOP 是「代码驱动的流程循环」（状态机），与「LLM 驱动的 agent loop」不同——步骤固定、确定性高、不额外调 LLM，延迟可控。适合客服这类有标准流程的场景。
 
@@ -422,9 +452,9 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 
 **关于追问的架构结论**（重要）：追问检测解决的是「结构化追问」（比较新/更便宜），这是确定性筛选，用代码精确完成；「自由指代」（"它怎么样""那这个呢"）需要拼接对话历史 + LLM 语义理解，是另一层能力，两者互补而非替代。
 
-### 4.13 tools/context_store.py —— 会话上下文（持久化 + 历史拼接）
+### 4.14 tools/context_store.py —— 会话上下文（持久化 + 历史拼接）
 
-按 session_id 把对话持久化到 `data/context/<session_id>.jsonl`（每行一条 JSON 消息），内存缓存保留最近 6 轮（12 条，供快速读取）。
+按 session_id 把对话持久化到 `data/context/<session_id>.jsonl`（每行一条 JSON 消息），会话元数据（固定标题）保存在 `data/context/<session_id>.meta.json`，内存缓存保留最近 6 轮（12 条，供快速读取）。
 
 | 函数 | 职责 |
 |------|------|
@@ -432,11 +462,14 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 | `get_recent` | 取最近 n 条消息（默认 6 轮），优先内存缓存，未缓存则读文件 |
 | `get_last_models` | 从最近消息倒序找第一条带 models 的 assistant 消息（取最近推荐型号列表） |
 | `ensure_session_id` | 校验前端 UUID，非法则重新生成（防御异常 session_id 写入文件名） |
-| `list_sessions` | 列出所有会话（摘要 + 消息数 + 时间），供前端历史对话列表 |
+| `get_session_title` / `set_session_title` | 读写会话的 `.meta.json`，存储/获取生成的语义标题 |
+| `generate_session_title` | 调用 LLM（qwen2.5:3b）根据首轮问答生成 6~10 字精简标题，异常时回退截断 |
+| `delete_session` | 删除会话的 jsonl、meta 文件并清理内存缓存 |
+| `list_sessions` | 列出所有会话（title + 消息数 + updated_at），供前端历史对话列表 |
 
 **用途**：
 1. **自由指代消解（历史拼接 LLM）**：用户说"它怎么样/那这个呢"时，RAG 生成把最近 6 轮历史拼进 prompt，让 LLM 自己看上下文理解"它"指谁，不再做代码替换
-2. **历史会话回放**：前端会话抽屉（`/api/sessions`、`/api/sessions/<sid>/messages`）列出/加载历史对话；刷新页面保留上下文
+2. **历史会话管理**：前端会话抽屉（`/api/sessions`、`/api/sessions/<sid>/messages`、`DELETE /api/sessions/<sid>`）列出/加载/删除历史对话；首轮问答后自动异步生成语义标题与最近更新时间；刷新页面保留上下文
 
 **设计要点**：
 - 文件全量保留 + 内存只留 6 轮：文件是持久层（重启可恢复），内存是读热层（避免频繁读文件）
@@ -559,6 +592,25 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 - **意图分类重训练**：品牌化后分类头不认识"不染一尘"，品牌/售后 query 被误判 unknown。补训练集（`_ROBOT_BRAND`：品牌咨询 + 售后报修样本），并修复 `_extract_title` 逐行匹配（品牌文件带"## 章节"，旧实现只匹配首行导致抽取 0 样本）。重训练后测试准确率 91.5%。
 - **退出机制通用化**：所有 SOP 开场语统一追加"（随时可回复「0」退出本环节）"，"0" 精确匹配退出，用 `_with_exit_hint` 通用函数实现。
 
+### ADR-19：型号查询用"型号提取工具"（7b function calling）做精准兜底
+
+**背景**：自由指代（ADR-17）靠 RAG 生成时拼接历史、让 LLM 自主消解，能覆盖"它/这个"等简单指代；但"这两个有什么区别""云顶 X2 怎么样"这类**型号详情/对比**查询，历史拼接是"软兜底"——RAG 仍按原始指代句检索，可能召不回具体型号，回答靠 LLM 凭历史硬编，不够精准。
+
+**原因**：
+- **让 LLM 自主提取型号名，再精准检索**：把最近 6 轮历史 + 当前 query 拼给 7b 的 `extract_models` 工具，让模型理解"这两个"指谁、提取具体型号名（"云顶 X2,净白 S1"），再用型号名做子串匹配精准召回型号详情、结构化直出。这是对 ADR-12「规则优先 + function calling 兜底」在型号场景的延续。
+- **7b 而非 3b**：型号名是 string 参数，且要理解上下文指代——3b 的 function calling 对 string 参数会原样返回 query 不做提取（与 ADR-12 记录的"3b 只能稳定处理单一 integer"一致），故改用 7b。
+- **触发分两档防误伤**：强触发（对比/明确指代）直接走；咨询词（"怎么样"）单独出现是泛咨询（"扫地机器人怎么样"），必须配合型号上下文（指代词或直接报型号名）才走，否则退回 RAG。
+- **miss 安全退化**：提取不到型号就返回 None 退回历史拼接，绝不给错误答案——与 budget_tool/symptom_tool 的 miss 退化同构。
+
+### ADR-20：会话管理完善——LLM 语义标题 + 最近更新时间 + 会话删除
+
+**背景**：多会话列表过去只用首句摘要且随着最后一条消息滚动变化，且无法删除无用历史对话，无法查看更新时间。
+
+**原因**：
+- **LLM 语义标题**：新会话完成第一轮回答后，调用 `qwen2.5:3b` 基于用户提问与回答前 120 字生成 6~10 字的精简会话标题（如「选购推荐」「故障排查」），持久化存储到 `data/context/<session_id>.meta.json` 中，固定不变。失败时安全降级到首条提问截断。
+- **最近更新时间**：利用每条消息追加时的 timestamp，在列表返回 `updated_at`，前端以人性化相对时间展示（今天 HH:mm、昨天、日期）。
+- **会话物理删除与防护**：后端新增 `DELETE /api/sessions/<sid>` 彻底移除对应的 `.jsonl` 与 `.meta.json` 并清理内存缓存；前端添加二次确认防误删，删除当前会话时自动新建。
+
 ---
 
 ## 六、已知问题与坑
@@ -583,13 +635,13 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 
 ### 7.1 自由指代（已通过历史拼接 LLM 实现）
 
-引导式多轮（系统问、用户答，如选购推荐 SOP）已通过 `sops/` 落地；自由指代（"它怎么样""那这个呢"）已通过 RAG 生成拼接最近 6 轮历史、由 LLM 自主消解（见 4.13/ADR-17）。
+引导式多轮（系统问、用户答，如选购推荐 SOP）已通过 `sops/` 落地；自由指代（"它怎么样""那这个呢"）已通过 RAG 生成拼接最近 6 轮历史、由 LLM 自主消解（见 4.14/ADR-17）。
 
 剩余的是更复杂的指代（跨话题、多指代、长程依赖）与历史压缩——当轮次增多、上下文变长时，可引入历史摘要/结构化压缩（见 ADR-17 的压缩评估）。注意：结构化追问（比较新/更便宜）保持代码筛选，不退回 LLM 转述（ADR-10）。
 
 ### 7.2 Function Calling / Tool Use（已部分实现）
 
-已落地日期工具（`function_tools/date_tool.py`），qwen2.5:7b 的 function calling 能力已验证可用。后续可扩展更多工具：`query_products(预算)`、`search_faq(query)`、`check_order(订单号)` 等。新增工具统一放 `function_tools/`，提供 `*_TOOL_SCHEMA` + 执行函数即可。
+已落地日期工具（`function_tools/date_tool.py`）、预算工具（`budget_tool.py`）、故障分类工具（`symptom_tool.py`）、型号提取工具（`model_tool.py`），qwen2.5:7b 的 function calling 能力已验证可用。后续可扩展更多工具：`query_products(预算)`、`search_faq(query)`、`check_order(订单号)` 等。新增工具统一放 `function_tools/`，提供 `*_TOOL_SCHEMA` + 执行函数即可。
 
 ### 7.3 意图分类数据集扩充
 

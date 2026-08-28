@@ -169,6 +169,71 @@ def _resolve_date_filter(query: str) -> dict | None:
     return None
 
 
+def _has_model_ref(query: str) -> bool:
+    """判断 query 是否指向某个具体型号（指代词或直接报型号名）。
+
+    用于弱触发（咨询词）时判断：只有 query 明确指向某个型号（「这款怎么样」
+    「云顶 X2 怎么样」）才走 model_tool，避免「扫地机器人怎么样」这类泛咨询
+    被误触发。
+    """
+    from config.word_dict_config import MODEL_REF_WORDS
+    if any(w in query for w in MODEL_REF_WORDS):
+        return True
+    try:
+        from function_tools.model_tool import model_name_in_query
+        return model_name_in_query(query)
+    except Exception as e:
+        logger.warning("[Agent] Model name check failed: %s", e)
+        return False
+
+
+def _resolve_model_query(session_id: str, query: str):
+    """型号查询兜底：命中触发词 → LLM 提取型号名 → 精准检索详情。
+
+    处理指代/对比（"这两个有什么区别""它怎么样"）这类 query：把对话历史拼给
+    LLM，让它自主提取要查询的型号名，再按型号名精准检索，避免用原始指代句检索
+    导致召不回具体型号。提取不到型号时返回 None，退回正常 RAG 历史拼接。
+
+    触发分两档：
+      - 强触发（对比/明确指代）直接走；
+      - 弱触发（咨询词，如「怎么样」）需 query 有型号上下文才走，防误伤泛咨询。
+    """
+    from config.word_dict_config import MODEL_QUERY_WORDS, MODEL_CONSULT_WORDS
+    if not any(w in query for w in MODEL_QUERY_WORDS):
+        if not (any(w in query for w in MODEL_CONSULT_WORDS) and _has_model_ref(query)):
+            return None
+    try:
+        from function_tools.model_tool import (
+            MODEL_TOOL_SCHEMA, MODEL_TOOL_MODEL, search_models_by_names,
+        )
+        from llm_tool import chat_with_tools
+        from context_store import get_recent
+        from sops.base import _format_models
+        # 拼最近对话历史，让 LLM 理解指代（"这两个"指谁）
+        history_block = "\n".join(
+            f"{'用户' if m.get('role') == 'user' else '客服'}：{(m.get('content') or '')[:200]}"
+            for m in get_recent(session_id)
+        )
+        resp = chat_with_tools(
+            [HumanMessage(content=f"对话历史：\n{history_block}\n\n用户当前问题：{query}")],
+            [MODEL_TOOL_SCHEMA],
+            model=MODEL_TOOL_MODEL,
+        )
+        tool_calls = getattr(resp, "tool_calls", None) or []
+        if tool_calls:
+            tc = tool_calls[0]
+            args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
+            model_names = args.get("model_names", "")
+            if model_names:
+                models = search_models_by_names(model_names)
+                if models:
+                    logger.info("[Agent] Model query resolved: %s", model_names)
+                    return _format_models(models, "您问的型号信息如下：")
+    except Exception as e:
+        logger.warning("[Agent] Model tool calling failed: %s", e)
+    return None
+
+
 def ask_stream(query: str, session_id: str = "default"):
     """流式问答入口 —— 经本地分类头做意图路由，支持多轮 SOP 引导。
 
@@ -248,6 +313,13 @@ def ask_stream(query: str, session_id: str = "default"):
         followup_reply = handle_followup(session_id, query)
         if followup_reply:
             yield followup_reply
+            return
+
+    # 型号查询兜底：命中触发词 → LLM 提取型号名 → 精准检索详情
+    if intent in ("robot", "unknown"):
+        model_reply = _resolve_model_query(session_id, query)
+        if model_reply:
+            yield model_reply
             return
 
     # SOP 触发：robot/unknown 意图 + 命中场景 trigger（guards 已由 match_sop 评估）

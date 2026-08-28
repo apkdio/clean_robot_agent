@@ -19,7 +19,7 @@ from config.word_dict_config import (
     LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS,
 )
 
-logger = get_logger(name="sops")
+logger = get_logger(name="sops_base")
 SOPS = {}  # sop_id → sop 定义
 
 

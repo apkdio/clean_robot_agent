@@ -31,6 +31,84 @@ def _file_path(session_id: str) -> str:
     return os.path.join(_CONTEXT_DIR, f"{session_id}.jsonl")
 
 
+def _meta_path(session_id: str) -> str:
+    return os.path.join(_CONTEXT_DIR, f"{session_id}.meta.json")
+
+
+def get_session_title(session_id: str) -> str | None:
+    """获取会话标题（若已生成）。"""
+    fp = _meta_path(session_id)
+    if os.path.exists(fp):
+        try:
+            with open(fp, encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("title")
+        except Exception:
+            return None
+    return None
+
+
+def set_session_title(session_id: str, title: str):
+    """保存会话标题至 .meta.json。"""
+    os.makedirs(_CONTEXT_DIR, exist_ok=True)
+    fp = _meta_path(session_id)
+    try:
+        with open(fp, "w", encoding="utf-8") as f:
+            json.dump({"title": title}, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def generate_session_title(query: str, answer: str) -> str:
+    """调用 LLM (qwen2.5:3b) 为会话生成简短标题（6~10字）。
+
+    失败或异常时自动回退到首条 query 截断 20 字。
+    """
+    fallback_title = (query.strip()[:20] or "新会话")
+    try:
+        from tools.llm_tool import get_chat_model
+        from langchain_core.messages import HumanMessage
+
+        llm = get_chat_model(model="qwen2.5:3b", temperature=0.3)
+        prompt = (
+            "请根据以下第一轮用户与客服的对话，生成一个简短的中文标题（6~10个字）。\n"
+            "要求：直接返回标题文字本身，不要包含引号、书名号、序号或标点符号，不要任何解释说明。\n\n"
+            f"用户：{query}\n"
+            f"客服：{answer[:120]}\n\n"
+            "标题："
+        )
+        resp = llm.invoke([HumanMessage(content=prompt)])
+        raw_title = getattr(resp, "content", "") or ""
+        cleaned = re.sub(r'["\'《》“”‘’\n\r\t。，！？,.!?]', '', raw_title).strip()
+        if cleaned:
+            cleaned = re.sub(r'^(?:会话|对话)?标题[：:]\s*', '', cleaned).strip()
+            if cleaned:
+                return cleaned[:20]
+    except Exception:
+        pass
+    return fallback_title
+
+
+def delete_session(session_id: str) -> bool:
+    """删除指定会话：清理 jsonl 数据文件、meta 文件与内存缓存。"""
+    _cache.pop(session_id, None)
+    fp = _file_path(session_id)
+    meta_fp = _meta_path(session_id)
+    deleted = False
+    if os.path.exists(fp):
+        try:
+            os.remove(fp)
+            deleted = True
+        except OSError:
+            pass
+    if os.path.exists(meta_fp):
+        try:
+            os.remove(meta_fp)
+        except OSError:
+            pass
+    return deleted
+
+
 def append_message(session_id: str, role: str, content: str, **meta):
     """追加一条消息：写内存缓存 + 追加 jsonl 文件。
 
@@ -103,7 +181,7 @@ def ensure_session_id(session_id):
 
 
 def list_sessions() -> list:
-    """列出所有会话：session_id + 最近一条用户消息摘要 + 消息数 + 时间。"""
+    """列出所有会话：session_id + 标题(title) + 消息数 + 更新时间(updated_at/ts)。"""
     os.makedirs(_CONTEXT_DIR, exist_ok=True)
     sessions = []
     for fn in os.listdir(_CONTEXT_DIR):
@@ -123,16 +201,24 @@ def list_sessions() -> list:
                     continue
         if not msgs:
             continue
-        summary = ""
-        for m in reversed(msgs):
-            if m.get("role") == "user":
-                summary = m.get("content", "")[:30]
-                break
+
+        # 优先从 meta 读取标题，若无则取首条用户消息截断兜底
+        title = get_session_title(sid)
+        if not title:
+            for m in msgs:
+                if m.get("role") == "user":
+                    title = m.get("content", "")[:20]
+                    break
+        title = title or "（空会话）"
+
+        ts = msgs[-1].get("ts", "")
         sessions.append({
             "session_id": sid,
-            "summary": summary or "（空会话）",
+            "title": title,
+            "summary": title,
             "messages": len(msgs),
-            "ts": msgs[-1].get("ts", ""),
+            "ts": ts,
+            "updated_at": ts,
         })
-    sessions.sort(key=lambda s: s.get("ts", ""), reverse=True)
+    sessions.sort(key=lambda s: s.get("updated_at") or s.get("ts", ""), reverse=True)
     return sessions

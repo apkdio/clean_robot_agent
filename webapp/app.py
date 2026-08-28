@@ -135,7 +135,16 @@ def chat_stream():
             logger.error(f"[Stream] {e}")
             yield f"data: {json.dumps(f'[错误: {e}]', ensure_ascii=False)}\n\n"
         # 记录 assistant 完整回答 + 结构化推荐（供自由指代消解）
-        append_message(session_id, "assistant", "".join(parts), models=get_last_recommend(session_id))
+        full_answer = "".join(parts)
+        append_message(session_id, "assistant", full_answer, models=get_last_recommend(session_id))
+        # 若会话尚未生成标题（第一轮），则调用 LLM 生成并写入 meta
+        try:
+            from tools.context_store import get_session_title, set_session_title, generate_session_title
+            if not get_session_title(session_id):
+                title = generate_session_title(query, full_answer)
+                set_session_title(session_id, title)
+        except Exception as e:
+            logger.warning(f"[Stream] Generate title failed: {e}")
         yield "data: [DONE]\n\n"
 
     return Response(
@@ -164,6 +173,18 @@ def session_messages(sid):
         return jsonify({"status": "ok", "messages": msgs})
     except Exception as e:
         logger.error(f"[SessionMessages] {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/sessions/<sid>", methods=["DELETE"])
+def remove_session(sid):
+    """删除指定会话。"""
+    from tools.context_store import delete_session as _del_session
+    try:
+        ok = _del_session(sid)
+        return jsonify({"status": "ok", "deleted": ok})
+    except Exception as e:
+        logger.error(f"[DeleteSession] {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
