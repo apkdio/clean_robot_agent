@@ -1,0 +1,50 @@
+sops/base.py
+  s_40681318f5a20b::t_281dda17e9d704 246-247,249
+tools/metadata_extractor.py
+  s_40681318f5a20b::t_b1e621109e20cc 77-79,96-100,103,108
+  s_40681318f5a20b::t_7f44394eb560ec 112-137,149
+  s_40681318f5a20b::t_de67de3d86bf56 159-179
+  s_40681318f5a20b::t_21ab89a2491dfb 197-217
+test_scripts/test_retrieval.py
+  s_40681318f5a20b::t_43910759a6e1b8 302
+  s_40681318f5a20b::t_004646de85296f 1,4-8,27-30,33-35,41-43,46-48,50-53,55-59,61-64,66-68,73-88,91,110,139,181,184-186,189-191,194-196,199-208,212,216-218,222-225,229,232-239,242-245,249,253,256-257,264-265,269-270,272,276,280,282-283,288-290,294,299,305,309,313-315,320-322,326,330,340,345-346,360,364-365,367,374-376,431-435,437-438,441,455
+config/word_dict_config.py
+  s_40681318f5a20b::t_68eb0c390e3a65 138-141
+  s_40681318f5a20b::t_71093cc898f44d 129-133
+data/knowledge/不染一尘具体型号.txt
+  s_40681318f5a20b::t_d65d1cc46a5ddd 9,17,25,35,43,51,59,67,77,85,93,101,109,119,127,135
+project_detail.md
+  s_40681318f5a20b::t_5c06b86d232a01 269,273-274
+  s_40681318f5a20b::t_73ecb2ab854ea6 379-381,389-390
+  s_40681318f5a20b::t_0b8dfbff12f17e 148,151-152
+  s_40681318f5a20b::t_b8706796e26f07 618-626
+tools/agent.py
+  s_40681318f5a20b::t_c0d77870397a92 232-233
+  s_40681318f5a20b::t_c75d9123319792 230-231
+  s_40681318f5a20b::t_ba61cbcb81ee88 239-261,350-354
+README.md
+  s_40681318f5a20b::t_1db0009b1156ab 9,62,65-66,105
+test_scripts/test_cases.py
+  s_40681318f5a20b::t_d1b0baca267fdb 13,439
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "87fc152f94ab46cbe39962eeb5f6cf973f729271",
+  "prompts": {},
+  "humans": {
+    "h_17b40a0da2c9a6": {
+      "author": "wanqw <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4-Pro-discount"
+      },
+      "human_author": "wanqw <apkdio@163.com>"
+    }
+  }
+}
