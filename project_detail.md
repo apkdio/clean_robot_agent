@@ -145,10 +145,11 @@ clean_robot_agent/
 │   ├── base.py                  # 会话状态 + 执行器（ask/action/reply 步骤）
 │   ├── purchase.py              # 选购推荐 SOP（预算 + 宠物槽位）
 │   └── repair.py                # 故障排查 SOP（现象改写 + LLM 生成）
-├── test_scripts/                # 测试脚本（mock 测试，独立于 Chroma）
+├── test_scripts/                # 测试脚本（单元测试自包含，端到端需 Chroma/LLM）
 │   ├── test_cases.py            # 意图分类 + 端到端泛化测试
 │   ├── test_sop.py              # SOP 状态机测试
-│   └── test_retrieval.py        # 知识库分域召回测试（域路由/域过滤）
+│   ├── test_retrieval.py        # 知识库分域召回测试（域路由/域过滤，测真实代码）
+│   └── test_structured.py       # 结构化维度提取（型号属性 aspect + 系列 series）
 ├── intent_classifier_training/  # 意图分类训练工具
 │   ├── build_intent_dataset.py  # 数据集构建
 │   └── train_intent_classifier.py # 分类头训练
@@ -265,11 +266,12 @@ def search(query, filter=None):
 
 ### 4.6 metadata_extractor.py —— 结构化元数据
 
-三个职责：
+四个职责：
 
 1. **入库时提取**（`extract_price_metadata`）：从 chunk 文本扫描"参考价：XXX"，写入 `min_price`/`max_price`
 2. **检索时解析**（`build_filter` + `resolve_budget_filter` 统一入口）：从 query 提取预算约束（"1000以内" → `{"min_price": {"$lte": 1000}}`），支持中文数字（"一千"→1000）；规则 miss 且含预算 hint 时由 `resolve_budget_filter` 走 3b function calling 兜底
-3. **直出时格式化**（`extract_model_info` + `format_model_line`）：从型号 chunk 提取型号名/吸力/导航/避障，拼成统一格式
+3. **直出时格式化**（`extract_model_info` + `format_model_line`）：从型号 chunk 提取型号名/系列/吸力/导航/避障，拼成统一格式；`format_model_line(aspect)` 支持按属性维度只输出对应字段
+4. **系列提取与枚举**（`extract_series` + `enumerate_models_by_series`）：从 query 规则提取系列名（`SERIES_LIST` 四系列子串匹配），按 `series` 字段枚举系列型号——与日期/预算同级的结构化维度，纯规则、0 延迟
 
 ### 4.7 hot_ingest.py —— 热更新
 
@@ -374,8 +376,9 @@ LLM function calling 的型号提取工具，作为"型号详情咨询 / 上下�
 
 **设计要点**：
 - **7b 而非 3b**：型号名是 string 参数，且要理解上下文指代（"这两个"指谁）——3b 的 function calling 对 string 参数会原样返回 query、不做提取，不稳定；7b 实测能正确提取"云顶 X2,净白 S1"
-- **触发分两档（agent.py `_resolve_model_query`）**：强触发（对比/明确指代，`MODEL_QUERY_WORDS`：这两个/区别/对比/这款/那款…）直接走；弱触发（咨询词，`MODEL_CONSULT_WORDS`：怎么样/参数/配置…）需 `_has_model_ref` 确认 query 有型号上下文（指代词或直接报型号名）才走，避免"扫地机器人怎么样"这类泛咨询误触发
-- **挂载点**：在追问检测（handle_followup）之后、SOP 触发之前——专门承接追问之外的"型号详情/对比"兜底
+- **触发分两档（agent.py `_resolve_model_query`）**：强触发（对比/明确指代，`MODEL_QUERY_WORDS`：这两个/区别/对比/这款/那款…）直接走；弱触发（咨询词，`MODEL_CONSULT_WORDS`：怎么样/参数/多少钱/吸力/什么时候发布…）需 `_has_model_ref` 确认 query 有型号上下文（指代词或直接报型号名）才走，避免"扫地机器人怎么样"这类泛咨询误触发
+- **属性精准查询（aspect）用规则提取，不用 LLM**："云顶 X2 多少钱"这类"型号名 + 属性"查询，属性维度（价格/吸力/导航/避障/发布时间）由 `metadata_extractor.extract_model_aspect` 做 query 关键词匹配（确定性、0 延迟），LLM 只负责型号名（指代消解）；`format_model_line(aspect)` 按维度只输出对应字段，避免全字段啰嗦。为什么不用 LLM 提 aspect：维度是有限确定集合，规则全覆盖，且实测 7b 对"什么时候发布→发布时间"这类枚举映射会 miss（返回空，退化为全字段）
+- **挂载点**：在追问检测（handle_followup）之后、SOP 触发之前——专门承接追问之外的"型号详情/对比"兜底；结构化追问（"更便宜/最新"）仍由 handle_followup 代码筛选（ADR-10）
 - **miss 安全退化**：LLM 提取不到型号（tool_calls 空 / 型号名空）→ None → 退回正常 RAG 历史拼接，不给错误答案；指代模糊（"这两个"之后问"这款"）时 LLM 提取空，自然退化为反问澄清
 
 **调用流程**：
@@ -383,7 +386,8 @@ LLM function calling 的型号提取工具，作为"型号详情咨询 / 上下�
 query 命中 MODEL_QUERY_WORDS（强触发）
   或 命中 MODEL_CONSULT_WORDS（弱触发）+ _has_model_ref(query)
   → 拼最近 6 轮历史 → chat_with_tools（7b, extract_models）
-       → 提取 model_names → search_models_by_names → _format_models 结构化直出
+       → 提取 model_names → search_models_by_names → 规则提取 aspect
+       → _format_models(models, aspect) 结构化直出（有 aspect 只输出对应维度）
   → 提取不到 → None → 退回 RAG 历史拼接
 ```
 
@@ -610,6 +614,16 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 - **LLM 语义标题**：新会话完成第一轮回答后，调用 `qwen2.5:3b` 基于用户提问与回答前 120 字生成 6~10 字的精简会话标题（如「选购推荐」「故障排查」），持久化存储到 `data/context/<session_id>.meta.json` 中，固定不变。失败时安全降级到首条提问截断。
 - **最近更新时间**：利用每条消息追加时的 timestamp，在列表返回 `updated_at`，前端以人性化相对时间展示（今天 HH:mm、昨天、日期）。
 - **会话物理删除与防护**：后端新增 `DELETE /api/sessions/<sid>` 彻底移除对应的 `.jsonl` 与 `.meta.json` 并清理内存缓存；前端添加二次确认防误删，删除当前会话时自动新建。
+
+### ADR-21：系列作为知识库显式字段 + 结构化提取（与日期/预算同级）
+
+**背景**：系列信息（净白 S/净界 P/天工 T/云顶 X）此前只隐含在型号名里，正文里散落系列介绍；「净白 S 系列有什么产品」这类系列查询只能靠 RAG 猜系列→型号映射，枚举不全、指代不懂，且「净白 S 系列有什么产品推荐」里的"推荐"会误触发选购 SOP 问预算。
+
+**原因**：
+- **知识库显式字段而非运行时解析**：在「不染一尘具体型号.txt」每个型号条目加 `- 系列：净白 S` 字段（与续航/特点同级），型号名保持原样。显式字段无歧义、不依赖"型号名=系列名+编号"的命名约定，未来新增系列只改知识库不动代码。
+- **运行时提取而非入库 metadata**：`extract_model_info` 从 chunk 的 page_content 提取 `series`（单独正则，因系列名含空格，复用 `_field` 会截断成"净白"）。series 是展示/枚举字段，不需要存进 Chroma metadata（不像 price/publish_date 要用于 $lte/$gte 过滤）。
+- **系列提取器与日期/预算同级**：`extract_series`（SERIES_LIST 四系列子串匹配，纯规则、0 延迟，连 LLM 兜底都不需要）+ `enumerate_models_by_series`（全量枚举 + series 过滤）。
+- **系列查询不走 SOP**：agent 路由在 SOP 之前加「系列查询」分支——命中「系列名 + 枚举意图词（产品/型号/推荐/有哪些…）」直接枚举系列型号结构化直出。系列对比（"净白 S 和净界 P 差在哪"）仍走 RAG（选购指南有系列对比文本），系列咨询（"净白 S 怎么样"）走 RAG，只有"枚举"意图才直出。
 
 ---
 

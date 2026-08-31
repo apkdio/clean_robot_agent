@@ -243,10 +243,10 @@ def handle_followup(session_id: str, query: str):
     return None
 
 
-def _format_models(models, header: str) -> str:
-    """把型号列表格式化成回复文本。"""
+def _format_models(models, header: str, aspect: str = None) -> str:
+    """把型号列表格式化成回复文本。aspect 指定时只输出对应属性维度。"""
     from tools.metadata_extractor import format_model_line
-    lines = [format_model_line(m) for m in models]
+    lines = [format_model_line(m, aspect) for m in models]
     return header + "\n\n" + "\n".join(lines)
 
 

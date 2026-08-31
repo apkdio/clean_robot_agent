@@ -227,10 +227,35 @@ def _resolve_model_query(session_id: str, query: str):
             if model_names:
                 models = search_models_by_names(model_names)
                 if models:
-                    logger.info("[Agent] Model query resolved: %s", model_names)
-                    return _format_models(models, "您问的型号信息如下：")
+                    from tools.metadata_extractor import extract_model_aspect
+                    aspect = extract_model_aspect(query)
+                    logger.info("[Agent] Model query resolved: %s (aspect=%s)", model_names, aspect or "-")
+                    return _format_models(models, "您问的型号信息如下：", aspect)
     except Exception as e:
         logger.warning("[Agent] Model tool calling failed: %s", e)
+    return None
+
+
+def _resolve_series_query(query: str):
+    """系列查询：系列名 + 枚举意图词 → 枚举该系列型号结构化直出。
+
+    「净白 S 系列有什么产品/推荐」这类 query，系列已明确，直接枚举系列型号，
+    不走选购 SOP（避免「推荐」词误触发 SOP 问预算）。未命中系列返回 None。
+    """
+    from config.word_dict_config import SERIES_QUERY_WORDS
+    if not any(w in query for w in SERIES_QUERY_WORDS):
+        return None
+    try:
+        from tools.metadata_extractor import extract_series, enumerate_models_by_series
+        from sops.base import _format_models
+        series = extract_series(query)
+        if series:
+            models = enumerate_models_by_series(series)
+            if models:
+                logger.info("[Agent] Series query resolved: %s (%d models)", series, len(models))
+                return _format_models(models, f"{series}系列有以下型号：")
+    except Exception as e:
+        logger.warning("[Agent] Series query failed: %s", e)
     return None
 
 
@@ -320,6 +345,13 @@ def ask_stream(query: str, session_id: str = "default"):
         model_reply = _resolve_model_query(session_id, query)
         if model_reply:
             yield model_reply
+            return
+
+    # 系列查询：系列名 + 枚举意图词 → 枚举该系列型号直出（不走 SOP）
+    if intent in ("robot", "unknown"):
+        series_reply = _resolve_series_query(query)
+        if series_reply:
+            yield series_reply
             return
 
     # SOP 触发：robot/unknown 意图 + 命中场景 trigger（guards 已由 match_sop 评估）

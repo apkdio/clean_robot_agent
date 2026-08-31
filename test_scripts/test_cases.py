@@ -10,6 +10,7 @@
 运行方式：
     python test_cases.py            # 仅运行意图分类测试（快）
     python test_cases.py --e2e      # 意图分类 + 端到端抽样测试
+    python test_cases.py --extreme  # 意图分类 + 极端泛化测试
 """
 
 import os
@@ -435,10 +436,7 @@ def test_extreme():
 
 
 if __name__ == "__main__":
-    test_extreme()
-
-if __name__ == "__main__":
-    _, _, intent_errors = test_intent()
+    test_intent()
 
     if "--e2e" in sys.argv:
         test_e2e()

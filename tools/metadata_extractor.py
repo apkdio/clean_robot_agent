@@ -74,8 +74,9 @@ def extract_model_info(doc) -> Dict:
     以及关键参数。
 
     返回：
-        {"name": str, "price": int, "suction": str, "navigation": str,
-         "obstacle": str} —— 缺失字段为空字符串/None。
+        {"name": str, "series": str, "price": int, "suction": str,
+         "navigation": str, "obstacle": str, "publish_date": str}
+        —— 缺失字段为空字符串/None。
     """
     text = doc.page_content
 
@@ -92,18 +93,48 @@ def extract_model_info(doc) -> Dict:
         mm = re.search(rf"{label}[:：]\s*([^\s｜|，,]+)", text)
         return mm.group(1).strip() if mm else ""
 
+    # 系列名含空格（如「净白 S」），不能用 _field（遇空格就截断成「净白」），单独处理
+    def _series() -> str:
+        mm = re.search(r"系列[:：]\s*([^\n｜|，,]+)", text)
+        return mm.group(1).strip() if mm else ""
+
     return {
         "name": name,
+        "series": _series(),
         "price": price,
         "suction": _field("吸力"),
         "navigation": _field("导航"),
         "obstacle": _field("避障"),
-        "publish_date":_field("发布时间")
+        "publish_date": _field("发布时间")
     }
 
 
-def format_model_line(info: Dict) -> str:
-    """把单个型号信息格式化成一行可读文本。"""
+# 型号属性维度映射：aspect 中文取值 → (字段名, 显示模板)
+# 用于「型号属性精准查询」（如"云顶 X2 多少钱"只答价格，不啰嗦全字段）
+MODEL_ASPECTS = {
+    "价格": ("price", "参考价 {v} 元"),
+    "吸力": ("suction", "吸力 {v}"),
+    "导航": ("navigation", "{v}"),
+    "避障": ("obstacle", "{v}"),
+    "发布时间": ("publish_date", "{v}"),
+}
+
+
+def format_model_line(info: Dict, aspect: str = None) -> str:
+    """把单个型号信息格式化成一行可读文本。
+
+    aspect 指定时只输出对应属性维度（见 MODEL_ASPECTS，如「价格」→ 参考价）；
+    否则输出全字段（吸力/导航/避障 + 价格 + 发布时间）。
+    """
+    name = info.get("name", "")
+    if aspect:
+        entry = MODEL_ASPECTS.get(aspect)
+        if entry:
+            field, fmt = entry
+            v = info.get(field)
+            v_str = fmt.format(v=v if v not in (None, "") else "未知")
+            return f"- **{name}**：{v_str}"
+
     specs = []
     if info.get("suction"):
         specs.append(f"吸力 {info['suction']}")
@@ -115,7 +146,7 @@ def format_model_line(info: Dict) -> str:
     if info.get("obstacle"):
         specs.append(f"{info['obstacle']}避障")
     spec_str = "、".join(specs)
-    line = f"- **{info['name']}**"
+    line = f"- **{name}**"
     if spec_str:
         line += f"：{spec_str}"
     if info.get("price") is not None:
@@ -123,6 +154,27 @@ def format_model_line(info: Dict) -> str:
     if info.get("publish_date") is not None:
         line += f"（发布日期:{info['publish_date']}）"
     return line
+
+
+# aspect 关键词 → aspect 中文取值（规则提取，长关键词优先）
+_ASPECT_KEYWORDS = [
+    ("发布时间", "发布时间"), ("什么时候发布", "发布时间"), ("什么时候上市", "发布时间"),
+    ("上市时间", "发布时间"), ("何时发布", "发布时间"), ("何时上市", "发布时间"),
+    ("多少钱", "价格"), ("什么价", "价格"), ("价位", "价格"), ("售价", "价格"),
+    ("价格", "价格"), ("便宜", "价格"),
+    ("吸力", "吸力"), ("导航", "导航"), ("避障", "避障"),
+]
+
+
+def extract_model_aspect(query: str) -> str:
+    """从 query 规则提取型号属性维度（确定性，不依赖 LLM）。
+
+    返回 MODEL_ASPECTS 的 key（如「价格」「吸力」），未命中返回空字符串。
+    """
+    for kw, aspect in _ASPECT_KEYWORDS:
+        if kw in query:
+            return aspect
+    return ""
 
 
 def enumerate_models(filter: dict, require_field: str = "price") -> list[Dict]:
@@ -140,6 +192,27 @@ def enumerate_models(filter: dict, require_field: str = "price") -> list[Dict]:
             seen.add(info["name"])
             models.append(info)
     return models
+
+
+# 系列列表（与知识库「系列」字段一致，规则子串匹配用）
+SERIES_LIST = ["净白 S", "净界 P", "天工 T", "云顶 X"]
+
+
+def extract_series(query: str) -> str:
+    """从 query 规则提取系列名（子串匹配 SERIES_LIST）。
+
+    返回系列名（如「净白 S」），未命中返回空字符串。
+    """
+    for s in SERIES_LIST:
+        if s in query:
+            return s
+    return ""
+
+
+def enumerate_models_by_series(series: str) -> list[Dict]:
+    """枚举指定系列的全部型号（按 series 字段过滤）。"""
+    models = enumerate_models({"file_name": {"$ne": "__never__"}}, require_field="price")
+    return [m for m in models if m.get("series") == series]
 
 
 # ──────────────────────────────────────────────────────────────────────────
