@@ -177,12 +177,47 @@ def extract_model_aspect(query: str) -> str:
     return ""
 
 
-def enumerate_models(filter: dict, require_field: str = "price") -> list[Dict]:
-    """按 filter 枚举所有匹配型号（去重、校验必需字段）。
+# 全量型号元数据 pickle 缓存（避免每次型号枚举读 Chroma 全量 + 正则提取）
+_MODELS_CACHE_FILE = "data/pkl/models.pkl"
 
-    require_field 指定必需字段（"price" 或 "publish_date"），缺该字段的 chunk 跳过，
-    避免把非型号条目当成型号。返回结构化型号信息列表。
+
+def _match_model_filter(info: Dict, f: dict) -> bool:
+    """判断型号 info 是否满足 Chroma 风格的 where 过滤（内存过滤）。
+
+    字段映射：min_price/max_price → price（条目级切分保证 min_price==price），
+    publish_date 由字符串转 int 比较；file_name 忽略（型号都在具体型号文件）。
     """
+    if not f:
+        return True
+    if "$and" in f:
+        return all(_match_model_filter(info, sub) for sub in f["$and"])
+    for key, cond in f.items():
+        if key.startswith("$") or key == "file_name":
+            continue
+        if key in ("min_price", "max_price", "price"):
+            val = info.get("price")
+        elif key == "publish_date":
+            pd = info.get("publish_date") or ""
+            val = int(pd.replace("-", "")) if pd else None
+        else:
+            val = info.get(key)
+        if val is None:
+            return False
+        if isinstance(cond, dict):
+            if "$lte" in cond and not (val <= cond["$lte"]):
+                return False
+            if "$gte" in cond and not (val >= cond["$gte"]):
+                return False
+            if "$eq" in cond and val != cond["$eq"]:
+                return False
+        else:
+            if val != cond:
+                return False
+    return True
+
+
+def _enumerate_models_from_store(filter: dict, require_field: str) -> list[Dict]:
+    """底层：从 Chroma 读全量 + 提取 + 去重（不带缓存，重建用）。"""
     from vector_store import search_by_filter
     docs = search_by_filter(filter)
     models, seen = [], set()
@@ -191,6 +226,53 @@ def enumerate_models(filter: dict, require_field: str = "price") -> list[Dict]:
         if info.get(require_field) and info.get("name") and info["name"] not in seen:
             seen.add(info["name"])
             models.append(info)
+    return models
+
+
+def get_all_models() -> list[Dict]:
+    """全量型号 info 列表（pickle 缓存，chunk_count 做 fingerprint）。
+
+    优先读 data/pkl/models.pkl；失效或不存在则从 Chroma 重建并写缓存。
+    型号数据在知识库变更前完全稳定，缓存可跨进程复用，避免每次枚举读 Chroma。
+    """
+    import os
+    import pickle
+    from path_tool import get_abs_path
+    from vector_store import get_vector_store
+
+    path = get_abs_path(_MODELS_CACHE_FILE)
+    fingerprint = get_vector_store()._collection.count()
+
+    if os.path.isfile(path):
+        try:
+            with open(path, "rb") as f:
+                payload = pickle.load(f)
+            if payload.get("fingerprint") == fingerprint:
+                return payload["models"]
+        except Exception:
+            pass
+
+    models = _enumerate_models_from_store({"file_name": {"$ne": "__never__"}}, require_field="price")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            pickle.dump({"fingerprint": fingerprint, "models": models}, f, protocol=pickle.HIGHEST_PROTOCOL)
+    except Exception:
+        pass
+    return models
+
+
+def enumerate_models(filter: dict, require_field: str = "price") -> list[Dict]:
+    """按 filter 枚举匹配型号（基于 pickle 缓存 + 内存过滤，不读 Chroma）。
+
+    get_all_models 已按 price 过滤，故 require_field="price" 天然满足；
+    publish_date 等其它字段再内存过滤一次。
+    """
+    models = get_all_models()
+    if require_field and require_field != "price":
+        models = [m for m in models if m.get(require_field)]
+    if filter:
+        models = [m for m in models if _match_model_filter(m, filter)]
     return models
 
 

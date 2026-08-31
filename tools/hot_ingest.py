@@ -142,9 +142,11 @@ def apply_changes(data_dir: str, added: dict, changed: dict, removed: list) -> d
 def _rebuild_sparse_index() -> None:
     """强制重建 BM25 索引（丢弃缓存，避免复用陈旧的 pickle）。"""
     from path_tool import get_abs_path
-    cache = get_abs_path("data/pkl/bm25_index.pkl")
-    if os.path.isfile(cache):
-        os.remove(cache)
+    # 同步失效型号元数据缓存（models.pkl）——知识库变更后型号数据已过期
+    for cache_name in ("data/pkl/bm25_index.pkl", "data/pkl/models.pkl"):
+        cache = get_abs_path(cache_name)
+        if os.path.isfile(cache):
+            os.remove(cache)
     from vector_store import build_hybrid_index
     build_hybrid_index()
 

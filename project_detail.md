@@ -272,6 +272,7 @@ def search(query, filter=None):
 2. **检索时解析**（`build_filter` + `resolve_budget_filter` 统一入口）：从 query 提取预算约束（"1000以内" → `{"min_price": {"$lte": 1000}}`），支持中文数字（"一千"→1000）；规则 miss 且含预算 hint 时由 `resolve_budget_filter` 走 3b function calling 兜底
 3. **直出时格式化**（`extract_model_info` + `format_model_line`）：从型号 chunk 提取型号名/系列/吸力/导航/避障，拼成统一格式；`format_model_line(aspect)` 支持按属性维度只输出对应字段
 4. **系列提取与枚举**（`extract_series` + `enumerate_models_by_series`）：从 query 规则提取系列名（`SERIES_LIST` 四系列子串匹配），按 `series` 字段枚举系列型号——与日期/预算同级的结构化维度，纯规则、0 延迟
+5. **型号枚举缓存**（`get_all_models`）：全量型号 info 列表 pickle 缓存到 `data/pkl/models.pkl`（`chunk_count` 做 fingerprint），`enumerate_models` 基于缓存做内存过滤（min_price/max_price/publish_date 映射），不再每次读 Chroma 全量 + 正则提取
 
 ### 4.7 hot_ingest.py —— 热更新
 
@@ -624,6 +625,16 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 - **运行时提取而非入库 metadata**：`extract_model_info` 从 chunk 的 page_content 提取 `series`（单独正则，因系列名含空格，复用 `_field` 会截断成"净白"）。series 是展示/枚举字段，不需要存进 Chroma metadata（不像 price/publish_date 要用于 $lte/$gte 过滤）。
 - **系列提取器与日期/预算同级**：`extract_series`（SERIES_LIST 四系列子串匹配，纯规则、0 延迟，连 LLM 兜底都不需要）+ `enumerate_models_by_series`（全量枚举 + series 过滤）。
 - **系列查询不走 SOP**：agent 路由在 SOP 之前加「系列查询」分支——命中「系列名 + 枚举意图词（产品/型号/推荐/有哪些…）」直接枚举系列型号结构化直出。系列对比（"净白 S 和净界 P 差在哪"）仍走 RAG（选购指南有系列对比文本），系列咨询（"净白 S 怎么样"）走 RAG，只有"枚举"意图才直出。
+
+### ADR-22：型号枚举用 pickle 缓存（减少读 Chroma 全量的 IO）
+
+**背景**：`enumerate_models` 是型号查询/系列查询/预算推荐/最贵最便宜追问的公共底层，每次调用都 `search_by_filter` 读 Chroma 全量 chunk + 对每个 chunk 跑 `extract_model_info` 正则提取。一次对话「推荐 → 追问 → 系列查询」会触发多次全量读，IO 重复。
+
+**原因**：
+- **型号数据稳定，可跨进程缓存**：型号元数据（name/series/price/suction/navigation/obstacle/publish_date）在知识库变更前完全不变，且全是可 pickle 的基本类型。新增 `get_all_models` 缓存到 `data/pkl/models.pkl`，与 BM25 索引缓存（`bm25_index.pkl`）同构。
+- **fingerprint 用 chunk_count**：与 BM25 一致用 `collection.count()`；知识库变更后 hot_ingest 重建 BM25 时同步删除 `models.pkl`（`_rebuild_sparse_index` 双缓存失效），双保险。
+- **内存过滤与 Chroma where 等价**：`enumerate_models` 改为「缓存全量 + 内存过滤」——`min_price/max_price` 映射到 `price`（条目级切分保证 min_price==max_price==price），`publish_date` 由字符串转 int 比较，`$and` 递归。实测 5 种 filter（全量/预算上限/区间/组合）与 Chroma 结果完全一致。
+- **require_field 仍生效**：`get_all_models` 按 price 过滤（排除 FAQ 无价格条目），`require_field="publish_date"` 等其它字段再内存过滤一次。
 
 ---
 
