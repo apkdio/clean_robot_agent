@@ -89,7 +89,6 @@ def chat_with_tools(messages: list, tools: list, model: str = "", temperature: f
     返回 AIMessage；通过 `.tool_calls` 查看模型决定调用的工具。
     `tools` 是一组 OpenAI 风格的 function schema（{"type": "function", "function": {...}}）。
     """
-    from langchain_core.messages import HumanMessage, SystemMessage
 
     m = model or _DEFAULT_CHAT_MODEL
     llm = get_chat_model(model=m, temperature=temperature)

@@ -278,16 +278,25 @@ def enumerate_models(filter: dict, require_field: str = "price") -> list[Dict]:
 
 # 系列列表（与知识库「系列」字段一致，规则子串匹配用）
 SERIES_LIST = ["净白 S", "净界 P", "天工 T", "云顶 X"]
+SERIES_MAP_DICT = {
+    "净白": "净白 S",
+    "净界": "净界 P",
+    "天工": "天工 T",
+    "云顶": "云顶 X"
+}
 
 
 def extract_series(query: str) -> str:
-    """从 query 规则提取系列名（子串匹配 SERIES_LIST）。
+    """从 query 规则提取系列名（子串匹配 SERIES_LIST），未精准命中时尝试走映射。
 
     返回系列名（如「净白 S」），未命中返回空字符串。
     """
     for s in SERIES_LIST:
         if s in query:
             return s
+    for s in SERIES_MAP_DICT:
+        if s in query:
+            return SERIES_MAP_DICT[s]
     return ""
 
 

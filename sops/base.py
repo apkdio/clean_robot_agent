@@ -10,12 +10,10 @@
 
 会话状态为内存存储，按 session_id 隔离（支持多会话；服务重启后清空）。
 """
-
 import re
 from tools.log_tool import get_logger
 from config.word_dict_config import (
-    DOMAIN_MAP, REPAIR_WORDS, MAINTAIN_WORDS, AFTERSALES_WORDS,
-    BUY_WORDS, CONSULT_WORDS, BRAND_WORDS,
+    AFTERSALES_WORDS,BUY_WORDS, CONSULT_WORDS, BRAND_WORDS,
     LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS,
 )
 
@@ -49,21 +47,16 @@ def register(sop: dict) -> None:
     SOPS[sop["id"]] = sop
 
 
-# 上一轮推荐的结构化结果（型号列表），用于「追问」处理，按 session_id 隔离
-_last_recommends = {}
-
-
 def save_recommend(session_id: str, models) -> None:
-    """保存指定会话的上一轮推荐结果（供追问「有没有更新的/更便宜的」使用）。"""
-    _last_recommends[session_id] = models
+    """保存指定会话的上一轮推荐结果到 meta（供追问使用，跨重启有效）。"""
+    from tools.context_store import set_last_models
+    set_last_models(session_id, models)
 
 
 def get_last_recommend(session_id: str):
-    return _last_recommends.get(session_id)
-
-
-def clear_recommend(session_id: str) -> None:
-    _last_recommends.pop(session_id, None)
+    """读取上一轮推荐结果（从 meta，跨重启有效）。"""
+    from tools.context_store import get_last_models
+    return get_last_models(session_id)
 
 
 # 当前活跃会话，按 session_id 隔离
@@ -98,8 +91,9 @@ def end_sop(session_id: str):
 
 
 def _with_exit_hint(intro: str) -> str:
-    """给 SOP 开场语追加退出提示（所有 SOP 通用，用户可回复「0」退出）。"""
-    return intro + "\n\n（随时可回复「0」退出本环节）"
+    """给 SOP 开场语追加退出提示（所有 SOP 通用，用户可回复「0」退出
+    """
+    return intro + "\n（随时可回复「0」退出本环节）"
 
 
 def start_sop(session_id: str, sop_id: str, query: str):
@@ -210,9 +204,9 @@ def handle_followup(session_id: str, query: str):
     #   - 笼统"最近"（后面不带时间单位）+ "发布/新/出"
     latest_hit = any(w in query for w in LATEST_WORDS)
     vague_recent = (
-        "最近" in query
-        and not re.search(r"最近(?:半|几|[0-9一二两三四五六七八九十]|个?[月年周天])", query)
-        and any(w in query for w in RECENT_VAGUE_WORDS)
+            "最近" in query
+            and not re.search(r"最近(?:半|几|[0-9一二两三四五六七八九十]|个?[月年周天])", query)
+            and any(w in query for w in RECENT_VAGUE_WORDS)
     )
     if latest_hit or vague_recent:
         models = _search_latest_global()[:5]

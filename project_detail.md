@@ -451,7 +451,7 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 | 限定追问 | "有没有更便宜的" | 上一轮推荐结果内，按价格升序 |
 
 实现要点：
-- 上一轮推荐的结构化型号列表（含名称/价格/发布时间）按 session_id 保存在模块级 dict（`_last_recommends`），供追问筛选
+- 上一轮推荐的结构化型号列表（含名称/价格/发布时间）按 session_id 持久化到会话 meta 文件的 `last_models` 字段（跨重启有效），供追问筛选
 - 笼统"最近"（不带时间单位，如"最近有什么发布的"）也走全局检索；带时间单位（"最近半年"）仍走日期工具，用正则区分
 - 追问检测放在 SOP 触发之前，避免"有没有"类追问被误当新选购
 
@@ -465,20 +465,20 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 |------|------|
 | `append_message` | 追加一条消息（写内存缓存 + jsonl 文件），可携带 intent / models 元数据 |
 | `get_recent` | 取最近 n 条消息（默认 6 轮），优先内存缓存，未缓存则读文件 |
-| `get_last_models` | 从最近消息倒序找第一条带 models 的 assistant 消息（取最近推荐型号列表） |
+| `get_last_models` | 读取上一轮推荐结果（从 meta 的 `last_models` 字段，跨重启有效）|
 | `ensure_session_id` | 校验前端 UUID，非法则重新生成（防御异常 session_id 写入文件名） |
-| `get_session_title` / `set_session_title` | 读写会话的 `.meta.json`，存储/获取生成的语义标题 |
+| `_update_meta` / `set_session_title` / `set_last_models` | 读-改-写会话 `.meta.json`：语义标题 + 上一轮推荐结果（`last_models`）|
 | `generate_session_title` | 调用 LLM（qwen2.5:3b）根据首轮问答生成 6~10 字精简标题，异常时回退截断 |
 | `delete_session` | 删除会话的 jsonl、meta 文件并清理内存缓存 |
 | `list_sessions` | 列出所有会话（title + 消息数 + updated_at），供前端历史对话列表 |
 
 **用途**：
-1. **自由指代消解（历史拼接 LLM）**：用户说"它怎么样/那这个呢"时，RAG 生成把最近 6 轮历史拼进 prompt，让 LLM 自己看上下文理解"它"指谁，不再做代码替换
+1. **自由指代消解（历史拼接 LLM）**：用户说"它怎么样/那这个呢"时，RAG 生成把最近 6 轮历史拼进 prompt，让 LLM 自己看上下文理解"它"指谁，不再做代码替换；即使检索无召回，也拼接历史交给 LLM，避免"它"在无召回时丢失
 2. **历史会话管理**：前端会话抽屉（`/api/sessions`、`/api/sessions/<sid>/messages`、`DELETE /api/sessions/<sid>`）列出/加载/删除历史对话；首轮问答后自动异步生成语义标题与最近更新时间；刷新页面保留上下文
 
 **设计要点**：
 - 文件全量保留 + 内存只留 6 轮：文件是持久层（重启可恢复），内存是读热层（避免频繁读文件）
-- assistant 消息由 webapp/app.py 在流式完成后写入，并附带 `models`（结构化推荐列表），供"更便宜"等结构化追问筛选
+- 推荐结果由 SOP 执行时写入 meta 的 `last_models` 字段（`set_last_models`），追问"更便宜"从 meta 读（`get_last_models`），跨重启有效；assistant 消息由 webapp/app.py 在流式完成后写入
 - 写文件追加而非覆写，天然支持多轮累积
 
 ---
@@ -582,7 +582,7 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 **背景**：v1.8.3 需要支持前端多会话（新建对话/切换历史）+ 自由指代多轮（"它怎么样"指上一轮推荐）。
 
 **原因**：
-- **session_id 隔离**：SOP 会话、推荐结果、退出确认原本都是模块级单例（单用户假设），多会话会互相串扰。全部改为按 session_id 存储（`_sessions`/`_last_recommends`/`_pending_exits`），前端用 `crypto.randomUUID()` 生成会话 ID，刷新即新会话，切换会话即恢复上下文。
+- **session_id 隔离**：SOP 会话、推荐结果、退出确认原本都是模块级单例（单用户假设），多会话会互相串扰。全部改为按 session_id 存储（`_sessions`/`_pending_exits`），推荐结果持久化到会话 meta 文件；前端用 `crypto.randomUUID()` 生成会话 ID，刷新即新会话，切换会话即恢复上下文。
 - **jsonl 持久化**：会话状态要跨刷新存活（前端历史对话列表 + 回放），内存不够、数据库过重——`data/context/<session_id>.jsonl` 每行一条消息，文件全量保留、内存缓存最近 6 轮，读写都是 append/切片，成本极低。
 - **自由指代用历史拼接 LLM 而非代码替换**：最初用"指代词 + 上一轮推荐型号名"做确定性替换（`REFERENCE_WORDS`），但暴露两个问题——依赖 `save_recommend` 全覆盖（"最便宜/详细讲讲"等路径漏保存就指代错）、且只能换成型号名无法处理复杂指代。最终回到 ADR-10 的本意：RAG 生成时把最近 6 轮历史拼进 prompt，让 LLM 自己看上下文理解"它"指谁，彻底摆脱对结构化上下文的依赖。
 
@@ -623,7 +623,7 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 **原因**：
 - **知识库显式字段而非运行时解析**：在「不染一尘具体型号.txt」每个型号条目加 `- 系列：净白 S` 字段（与续航/特点同级），型号名保持原样。显式字段无歧义、不依赖"型号名=系列名+编号"的命名约定，未来新增系列只改知识库不动代码。
 - **运行时提取而非入库 metadata**：`extract_model_info` 从 chunk 的 page_content 提取 `series`（单独正则，因系列名含空格，复用 `_field` 会截断成"净白"）。series 是展示/枚举字段，不需要存进 Chroma metadata（不像 price/publish_date 要用于 $lte/$gte 过滤）。
-- **系列提取器与日期/预算同级**：`extract_series`（SERIES_LIST 四系列子串匹配，纯规则、0 延迟，连 LLM 兜底都不需要）+ `enumerate_models_by_series`（全量枚举 + series 过滤）。
+- **系列提取器与日期/预算同级**：`extract_series`（先 SERIES_LIST 四系列精确子串匹配，miss 再 SERIES_MAP_DICT 模糊映射「净白→净白 S」等，纯规则、0 延迟，连 LLM 兜底都不需要）+ `enumerate_models_by_series`（全量枚举 + series 过滤）。
 - **系列查询不走 SOP**：agent 路由在 SOP 之前加「系列查询」分支——命中「系列名 + 枚举意图词（产品/型号/推荐/有哪些…）」直接枚举系列型号结构化直出。系列对比（"净白 S 和净界 P 差在哪"）仍走 RAG（选购指南有系列对比文本），系列咨询（"净白 S 怎么样"）走 RAG，只有"枚举"意图才直出。
 
 ### ADR-22：型号枚举用 pickle 缓存（减少读 Chroma 全量的 IO）
@@ -681,3 +681,4 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 3. **配置模板化**：敏感/本地配置写 `*_template.yaml` 提交，实际配置 gitignore
 4. **导入风格**：tools 内部用直接导入（`from log_tool import`），webapp 用包导入（`from tools.xxx import`），两者都靠 sys.path 同时包含项目根和 tools 目录
 5. **知识库格式**：编号条目（`数字. ` + `**标题**` + `- 参数`），详见 `data/knowledge_example/格式模板.txt`
+6. **新语法与代码风格学习**：项目代码相对常规 Python 学习的新语法点与写法风格提炼，详见 [CODE_STYLE.md](CODE_STYLE.md)

@@ -48,15 +48,34 @@ def get_session_title(session_id: str) -> str | None:
     return None
 
 
-def set_session_title(session_id: str, title: str):
-    """保存会话标题至 .meta.json。"""
+def _update_meta(session_id: str, **fields) -> dict:
+    """读-改-写会话 meta 文件（保留已有字段，如 title / last_models）。"""
     os.makedirs(_CONTEXT_DIR, exist_ok=True)
-    fp = _meta_path(session_id)
+    file_path = _meta_path(session_id)
+    data = {}
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+    data.update(fields)
     try:
-        with open(fp, "w", encoding="utf-8") as f:
-            json.dump({"title": title}, f, ensure_ascii=False)
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
     except Exception:
         pass
+    return data
+
+
+def set_session_title(session_id: str, title: str):
+    """保存会话标题至 .meta.json（读-改-写，不覆盖其它字段）。"""
+    _update_meta(session_id, title=title)
+
+
+def set_last_models(session_id: str, models):
+    """保存上一轮推荐结果到 meta（供追问使用，跨重启有效）。"""
+    _update_meta(session_id, last_models=models)
 
 
 def generate_session_title(query: str, answer: str) -> str:
@@ -151,16 +170,16 @@ def get_recent(session_id: str, n: int = None) -> list:
     return msgs
 
 
-def get_last_models(session_id: str) -> list:
-    """取最近一次推荐的结构化型号列表。
-
-    从最近的消息倒序找第一条带 models 的 assistant 消息，返回其 models。
-    """
-    msgs = get_recent(session_id)
-    for m in reversed(msgs):
-        if m.get("role") == "assistant" and m.get("models"):
-            return m["models"]
-    return []
+def get_last_models(session_id: str):
+    """读取上一轮推荐结果（从 meta 的 last_models 字段，跨重启有效）。"""
+    fp = _meta_path(session_id)
+    if not os.path.exists(fp):
+        return None
+    try:
+        with open(fp, encoding="utf-8") as f:
+            return json.load(f).get("last_models")
+    except Exception:
+        return None
 
 
 _UUID_RE = re.compile(
