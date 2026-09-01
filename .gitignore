@@ -5,6 +5,7 @@ data/pkl/
 data/state/
 data/bgm_model/
 data/context/
+data/context_meta/
 __pycache__/
 *.pyc
 

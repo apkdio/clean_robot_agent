@@ -20,6 +20,7 @@ from datetime import datetime
 from path_tool import get_abs_path
 
 _CONTEXT_DIR = get_abs_path("data/context")
+_CONTEXT_META_DATA_DIR = get_abs_path("data/context_meta")
 _MAX_TURNS = 6                      # 上下文保留最近 6 轮
 _MAX_MESSAGES = _MAX_TURNS * 2      # 一轮 = 用户 + 客服，共 12 条消息
 
@@ -32,7 +33,7 @@ def _file_path(session_id: str) -> str:
 
 
 def _meta_path(session_id: str) -> str:
-    return os.path.join(_CONTEXT_DIR, f"{session_id}.meta.json")
+    return os.path.join(_CONTEXT_META_DATA_DIR, f"{session_id}.meta.json")
 
 
 def get_session_title(session_id: str) -> str | None:
@@ -51,6 +52,7 @@ def get_session_title(session_id: str) -> str | None:
 def _update_meta(session_id: str, **fields) -> dict:
     """读-改-写会话 meta 文件（保留已有字段，如 title / last_models）。"""
     os.makedirs(_CONTEXT_DIR, exist_ok=True)
+    os.makedirs(_CONTEXT_META_DATA_DIR, exist_ok=True)
     file_path = _meta_path(session_id)
     data = {}
     if os.path.exists(file_path):
@@ -134,6 +136,7 @@ def append_message(session_id: str, role: str, content: str, **meta):
     meta 可携带 intent / models（上一轮推荐的结构化型号，供自由指代）等。
     """
     os.makedirs(_CONTEXT_DIR, exist_ok=True)
+    os.makedirs(_CONTEXT_META_DATA_DIR, exist_ok=True)
     msg = {"role": role, "content": content, "ts": datetime.now().isoformat(timespec="seconds")}
     msg.update(meta)
 
@@ -202,6 +205,7 @@ def ensure_session_id(session_id):
 def list_sessions() -> list:
     """列出所有会话：session_id + 标题(title) + 消息数 + 更新时间(updated_at/ts)。"""
     os.makedirs(_CONTEXT_DIR, exist_ok=True)
+    os.makedirs(_CONTEXT_META_DATA_DIR, exist_ok=True)
     sessions = []
     for fn in os.listdir(_CONTEXT_DIR):
         if not fn.endswith(".jsonl"):

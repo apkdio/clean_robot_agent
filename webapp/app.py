@@ -40,10 +40,13 @@ app = Flask(
 )
 
 _rag_cfg = load_rag_config()
-_upload_dir = os.path.join(_PROJECT_ROOT, "temp", "uploads")
+_upload_dir = os.path.join(str(_PROJECT_ROOT), "temp", "uploads")
 os.makedirs(_upload_dir, exist_ok=True)
 
 _supported_exts = tuple(_rag_cfg.get("supported_exts", [".txt", ".pdf"]))
+
+# 正在处理中的会话（回答未完成时拒绝同会话新请求，防止并发串扰）
+_busy_sessions = set()
 
 
 @app.route("/")
@@ -119,33 +122,41 @@ def chat_stream():
         return jsonify({"status": "error", "message": "Empty query."}), 400
     session_id = ensure_session_id(data.get("session_id", ""))
 
+    # 会话级锁：同一会话回答未完成时拒绝新请求（前端按钮 + enter 双保险）
+    if session_id in _busy_sessions:
+        return jsonify({"status": "busy", "message": "正在回答中，请稍候"}), 409
+    _busy_sessions.add(session_id)
+
     logger.info(f"[Stream] query: {query[:60]}... session={session_id}")
 
     def generate():
-        import json
-        from tools.context_store import append_message
-        from sops.base import get_last_recommend
-        parts = []
         try:
-            for chunk in ask_stream(query, session_id):
-                parts.append(chunk)
-                # JSON 编码，避免 chunk 内的换行符破坏 SSE 帧格式
-                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            logger.error(f"[Stream] {e}")
-            yield f"data: {json.dumps(f'[错误: {e}]', ensure_ascii=False)}\n\n"
-        # 记录 assistant 完整回答 + 结构化推荐（供自由指代消解）
-        full_answer = "".join(parts)
-        append_message(session_id, "assistant", full_answer, models=get_last_recommend(session_id))
-        # 若会话尚未生成标题（第一轮），则调用 LLM 生成并写入 meta
-        try:
-            from tools.context_store import get_session_title, set_session_title, generate_session_title
-            if not get_session_title(session_id):
-                title = generate_session_title(query, full_answer)
-                set_session_title(session_id, title)
-        except Exception as e:
-            logger.warning(f"[Stream] Generate title failed: {e}")
-        yield "data: [DONE]\n\n"
+            import json
+            from tools.context_store import append_message
+            from sops.base import get_last_recommend
+            parts = []
+            try:
+                for chunk in ask_stream(query, session_id):
+                    parts.append(chunk)
+                    # JSON 编码，避免 chunk 内的换行符破坏 SSE 帧格式
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                logger.error(f"[Stream] {e}")
+                yield f"data: {json.dumps(f'[错误: {e}]', ensure_ascii=False)}\n\n"
+            # 记录 assistant 完整回答 + 结构化推荐（供自由指代消解）
+            full_answer = "".join(parts)
+            append_message(session_id, "assistant", full_answer, models=get_last_recommend(session_id))
+            # 若会话尚未生成标题（第一轮），则调用 LLM 生成并写入 meta
+            try:
+                from tools.context_store import get_session_title, set_session_title, generate_session_title
+                if not get_session_title(session_id):
+                    title = generate_session_title(query, full_answer)
+                    set_session_title(session_id, title)
+            except Exception as e:
+                logger.warning(f"[Stream] Generate title failed: {e}")
+            yield "data: [DONE]\n\n"
+        finally:
+            _busy_sessions.discard(session_id)
 
     return Response(
         stream_with_context(generate()),

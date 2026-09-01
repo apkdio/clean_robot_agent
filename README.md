@@ -222,5 +222,5 @@ python intent_classifier_training/train_intent_classifier.py
 ## 注意事项
 
 - 所有模型本地运行，无云端依赖
-- `data/vector_store/`、`data/pkl/`、`data/state/`、`data/bgm_model/`、`data/context/` 为运行时产物，已加入 `.gitignore`
+- `data/vector_store/`、`data/pkl/`、`data/state/`、`data/bgm_model/`、`data/context/`、`data/context_meta/` 为运行时产物，已加入 `.gitignore`
 - 配置文件 `config/*.yaml`（非 template）含本地环境信息，已加入 `.gitignore`

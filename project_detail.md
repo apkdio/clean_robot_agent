@@ -127,6 +127,7 @@ clean_robot_agent/
 │   ├── knowledge_example/       # 知识库格式模板示例
 │   ├── datasets/                # 意图分类训练数据集
 │   ├── context/                 # 对话上下文 jsonl（按会话分文件，gitignore）
+│   ├── context_meta/            # 会话元数据 meta json（标题/推荐结果，gitignore）
 │   ├── bgm_model/               # 训练好的意图分类头（gitignore）
 │   ├── pkl/                     # BM25 pickle 缓存（gitignore）
 │   ├── state/                   # 热更新指纹快照（gitignore）
@@ -459,7 +460,7 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 
 ### 4.14 tools/context_store.py —— 会话上下文（持久化 + 历史拼接）
 
-按 session_id 把对话持久化到 `data/context/<session_id>.jsonl`（每行一条 JSON 消息），会话元数据（固定标题）保存在 `data/context/<session_id>.meta.json`，内存缓存保留最近 6 轮（12 条，供快速读取）。
+按 session_id 把对话持久化到 `data/context/<session_id>.jsonl`（每行一条 JSON 消息），会话元数据（固定标题 + 上一轮推荐结果）单独放在 `data/context_meta/<session_id>.meta.json`（与对话流分目录，避免混杂），内存缓存保留最近 6 轮（12 条，供快速读取）。
 
 | 函数 | 职责 |
 |------|------|
@@ -480,6 +481,7 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 - 文件全量保留 + 内存只留 6 轮：文件是持久层（重启可恢复），内存是读热层（避免频繁读文件）
 - 推荐结果由 SOP 执行时写入 meta 的 `last_models` 字段（`set_last_models`），追问"更便宜"从 meta 读（`get_last_models`），跨重启有效；assistant 消息由 webapp/app.py 在流式完成后写入
 - 写文件追加而非覆写，天然支持多轮累积
+- 并发守护：webapp 用会话级锁 `_busy_sessions`（回答未完成时同会话新请求返回 409），前端用 `isStreaming` 标志（按钮 + enter 双保险），防止回答未完成时并发请求导致消息乱序
 
 ---
 
@@ -612,7 +614,7 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 **背景**：多会话列表过去只用首句摘要且随着最后一条消息滚动变化，且无法删除无用历史对话，无法查看更新时间。
 
 **原因**：
-- **LLM 语义标题**：新会话完成第一轮回答后，调用 `qwen2.5:3b` 基于用户提问与回答前 120 字生成 6~10 字的精简会话标题（如「选购推荐」「故障排查」），持久化存储到 `data/context/<session_id>.meta.json` 中，固定不变。失败时安全降级到首条提问截断。
+- **LLM 语义标题**：新会话完成第一轮回答后，调用 `qwen2.5:3b` 基于用户提问与回答前 120 字生成 6~10 字的精简会话标题（如「选购推荐」「故障排查」），持久化存储到 `data/context_meta/<session_id>.meta.json` 中，固定不变。失败时安全降级到首条提问截断。
 - **最近更新时间**：利用每条消息追加时的 timestamp，在列表返回 `updated_at`，前端以人性化相对时间展示（今天 HH:mm、昨天、日期）。
 - **会话物理删除与防护**：后端新增 `DELETE /api/sessions/<sid>` 彻底移除对应的 `.jsonl` 与 `.meta.json` 并清理内存缓存；前端添加二次确认防误删，删除当前会话时自动新建。
 
