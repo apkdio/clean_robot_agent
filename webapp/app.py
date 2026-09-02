@@ -21,7 +21,7 @@ for _p in (_PROJECT_ROOT, _TOOLS_DIR):
         sys.path.insert(0, _p)
 
 from tools.agent import ask_stream
-from tools.config_tool import load_agent_config, load_rag_config
+from tools.config_tool import load_config
 from tools.context_store import ensure_session_id, list_sessions
 from tools.log_tool import get_logger
 from tools.vector_store import (
@@ -39,7 +39,7 @@ app = Flask(
     static_folder=os.path.join(os.path.dirname(__file__), "static"),
 )
 
-_rag_cfg = load_rag_config()
+_rag_cfg = load_config("rag")
 _upload_dir = os.path.join(str(_PROJECT_ROOT), "temp", "uploads")
 os.makedirs(_upload_dir, exist_ok=True)
 
@@ -215,8 +215,8 @@ def ingest_batch():
 def agent_config():
     """返回当前的 agent 与检索配置，用于前端标识。"""
     try:
-        agent_cfg = load_agent_config()
-        rag_cfg = load_rag_config()
+        agent_cfg = load_config("agent")
+        rag_cfg = load_config("rag")
         behavior = agent_cfg.get("behavior", {})
         retrieval = rag_cfg.get("retrieval", {})
         return jsonify({

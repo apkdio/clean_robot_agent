@@ -145,6 +145,7 @@ def _run(session_id: str, user_input: str):
         if step["type"] == "ask":
             # 有用户输入 → 尝试提取槽位；否则 → 问问题
             if user_input is None:
+                logger.info("[SOP] %s ask slot=%s", sop["id"], step.get("slot"))
                 return step["ask"], False
             value = step["extract"](user_input, session["slots"])
             if value is None:
@@ -155,9 +156,11 @@ def _run(session_id: str, user_input: str):
                     session["step"] += 1
                     session["retry_count"] = 0
                     user_input = None
+                    logger.warning("[SOP] %s slot %s abandoned after retries", sop["id"], step["slot"])
                     continue
                 # 首轮提取失败（retry_count==1）→ 用 ask 话术（还没问过用户）
                 # 后续提取失败（retry_count≥2）→ 用 retry 话术（重问）
+                logger.info("[SOP] %s slot %s extract failed (retry=%d)", sop["id"], step["slot"], session["retry_count"])
                 if session["retry_count"] == 1:
                     return step["ask"], False
                 return step.get("retry", step["ask"]), False
@@ -166,6 +169,7 @@ def _run(session_id: str, user_input: str):
             session["step"] += 1
             session["retry_count"] = 0
             user_input = None
+            logger.info("[SOP] %s slot %s = %s", sop["id"], step["slot"], value)
             continue
 
         elif step["type"] == "action":
@@ -175,6 +179,8 @@ def _run(session_id: str, user_input: str):
             if isinstance(result, dict) and "models" in result:
                 save_recommend(session_id, result["models"])
             session["step"] += 1
+            model_cnt = len(result.get("models", [])) if isinstance(result, dict) else 0
+            logger.info("[SOP] %s action executed (%d models)", sop["id"], model_cnt)
             continue
 
         elif step["type"] == "reply":
@@ -185,10 +191,12 @@ def _run(session_id: str, user_input: str):
             except (KeyError, IndexError):
                 reply = step.get("fallback", "抱歉，出了一点小问题，请重新提问～")
             _end(session_id)
+            logger.info("[SOP] %s finished", sop["id"])
             return reply, True
 
     # 步骤走完但无 reply（异常防御），安全结束
     _end(session_id)
+    logger.warning("[SOP] %s ended without reply", sop["id"])
     return "", True
 
 
@@ -209,18 +217,18 @@ def handle_followup(session_id: str, query: str):
             and any(w in query for w in RECENT_VAGUE_WORDS)
     )
     if latest_hit or vague_recent:
-        models = _search_latest_global()[:5]
+        models = _search_global("publish_date", True, "publish_date")[:5]
         save_recommend(session_id, models)
         return _format_models(models, "最近发布的机器人有这几款：")
 
     # 全局价格极值：最贵/最便宜 → 全局按价格排序取极值（不依赖上一轮）
     if "最贵" in query or "价格最高" in query:
-        models = _search_price_global()
+        models = _search_global("price")
         if models:
             save_recommend(session_id, models[-1:])
             return _format_models(models[-1:], "目前最贵的是这一款：")
     if "最便宜" in query or "价格最低" in query:
-        models = _search_price_global()
+        models = _search_global("price")
         if models:
             save_recommend(session_id, models[:1])
             return _format_models(models[:1], "目前最便宜的是这一款：")
@@ -244,17 +252,10 @@ def _format_models(models, header: str, aspect: str = None) -> str:
     return header + "\n\n" + "\n".join(lines)
 
 
-def _search_latest_global():
-    """全局检索所有型号，按发布时间倒序。"""
+def _search_global(sort_key: str = "price", reverse: bool = False, require_field: str = "price"):
+    """全局枚举所有型号并按指定字段排序（价格升序 / 发布时间倒序等）。"""
     from tools.metadata_extractor import enumerate_models
-    models = enumerate_models({"file_name": {"$ne": "__never__"}}, require_field="publish_date")
-    models.sort(key=lambda m: m.get("publish_date") or "", reverse=True)
-    return models
-
-
-def _search_price_global():
-    """全局检索所有型号，按价格升序（供「最贵/最便宜」极值查询）。"""
-    from tools.metadata_extractor import enumerate_models
-    models = enumerate_models({"file_name": {"$ne": "__never__"}})
-    models.sort(key=lambda m: m.get("price") or 0)
+    models = enumerate_models({"file_name": {"$ne": "__never__"}}, require_field=require_field)
+    default = "" if sort_key == "publish_date" else 0
+    models.sort(key=lambda m: m.get(sort_key) or default, reverse=reverse)
     return models

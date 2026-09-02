@@ -11,7 +11,7 @@ import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from config_tool import load_agent_config
+from config_tool import load_config
 from llm_tool import stream_chat
 from log_tool import get_logger
 from prompts_tool import load_main_prompts
@@ -19,7 +19,7 @@ from config.word_dict_config import EMOTION_STRONG, EMOTION_MILD, EXIT_WORDS
 
 logger = get_logger(name="agent")
 
-_agent_cfg = load_agent_config()
+_agent_cfg = load_config("agent")
 _llm_cfg = _agent_cfg.get("llm", {})
 _behavior = _agent_cfg.get("behavior", {})
 

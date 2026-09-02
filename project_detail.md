@@ -98,7 +98,7 @@
   → 日期工具调用（function_tools/date_tool）
       检测时间表达（"最近半年"/"2025年三月"）→ 规则解析或 LLM function calling → 日期范围
   → metadata_extractor.build_filter(query)
-      检测预算约束（"1000以内" → {"min_price": {"$lte": 1000}}）
+      检测预算约束（"1000以内"→上限 / "1000以上"→下限 / "2000左右"→±500 区间 / "1000-2000"→区间）
       合并价格 + 日期 filter（$and）
       ├─ 有结构化约束 → search_by_filter 精确枚举 → 代码拼接列表直出
       └─ 无约束 → hybrid_retriever.search(query)
@@ -270,7 +270,7 @@ def search(query, filter=None):
 四个职责：
 
 1. **入库时提取**（`extract_price_metadata`）：从 chunk 文本扫描"参考价：XXX"，写入 `min_price`/`max_price`
-2. **检索时解析**（`build_filter` + `resolve_budget_filter` 统一入口）：从 query 提取预算约束（"1000以内" → `{"min_price": {"$lte": 1000}}`），支持中文数字（"一千"→1000）；规则 miss 且含预算 hint 时由 `resolve_budget_filter` 走 3b function calling 兜底
+2. **检索时解析**（`extract_price_constraint` + `build_filter` + `resolve_budget_filter` 统一入口）：`extract_price_constraint` 从 query 提取 (min_price, max_price)——"1000以内"→上限、"1000以上"→下限、"2000左右"→±500、"1000-2000"→区间，支持中文数字；规则 miss 且含预算 hint 时由 `resolve_budget_filter` 走 3b function calling 兜底
 3. **直出时格式化**（`extract_model_info` + `format_model_line`）：从型号 chunk 提取型号名/系列/吸力/导航/避障，拼成统一格式；`format_model_line(aspect)` 支持按属性维度只输出对应字段
 4. **系列提取与枚举**（`extract_series` + `enumerate_models_by_series`）：从 query 规则提取系列名（`SERIES_LIST` 四系列子串匹配），按 `series` 字段枚举系列型号——与日期/预算同级的结构化维度，纯规则、0 延迟
 5. **型号枚举缓存**（`get_all_models`）：全量型号 info 列表 pickle 缓存到 `data/pkl/models.pkl`（`chunk_count` 做 fingerprint），`enumerate_models` 基于缓存做内存过滤（min_price/max_price/publish_date 映射），不再每次读 Chroma 全量 + 正则提取
@@ -402,7 +402,7 @@ query 命中 MODEL_QUERY_WORDS（强触发）
 | 文件 | 职责 |
 |------|------|
 | `base.py` | 会话状态（内存，按 session_id 隔离）+ 执行器：`start_sop`/`continue_sop`/`end_sop`/`match_sop`；知识域定义 + 追问处理（含开场 intro、价格极值）|
-| `purchase.py` | 选购推荐 SOP：收集预算（上限/区间）+ 宠物 → 结构化推荐 |
+| `purchase.py` | 选购推荐 SOP：收集预算（上限/下限/区间/浮动）+ 宠物 → 结构化推荐 |
 | `repair.py` | 故障排查 SOP：问现象 → 检索（定向故障排除域）→ LLM 生成排查步骤 |
 
 **步骤类型**（三步式状态机）：
@@ -417,7 +417,7 @@ query 命中 MODEL_QUERY_WORDS（强触发）
 
 ```
 触发：robot/unknown 意图 + 命中 trigger + 尚未提供预算
-  → ask_budget  问预算（支持"1000以内"上限 / "1000-2000"区间）
+  → ask_budget  问预算（支持"1000以内"上限 / "1000以上"下限 / "1000-2000"区间 / "2000左右"±500）
   → ask_pet     问是否有宠物
   → do_search   按预算检索（复用 search_by_filter + format_model_line）
   → reply       输出推荐列表
@@ -679,7 +679,7 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 ## 八、开发约定
 
 1. **日志用英文**：logger 消息统一英文（历史中文已清理）
-2. **日志分级**：召回详情用 DEBUG，汇总数用 INFO；控制台彩色（INFO 白/WARN 黄/ERROR 红）
+2. **日志分级与布局**：召回详情用 DEBUG，汇总数用 INFO；控制台彩色（INFO 白/WARN 黄/ERROR 红）；文件日志按 `logs/<模块>/<YYYY-MM-DD>/<模块>.log` 分目录（文件名不带日期）
 3. **配置模板化**：敏感/本地配置写 `*_template.yaml` 提交，实际配置 gitignore
 4. **导入风格**：tools 内部用直接导入（`from log_tool import`），webapp 用包导入（`from tools.xxx import`），两者都靠 sys.path 同时包含项目根和 tools 目录
 5. **知识库格式**：编号条目（`数字. ` + `**标题**` + `- 参数`），详见 `data/knowledge_example/格式模板.txt`

@@ -77,7 +77,10 @@ def get_logger(name: str = "agent",
     if file_level is None:
         file_level = _DEFAULT_FILE_LEVEL
     if not log_file:
-        log_file = os.path.join(log_path, f"{name}-{datetime.now().strftime('%Y%m%d')}.log")
+        # 按 /模块/日期/ 分目录：logs/<name>/<YYYY-MM-DD>/<name>.log
+        date_dir = os.path.join(log_path, name, datetime.now().strftime('%Y-%m-%d'))
+        os.makedirs(date_dir, exist_ok=True)
+        log_file = os.path.join(date_dir, f"{name}.log")
     file_handler = logging.handlers.RotatingFileHandler(
         log_file, mode="a", encoding="utf-8",
         maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUP_COUNT,

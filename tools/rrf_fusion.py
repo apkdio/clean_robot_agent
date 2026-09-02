@@ -18,12 +18,12 @@ from typing import Dict, List, Tuple
 
 from langchain_core.documents import Document
 
-from config_tool import load_rag_config
+from config_tool import load_config
 from log_tool import get_logger
 
 logger = get_logger(name="rrf_fusion")
 
-_rag_cfg = load_rag_config()
+_rag_cfg = load_config("rag")
 _rrf_cfg = _rag_cfg.get("rrf", {})
 _retrieval_cfg = _rag_cfg.get("retrieval", {})
 

@@ -21,14 +21,14 @@ from typing import Dict, List, Tuple
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
 
-from config_tool import load_chroma_config, load_rag_config
+from config_tool import load_config
 from log_tool import get_logger
 from path_tool import get_abs_path
 
 logger = get_logger(name="sparse_retriever")
 
-_rag_cfg = load_rag_config()
-_chroma_cfg = load_chroma_config()
+_rag_cfg = load_config("rag")
+_chroma_cfg = load_config("chroma")
 _retrieval_cfg = _rag_cfg.get("retrieval", {})
 _sparse_cfg = _rag_cfg.get("sparse", {})
 

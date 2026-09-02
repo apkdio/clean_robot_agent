@@ -2,28 +2,18 @@
 
 import re
 
-from sops.base import register
+from sops.base import register, is_consulting, is_aftersales, is_brand
 from config.word_dict_config import PURCHASE_TRIGGER
 from tools.metadata_extractor import (
-    extract_budget,
-    extract_price_range,
+    extract_price_constraint,
     enumerate_models,
     format_model_line,
 )
 
 
 def _extract_budget(text: str, slots: dict):
-    """提取预算槽位，支持区间（1000-2000）和单一上限（1000以内）。
-
-    返回 (min_price, max_price) 元组，单一上限时 min_price 为 None。
-    """
-    rng = extract_price_range(text)
-    if rng:
-        return rng
-    budget = extract_budget(text)
-    if budget is not None:
-        return (None, budget)
-    return None
+    """提取预算槽位，返回 (min_price, max_price) 元组（区间/上限/下限/浮动）。"""
+    return extract_price_constraint(text)
 
 
 def _extract_has_pet(text: str, slots: dict):
@@ -60,31 +50,13 @@ def _search(slots: dict):
     return {"count": len(models), "list": "\n".join(lines), "models": models}
 
 
-def _guard_is_consulting(query: str) -> bool:
-    """选购咨询（"选购要注意什么"）→ 不触发选购 SOP，走 RAG。"""
-    from sops.base import is_consulting
-    return is_consulting(query)
-
-
-def _guard_aftersales(query: str) -> bool:
-    """售后咨询（"有没有保修/售后"）→ 不触发选购 SOP，走 RAG。"""
-    from sops.base import is_aftersales
-    return is_aftersales(query)
-
-
-def _guard_brand(query: str) -> bool:
-    """品牌咨询（"为什么买/优势"）→ 不触发选购 SOP，走 RAG 品牌介绍。"""
-    from sops.base import is_brand
-    return is_brand(query)
-
-
 PURCHASE_SOP = {
     "id": "purchase",
     "trigger": PURCHASE_TRIGGER,
     "guards": [
-        {"check": _guard_is_consulting},
-        {"check": _guard_aftersales},
-        {"check": _guard_brand},
+        {"check": is_consulting},
+        {"check": is_aftersales},
+        {"check": is_brand},
     ],
     "intro": "好的，我来帮您推荐一款合适的扫地机器人～",
     "steps": [

@@ -21,7 +21,7 @@ logger = get_logger(name="metadata_extractor")
 # 预算提示特征（决定是否走 LLM 预算兜底）：货币单位/预算词，或"数字 + 范围词"
 _BUDGET_HINT_RE = re.compile(
     r"(?:元|块钱?|预算|价位|多少钱)"
-    r"|(?:\d+|[一二两三四五六七八九十百千万]+)\s*(?:以内|以下|左右|上下|出头|到|至|多)"
+    r"|(?:\d+|[一二两三四五六七八九十百千万]+)\s*(?:以内|以下|以上|起|左右|上下|出头|到|至|多)"
 )
 
 # 预算提取兜底用的小模型（3b 更快；精度不够可切回 "qwen2.5:7b"）
@@ -336,37 +336,52 @@ def _cn_to_int(s: str) -> Optional[int]:
     return total + section + number
 
 
-def extract_budget(query: str) -> Optional[int]:
-    """从 query 提取价格上限，如 '1000以内' → 1000。
+def extract_price_constraint(query: str) -> Optional[tuple]:
+    """从 query 提取价格约束，返回 (min_price, max_price) 元组。
 
     支持：
-      - 数字："1000以内" / "1000元以内" / "1000以下" / "1000块左右"（≈1000）
-      - 中文："一千以内" / "两千以下"
+      - 区间："1000-2000" / "1000到2000" → (1000, 2000)
+      - 上限："1000以内" / "1000以下" → (None, 1000)
+      - 下限："1000以上" / "1000起" → (1000, None)
+      - 浮动："1000左右" → (500, 1500)（预算 ±500）
     未检测到预算约束时返回 None。
     """
-    # 阿拉伯数字
-    m = re.search(r"(\d+)\s*(?:元|块|块钱)?\s*(?:以内|以下|之内|之内)", query)
-    if m:
-        return int(m.group(1))
-    m = re.search(r"(\d+)\s*(?:元|块|块钱)?\s*左右", query)
-    if m:
-        return int(m.group(1))
-
-    # 中文数字 + 以内/以下
-    m = re.search(r"([零一二两三四五六七八九十百千万]+)\s*(?:以内|以下|之内)", query)
-    if m:
-        return _cn_to_int(m.group(1))
-    m = re.search(r"([零一二两三四五六七八九十百千万]+)\s*(?:左右)", query)
-    if m:
-        return _cn_to_int(m.group(1))
-    return None
-
-
-def extract_price_range(query: str) -> Optional[tuple]:
-    """提取显式价格区间 '1000到2000' / '1000-2000' → (1000, 2000)。"""
+    # 1. 显式区间
     m = _PRICE_RANGE_PATTERN.search(query)
     if m:
-        return (int(m.group(1)), int(m.group(2)))
+        return (int(float(m.group(1))), int(float(m.group(2))))
+
+    # 2. 上限（以内/以下）
+    m = re.search(r"(\d+)\s*(?:元|块|块钱)?\s*(?:以内|以下|之内)", query)
+    if m:
+        return (None, int(m.group(1)))
+    m = re.search(r"([零一二两三四五六七八九十百千万]+)\s*(?:以内|以下|之内)", query)
+    if m:
+        v = _cn_to_int(m.group(1))
+        if v is not None:
+            return (None, v)
+
+    # 3. 下限（以上/起）
+    m = re.search(r"(\d+)\s*(?:元|块|块钱)?\s*(?:以上|起)", query)
+    if m:
+        return (int(m.group(1)), None)
+    m = re.search(r"([零一二两三四五六七八九十百千万]+)\s*(?:以上|起)", query)
+    if m:
+        v = _cn_to_int(m.group(1))
+        if v is not None:
+            return (v, None)
+
+    # 4. 浮动（左右 ±500）
+    m = re.search(r"(\d+)\s*(?:元|块|块钱)?\s*左右", query)
+    if m:
+        v = int(m.group(1))
+        return (max(0, v - 500), v + 500)
+    m = re.search(r"([零一二两三四五六七八九十百千万]+)\s*左右", query)
+    if m:
+        v = _cn_to_int(m.group(1))
+        if v is not None:
+            return (max(0, v - 500), v + 500)
+
     return None
 
 
@@ -375,19 +390,18 @@ def build_filter(query: str) -> Optional[Dict]:
 
     未检测到结构化约束（普通 RAG 查询）时返回 None。
     """
-    # 显式区间优先于单一上限
-    rng = extract_price_range(query)
-    if rng:
-        return {
-            "$and": [
-                {"min_price": {"$lte": rng[1]}},
-                {"max_price": {"$gte": rng[0]}},
-            ]
-        }
-    budget = extract_budget(query)
-    if budget is not None:
-        return {"min_price": {"$lte": budget}}
-    return None
+    c = extract_price_constraint(query)
+    if c is None:
+        return None
+    min_price, max_price = c
+    conditions = []
+    if max_price is not None:
+        conditions.append({"min_price": {"$lte": max_price}})
+    if min_price is not None:
+        conditions.append({"max_price": {"$gte": min_price}})
+    if len(conditions) == 1:
+        return conditions[0]
+    return {"$and": conditions}
 
 
 def resolve_budget_filter(query: str) -> Optional[Dict]:

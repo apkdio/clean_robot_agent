@@ -1,6 +1,6 @@
 """故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤。"""
 
-from sops.base import register
+from sops.base import register, is_aftersales
 from config.word_dict_config import SYMPTOM_MAP, REPAIR_TRIGGER
 
 # 故障现象兜底用的小模型（3b 更快；精度不够可切回 "qwen2.5:7b"）
@@ -75,17 +75,11 @@ def _search_and_generate(slots: dict):
     return {"answer": (resp.content or "").strip()}
 
 
-def _guard_aftersales(query: str) -> bool:
-    """售后咨询（报修/更换零件）→ 不触发维修 SOP，走 RAG 售后域。"""
-    from sops.base import is_aftersales
-    return is_aftersales(query)
-
-
 REPAIR_SOP = {
     "id": "repair",
     "trigger": REPAIR_TRIGGER,
     "guards": [
-        {"check": _guard_aftersales},
+        {"check": is_aftersales},
     ],
     "intro": "我来帮您排查一下故障～",
     "steps": [

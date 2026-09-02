@@ -91,7 +91,7 @@ clean_robot_agent/
 | `hot_ingest.py` | 知识库热更新：定时扫描 + 增量入库 |
 | `file_tools.py` | 文档多策略解析（txt/pdf/csv/docx） |
 | `llm_tool.py` | LLM / embedding 工厂（含 function calling） |
-| `log_tool.py` | 日志（控制台彩色 + 文件） |
+| `log_tool.py` | 日志（控制台彩色 + 文件，按 `logs/<模块>/<日期>/` 分目录） |
 | `config_tool.py` / `path_tool.py` / `prompts_tool.py` | 配置 / 路径 / Prompt 加载 |
 | `context_store.py` | 会话上下文：按 session_id 持久化最近 6 轮对话（jsonl）+ meta 元数据（LLM 标题）+ 会话增删查改 |
 
@@ -109,7 +109,7 @@ clean_robot_agent/
 | 模块 | 职责 |
 |------|------|
 | `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 知识域定义（DOMAIN_MAP）+ 追问处理（比较新/更便宜）+ 最近发布查询 |
-| `purchase.py` | 选购推荐 SOP：收集预算（上限/区间）+ 宠物 → 结构化推荐 |
+| `purchase.py` | 选购推荐 SOP：收集预算（上限/下限/区间/浮动）+ 宠物 → 结构化推荐 |
 | `repair.py` | 故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤 |
 
 ## 快速开始

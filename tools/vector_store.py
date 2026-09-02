@@ -10,7 +10,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from config_tool import load_chroma_config, load_rag_config
+from config_tool import load_config
 from file_tools import extract_file, get_file_md5_hex
 from llm_tool import get_embedding_model
 from log_tool import get_logger
@@ -18,8 +18,8 @@ from path_tool import get_abs_path
 
 logger = get_logger(name="vector_store")
 
-_chroma_cfg = load_chroma_config()
-_rag_cfg = load_rag_config()
+_chroma_cfg = load_config("chroma")
+_rag_cfg = load_config("rag")
 
 
 def _get_splitter() -> RecursiveCharacterTextSplitter:

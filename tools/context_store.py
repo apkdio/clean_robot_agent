@@ -36,17 +36,21 @@ def _meta_path(session_id: str) -> str:
     return os.path.join(_CONTEXT_META_DATA_DIR, f"{session_id}.meta.json")
 
 
+def _get_meta_field(session_id: str, field: str):
+    """读取会话 meta 文件里的某个字段。"""
+    fp = _meta_path(session_id)
+    if not os.path.exists(fp):
+        return None
+    try:
+        with open(fp, encoding="utf-8") as f:
+            return json.load(f).get(field)
+    except Exception:
+        return None
+
+
 def get_session_title(session_id: str) -> str | None:
     """获取会话标题（若已生成）。"""
-    fp = _meta_path(session_id)
-    if os.path.exists(fp):
-        try:
-            with open(fp, encoding="utf-8") as f:
-                data = json.load(f)
-                return data.get("title")
-        except Exception:
-            return None
-    return None
+    return _get_meta_field(session_id, "title")
 
 
 def _update_meta(session_id: str, **fields) -> dict:
@@ -175,14 +179,7 @@ def get_recent(session_id: str, n: int = None) -> list:
 
 def get_last_models(session_id: str):
     """读取上一轮推荐结果（从 meta 的 last_models 字段，跨重启有效）。"""
-    fp = _meta_path(session_id)
-    if not os.path.exists(fp):
-        return None
-    try:
-        with open(fp, encoding="utf-8") as f:
-            return json.load(f).get("last_models")
-    except Exception:
-        return None
+    return _get_meta_field(session_id, "last_models")
 
 
 _UUID_RE = re.compile(
