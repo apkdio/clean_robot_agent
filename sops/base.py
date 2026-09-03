@@ -96,13 +96,15 @@ def _with_exit_hint(intro: str) -> str:
     return intro + "\n（随时可回复「0」退出本环节）"
 
 
-def start_sop(session_id: str, sop_id: str, query: str):
+def start_sop(session_id: str, sop_id: str, query: str, **extra):
     """进入一个 SOP。返回 (reply, done)。
 
     首轮先尝试用触发 query 提取第一个槽位（预填用户已给的信息），
     提取失败再问第一个问题。开场提示（intro）可选，有则先输出。
+    extra 会预填进 slots（如前端定位经纬度 lng/lat）。
     """
     _start(session_id, sop_id)
+    _sessions[session_id]["slots"].update(extra)
     logger.info(f"[SOP] Start SOP: {sop_id}")
     reply, done = _run(session_id, query)
     intro = SOPS[sop_id].get("intro")
@@ -133,6 +135,11 @@ def match_sop(query: str):
     return None
 
 
+def _resolve_prompt(prompt, slots: dict):
+    """ask/retry 话术支持 callable（按槽位动态生成，如列出重名候选）。"""
+    return prompt(slots) if callable(prompt) else prompt
+
+
 def _run(session_id: str, user_input: str):
     """执行/推进指定会话的 SOP。返回 (reply_text, done)。"""
     session = _sessions[session_id]
@@ -142,11 +149,17 @@ def _run(session_id: str, user_input: str):
     while session["step"] < len(steps):
         step = steps[session["step"]]
 
+        # 条件跳过：skip(slots) 为 True 时跳过该步骤（如重名城市唯一时无需消歧）
+        if step.get("skip") and step["skip"](session["slots"]):
+            session["step"] += 1
+            logger.info("[SOP] %s skip step=%s", sop["id"], step.get("id") or step.get("slot"))
+            continue
+
         if step["type"] == "ask":
             # 有用户输入 → 尝试提取槽位；否则 → 问问题
             if user_input is None:
                 logger.info("[SOP] %s ask slot=%s", sop["id"], step.get("slot"))
-                return step["ask"], False
+                return _resolve_prompt(step["ask"], session["slots"]), False
             value = step["extract"](user_input, session["slots"])
             if value is None:
                 # 提取失败：累加重试次数，超过上限则放弃该槽位（记 None 跳过）
@@ -162,8 +175,8 @@ def _run(session_id: str, user_input: str):
                 # 后续提取失败（retry_count≥2）→ 用 retry 话术（重问）
                 logger.info("[SOP] %s slot %s extract failed (retry=%d)", sop["id"], step["slot"], session["retry_count"])
                 if session["retry_count"] == 1:
-                    return step["ask"], False
-                return step.get("retry", step["ask"]), False
+                    return _resolve_prompt(step["ask"], session["slots"]), False
+                return _resolve_prompt(step.get("retry", step["ask"]), session["slots"]), False
             # 提取成功，重置重试计数
             session["slots"][step["slot"]] = value
             session["step"] += 1

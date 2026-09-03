@@ -9,6 +9,7 @@
 - **结构化查询**：识别"预算 1000 以内""净白 S 系列"等约束，通过 Chroma metadata 过滤精确枚举预算内/系列内产品；支持"云顶 X2 多少钱"等型号属性精准查询
 - **工具调用**：LLM function calling，内置日期/预算/故障分类/型号提取工具，支持"最近半年""一千来块"等口语化结构化提取
 - **多轮 SOP 引导**：选购推荐、故障排查等场景按标准流程多轮引导，进入时给开场提示，支持追问（比较新/更便宜/最贵）与最近发布查询
+- **售后网点定位**：识别"最近的售后网点"等查询，通过 geonamescache 离线解析城市经纬度 + Haversine 距离排序返回最近网点，重名城市（如"洛阳"）多轮消歧
 - **知识库分域**：按场景（品牌/选购/型号/故障/售后/维护 6 域）定向检索对应知识域，避免跨域词带偏召回
 - **品牌化**：全面转型"不染一尘"品牌专属客服；品牌咨询、售后咨询走 RAG 直答，安全危险现象前置拦截
 - **情绪安抚**：识别负面情绪（投诉/烦躁等）前置安抚，只安抚不拦截
@@ -44,6 +45,7 @@ clean_robot_agent/
 │   ├── knowledge_example/       # 知识库格式模板示例
 │   ├── datasets/                # 意图分类训练数据集（JSONL）
 │   ├── context/                 # 对话上下文持久化（jsonl，按会话分文件）
+│   ├── service_point/           # 售后网点数据（网点清单 + 城市中心点坐标）
 │   ├── bgm_model/               # 训练好的分类头模型
 │   ├── pkl/                     # BM25 pickle 缓存
 │   ├── state/                   # 热更新指纹快照
@@ -54,11 +56,13 @@ clean_robot_agent/
 │   ├── date_tool.py             # 日期计算工具（绝对/相对日期 → 日期范围）
 │   ├── budget_tool.py           # 预算提取工具（规则 miss 时 function calling 兜底）
 │   ├── symptom_tool.py          # 故障现象分类工具（规则 miss 时 function calling 兜底）
-│   └── model_tool.py            # 型号提取工具（7b 提取型号名，精准检索型号详情）
+│   ├── model_tool.py            # 型号提取工具（7b 提取型号名，精准检索型号详情）
+│   └── service_point_tool.py    # 售后网点工具（geonamescache 离线解析城市 + Haversine 距离）
 ├── sops/                        # SOP 标准操作流程（多轮引导）
 │   ├── base.py                  # 会话状态（按 session_id 隔离）+ 执行器 + 知识域定义
 │   ├── purchase.py              # 选购推荐 SOP
-│   └── repair.py                # 故障排查 SOP
+│   ├── repair.py                # 故障排查 SOP
+│   └── service_point.py         # 售后网点查询 SOP（问城市 → 重名消歧 → 距离排序）
 ├── test_scripts/                # 测试脚本（意图分类 / SOP / 分域召回 / 结构化维度）
 │   ├── test_cases.py            # 意图分类 + 端到端泛化测试
 │   ├── test_sop.py              # SOP 状态机测试
@@ -103,14 +107,16 @@ clean_robot_agent/
 | `budget_tool.py` | 预算提取工具：规则 miss 时用 3b function calling 提取预算上限（"一千来块"等） |
 | `symptom_tool.py` | 故障分类工具：规则 miss 时用 3b function calling 归类口语故障（"奇怪的声音"等） |
 | `model_tool.py` | 型号提取工具：7b function calling 提取型号名（含上下文指代），按型号名精准检索详情；支持属性维度精准查询 |
+| `service_point_tool.py` | 售后网点工具：geonamescache 离线解析城市经纬度（中文名/重名候选）+ Haversine 距离排序 + 网点格式化 |
 
 ## SOP 模块（sops/）
 
 | 模块 | 职责 |
 |------|------|
-| `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 知识域定义（DOMAIN_MAP）+ 追问处理（比较新/更便宜）+ 最近发布查询 |
+| `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机，支持 skip 条件跳过 + callable 动态话术 + 外部上下文预填）+ 知识域定义 + 追问处理 |
 | `purchase.py` | 选购推荐 SOP：收集预算（上限/下限/区间/浮动）+ 宠物 → 结构化推荐 |
 | `repair.py` | 故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤 |
+| `service_point.py` | 售后网点查询 SOP：问城市 → 重名城市消歧 → Haversine 距离排序返回最近网点 |
 
 ## 快速开始
 
@@ -215,6 +221,7 @@ python intent_classifier_training/train_intent_classifier.py
           ├─ 选购意图且无预算 → 进入选购 SOP 多轮引导
           ├─ 含日期 → 日期工具（规则解析 / LLM function calling）→ 日期范围
           ├─ 含预算 → metadata 过滤 → 结构化直出型号列表
+          ├─ 网点查询 → 售后网点 SOP（问城市 → 重名消歧 → 距离排序）
           └─ 其他 → 知识域路由 → 双路召回（dense+sparse→RRF）→ LLM 生成
   → 流式输出（SSE）
 ```

@@ -121,6 +121,8 @@ def chat_stream():
     if not query:
         return jsonify({"status": "error", "message": "Empty query."}), 400
     session_id = ensure_session_id(data.get("session_id", ""))
+    lng = data.get("lng")
+    lat = data.get("lat")
 
     # 会话级锁：同一会话回答未完成时拒绝新请求（前端按钮 + enter 双保险）
     if session_id in _busy_sessions:
@@ -136,7 +138,7 @@ def chat_stream():
             from sops.base import get_last_recommend
             parts = []
             try:
-                for chunk in ask_stream(query, session_id):
+                for chunk in ask_stream(query, session_id, lng=lng, lat=lat):
                     parts.append(chunk)
                     # JSON 编码，避免 chunk 内的换行符破坏 SSE 帧格式
                     yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"

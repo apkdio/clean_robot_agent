@@ -359,6 +359,26 @@
     });
   }
 
+  // ── 定位（查“最近网点”用）──
+  // 首次调用弹授权，之后缓存；拒绝/失败静默降级（后端用城市提取兜底）
+  let geoCache = null;
+  let geoTried = false;
+  function getGeo() {
+    return new Promise((resolve) => {
+      if (geoTried) return resolve(geoCache);
+      if (!navigator.geolocation) { geoTried = true; return resolve(null); }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          geoCache = { lng: pos.coords.longitude, lat: pos.coords.latitude };
+          geoTried = true;
+          resolve(geoCache);
+        },
+        () => { geoTried = true; resolve(null); },
+        { timeout: 5000, maximumAge: 600000 }
+      );
+    });
+  }
+
   // ── Session ID ──
   // 页面加载时用 UUID 生成一次（刷新即新会话）；切换对话时更新
   let sessionId = genUUID();
@@ -629,10 +649,17 @@
     let streamedText = '';
 
     try {
+      // 查网点时尝试获取定位（授权一次后缓存），失败静默降级到城市提取
+      const needGeo = /网点|门店|服务点|维修点|售后点|授权店|服务站/.test(query);
+      let lng = null, lat = null;
+      if (needGeo) {
+        const geo = await getGeo();
+        if (geo) { lng = geo.lng; lat = geo.lat; }
+      }
       const r = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, session_id: sessionId })
+        body: JSON.stringify({ query, session_id: sessionId, lng, lat })
       });
 
       const reader = r.body.getReader();

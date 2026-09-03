@@ -103,7 +103,7 @@ def _route_domain(query: str):
 _pending_exits = {}
 
 # SOP 中文名（用于退出提醒）
-_SOP_NAMES = {"purchase": "选购推荐", "repair": "故障排查"}
+_SOP_NAMES = {"purchase": "选购推荐", "repair": "故障排查", "service_point": "售后网点查询"}
 
 
 def _sop_name(sop_id: str) -> str:
@@ -259,7 +259,7 @@ def _resolve_series_query(query: str):
     return None
 
 
-def ask_stream(query: str, session_id: str = "default"):
+def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     """流式问答入口 —— 经本地分类头做意图路由，支持多轮 SOP 引导。
 
     other → 礼貌拒答；casual → 闲聊；
@@ -323,6 +323,7 @@ def ask_stream(query: str, session_id: str = "default"):
             sop_name = _sop_name(sop_id)
             end_sop(session_id)
             yield f"好的，已退出「{sop_name}」环节～"
+            return
 
         # 状态4：正常继续 SOP
         else:
@@ -362,7 +363,7 @@ def ask_stream(query: str, session_id: str = "default"):
     if intent in ("robot", "unknown"):
         sop_id = match_sop(query)
         if sop_id:
-            reply, _done = start_sop(session_id, sop_id, query)
+            reply, _done = start_sop(session_id, sop_id, query, lng=lng, lat=lat)
             if reply:
                 yield reply
             return
@@ -395,7 +396,12 @@ def ask_stream(query: str, session_id: str = "default"):
     metadata_filter = resolve_budget_filter(query)
 
     # 解析日期表达（"最近半年"/"2025年三月"）→ 日期过滤
-    date_filter = _resolve_date_filter(query)
+    # 品牌事件/新闻类（"2026年经历了什么""有什么大事"）问的是事件而非产品发布时间，跳过
+    from config.word_dict_config import BRAND_EVENT_WORDS
+    if any(w in query for w in BRAND_EVENT_WORDS):
+        date_filter = None
+    else:
+        date_filter = _resolve_date_filter(query)
     filter_kind = "budget" if metadata_filter is not None else ""
     if metadata_filter is not None and date_filter is not None:
         metadata_filter = {"$and": [metadata_filter, date_filter]}
