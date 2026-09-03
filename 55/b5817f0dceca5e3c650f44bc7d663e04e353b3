@@ -1,0 +1,53 @@
+sops/base.py
+  s_40681318f5a20b::t_6a0810196035c6 99,104,107,138-142,152-157,162,178-179
+sops/__init__.py
+  s_40681318f5a20b::t_5fd969e8c1ec5f 21
+project_detail.md
+  s_40681318f5a20b::t_2244079738db6d 673-678
+  s_40681318f5a20b::t_a2d6f98f9015df 407,436-455,662-671
+requirements.txt
+  s_40681318f5a20b::t_2d1df118db0ea6 8
+function_tools/service_point_tool.py
+  h_26b9a38f4942dd 26-27,68,76,193
+  s_40681318f5a20b::t_10b6ed85226660 1-25,28-67,69-75,77-83,135-192,194-210
+  s_40681318f5a20b::t_8cecdc2712be38 84-94,107-109,111-125,127-134
+  s_40681318f5a20b::t_5234afa00ed525 95-106,110,126
+webapp/app.py
+  s_40681318f5a20b::t_a9045e209e81e6 124-125,141
+webapp/templates/index.html
+  s_40681318f5a20b::t_c085ce7500d9bd 362-381,652-658,662
+sops/service_point.py
+  s_40681318f5a20b::t_54e1878a36d36d 1-80,82,92-118,120-163
+  s_40681318f5a20b::t_823f1b4f3b883c 81,83-91,119
+README.md
+  s_40681318f5a20b::t_8244c6a569a539 12,48,59-60,64-65,110,116,119,224
+tools/agent.py
+  s_40681318f5a20b::t_a0a3de6f075b33 399-404
+  h_26b9a38f4942dd 326
+  s_40681318f5a20b::t_2c632ac9f524fe 106,366
+  s_40681318f5a20b::t_567bc0ab0710ff 262
+config/word_dict_config.py
+  s_40681318f5a20b::t_85a2b345e72ab1 149-154
+  s_40681318f5a20b::t_6717509143e40f 142-148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "55b5817f0dceca5e3c650f44bc7d663e04e353b3",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4-Pro-discount"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
