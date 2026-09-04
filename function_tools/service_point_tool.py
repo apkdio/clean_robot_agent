@@ -1,17 +1,18 @@
 """LLM function calling 的服务网点查询工具。
 
-把用户位置（城市/经纬度）换算成最近的售后网点，按直线距离排序。
-网点数据存 data/service_points.json（demo 用随机经纬度），不进向量库——
+把用户位置（经纬度）换算成最近的售后网点，按直线距离排序。
+城市名 → 经纬度由 geonamescache 离线解析（geocode_city），网点数据存
+data/service_point/service_points.json（demo 随机经纬度），不进向量库——
 网点查询是「精确匹配 + 距离排序」，经纬度对 embedding 不友好，语义检索
 反而是浪费。
 
 对外提供：
   - SERVICE_POINT_TOOL_SCHEMA : 供 LLM 提取城市/地点名（string 参数）
   - SERVICE_POINT_TOOL_MODEL  : 提取地点用的小模型名
+  - geocode_city              : 中文城市名 → 经纬度候选列表（geonamescache）
   - haversine                 : 两个经纬度点的球面直线距离（km）
-  - search_service_points     : 按城市/经纬度检索网点（返回列表 + 来源描述）
+  - search_service_points     : 按经纬度算距离，返回最近网点
   - format_service_points     : 格式化成回复文本
-  - load_city_coords          : 城市名 → 中心点经纬度（供规则匹配城市）
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ from typing import Dict, List, Optional, Tuple
 SERVICE_POINT_TOOL_MODEL = "qwen2.5:7b"
 
 _SERVICE_POINTS_FILE = "data/service_point/service_points.json"
-_CITY_COORDS_FILE = "data/service_point/city_coords.json"
 
 
 SERVICE_POINT_TOOL_SCHEMA = {
@@ -69,16 +69,6 @@ def _load_points() -> List[Dict]:
         with open(get_abs_path(_SERVICE_POINTS_FILE), encoding="utf-8") as f:
             _points_cache = json.load(f)
     return _points_cache
-
-
-def load_city_coords() -> Dict[str, Dict]:
-    """城市名 → 中心点经纬度 {lng, lat}。"""
-    from tools.path_tool import get_abs_path
-    try:
-        with open(get_abs_path(_CITY_COORDS_FILE), encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
 
 
 _gc = None  # geonamescache 实例（模块级缓存，内部数据只加载一次）
@@ -132,59 +122,19 @@ def geocode_city(name: str) -> List[Dict]:
     return candidates
 
 
-def _match_city(location: str, points: List[Dict]) -> List[Dict]:
-    """按城市/区名过滤网点（子串匹配，兼容「浦东」命中「浦东新区」）。"""
-    loc = (location or "").strip()
-    if not loc:
-        return points
-    return [
-        p for p in points
-        if loc in (p.get("city") or "") or loc in (p.get("district") or "")
-    ]
-
-
 def search_service_points(
-    location: str = "",
     lng: Optional[float] = None,
     lat: Optional[float] = None,
     limit: int = 5,
 ) -> Tuple[List[Dict], str]:
-    """检索网点，返回 (网点列表, 来源描述)。
-
-    定位优先级：
-      1. 有经纬度（前端定位）→ 全量算距离，取最近 limit 个
-      2. 有城市/区名 → 按城市过滤，用城市中心点算大致距离排序
-      3. 都没有 → 返回全量（不排序）
-    """
+    """按经纬度算距离，返回 (最近 limit 个网点, 来源描述)。"""
     points = [dict(p) for p in _load_points()]  # 拷贝，避免污染模块缓存
-
-    if lng is not None and lat is not None:
-        for p in points:
-            p["distance_km"] = round(haversine(lat, lng, p["lat"], p["lng"]), 1)
-        points.sort(key=lambda p: p["distance_km"])
-        return points[:limit], "您当前位置"
-
-    loc = (location or "").strip()
-    if loc:
-        matched = _match_city(loc, points)
-        coords = load_city_coords()
-        # 优先找城市中心点（城市名精确命中），退而求其次看区名是否命中某城市
-        center = coords.get(loc)
-        if center is None and matched:
-            for city, c in coords.items():
-                if city in loc or any(city in p["district"] for p in matched):
-                    center = c
-                    break
-        if matched and center:
-            for p in matched:
-                p["distance_km"] = round(
-                    haversine(center["lat"], center["lng"], p["lat"], p["lng"]), 1
-                )
-            matched.sort(key=lambda p: p["distance_km"])
-            return matched[:limit], loc
-        return matched[:limit], loc
-
-    return points[:limit], ""
+    if lng is None or lat is None:
+        return points[:limit], ""
+    for p in points:
+        p["distance_km"] = round(haversine(lat, lng, p["lat"], p["lng"]), 1)
+    points.sort(key=lambda p: p["distance_km"])
+    return points[:limit], "您当前位置"
 
 
 def format_service_points(points: List[Dict], origin_desc: str = "") -> str:

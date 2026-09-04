@@ -45,7 +45,7 @@ clean_robot_agent/
 │   ├── knowledge_example/       # 知识库格式模板示例
 │   ├── datasets/                # 意图分类训练数据集（JSONL）
 │   ├── context/                 # 对话上下文持久化（jsonl，按会话分文件）
-│   ├── service_point/           # 售后网点数据（网点清单 + 城市中心点坐标）
+│   ├── service_point/           # 售后网点数据（网点清单，城市坐标由 geonamescache 提供）
 │   ├── bgm_model/               # 训练好的分类头模型
 │   ├── pkl/                     # BM25 pickle 缓存
 │   ├── state/                   # 热更新指纹快照
@@ -61,8 +61,7 @@ clean_robot_agent/
 ├── sops/                        # SOP 标准操作流程（多轮引导）
 │   ├── base.py                  # 会话状态（按 session_id 隔离）+ 执行器 + 知识域定义
 │   ├── purchase.py              # 选购推荐 SOP
-│   ├── repair.py                # 故障排查 SOP
-│   └── service_point.py         # 售后网点查询 SOP（问城市 → 重名消歧 → 距离排序）
+│   └── repair.py                # 故障排查 SOP
 ├── test_scripts/                # 测试脚本（意图分类 / SOP / 分域召回 / 结构化维度）
 │   ├── test_cases.py            # 意图分类 + 端到端泛化测试
 │   ├── test_sop.py              # SOP 状态机测试
@@ -113,10 +112,9 @@ clean_robot_agent/
 
 | 模块 | 职责 |
 |------|------|
-| `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机，支持 skip 条件跳过 + callable 动态话术 + 外部上下文预填）+ 知识域定义 + 追问处理 |
+| `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 知识域定义（DOMAIN_MAP）+ 追问处理（比较新/更便宜）+ 最近发布查询 |
 | `purchase.py` | 选购推荐 SOP：收集预算（上限/下限/区间/浮动）+ 宠物 → 结构化推荐 |
 | `repair.py` | 故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤 |
-| `service_point.py` | 售后网点查询 SOP：问城市 → 重名城市消歧 → Haversine 距离排序返回最近网点 |
 
 ## 快速开始
 
@@ -221,7 +219,7 @@ python intent_classifier_training/train_intent_classifier.py
           ├─ 选购意图且无预算 → 进入选购 SOP 多轮引导
           ├─ 含日期 → 日期工具（规则解析 / LLM function calling）→ 日期范围
           ├─ 含预算 → metadata 过滤 → 结构化直出型号列表
-          ├─ 网点查询 → 售后网点 SOP（问城市 → 重名消歧 → 距离排序）
+          ├─ 网点查询 → 网点工具（geonamescache 解析位置 → 距离直出）
           └─ 其他 → 知识域路由 → 双路召回（dense+sparse→RRF）→ LLM 生成
   → 流式输出（SSE）
 ```

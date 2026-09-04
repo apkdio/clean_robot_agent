@@ -393,6 +393,24 @@ query 命中 MODEL_QUERY_WORDS（强触发）
   → 提取不到 → None → 退回 RAG 历史拼接
 ```
 
+### 4.12.1 function_tools/service_point_tool.py + agent 网点查询分支
+
+售后网点查询是「查询类」而非「流程类」，与 model_tool 同构——挂 agent 分支而非 SOP（ADR-23）。
+
+| 项 | 职责 |
+|----|------|
+| `geocode_city(name)` | geonamescache 离线解析中文城市名 → 经纬度候选列表（国家 CN 过滤 + 人口降序 + 中文行政区划名提取）|
+| `haversine(...)` | 球面直线距离（km），纯本地计算无地图 API |
+| `search_service_points(lng, lat)` | 按经纬度算距离，返回最近网点 |
+| `format_service_points(points, origin)` | 格式化网点列表（名称/地址/距离/电话/营业时间）|
+
+**agent 分支（`_resolve_service_point_query` + `_pending_service`）**：
+- 触发：网点词（网点/门店/服务点…）∧ NOT 政策咨询词（怎么查/如何查…）；不依赖 intent——「离我最近的维修点」可能被分类器误判 other，但网点词信号足够强
+- 位置三级降级：前端定位经纬度 → 城市名 geocode（geonamescache）→ 反问城市
+- 重名消歧：geocode 返回多个候选（如「洛阳」）时，用 `_pending_service` 轻量状态记候选列表 + 反问序号，下一轮选序号直出——轻量状态而非完整 SOP
+- 乱答处理：反问城市/序号后用户乱答，保留状态重问（答错不丢上下文）；越界序号提示范围；说退出词（算了/退出）才清除状态回退
+- 网点数据存 `data/service_point/service_points.json`（不进向量库——精确匹配 + 距离排序，经纬度对 embedding 不友好）
+
 ### 4.13 sops/ —— SOP 标准操作流程（多轮引导）
 
 **定位**：SOP 是「代码驱动的流程循环」（状态机），与「LLM 驱动的 agent loop」不同——步骤固定、确定性高、不额外调 LLM，延迟可控。适合客服这类有标准流程的场景。
@@ -404,7 +422,6 @@ query 命中 MODEL_QUERY_WORDS（强触发）
 | `base.py` | 会话状态（内存，按 session_id 隔离）+ 执行器：`start_sop`/`continue_sop`/`end_sop`/`match_sop`；知识域定义 + 追问处理（含开场 intro、价格极值）|
 | `purchase.py` | 选购推荐 SOP：收集预算（上限/下限/区间/浮动）+ 宠物 → 结构化推荐 |
 | `repair.py` | 故障排查 SOP：问现象 → 检索（定向故障排除域）→ LLM 生成排查步骤 |
-| `service_point.py` | 售后网点查询 SOP：问城市 → 重名城市消歧 → Haversine 距离排序返回最近网点 |
 
 **步骤类型**（三步式状态机）：
 
@@ -432,26 +449,6 @@ query 命中 MODEL_QUERY_WORDS（强触发）
   → do_search    检索故障条目 + LLM 生成分步排查方案
   → reply        输出排查步骤
 ```
-
-**售后网点查询 SOP 流程**：
-
-```
-触发：robot/unknown 意图 + 网点词（网点/门店/服务点…）∧ 位置词（最近/附近/离我…）
-  → ask_location  问城市（前端定位 lng/lat 预填进 slots 时跳过；geonamescache 解析经纬度）
-  → ask_choice    重名消歧（候选唯一时 skip 跳过；重名如"洛阳"列出候选让用户选序号）
-  → do_search     Haversine 距离排序，返回最近网点
-  → reply        输出网点列表（名称/地址/距离/电话/营业时间）
-```
-
-**服务网点工具（function_tools/service_point_tool.py）**：
-- `geocode_city(name)`：用 geonamescache（离线 pip 依赖）把中文城市名解析成经纬度候选列表（按国家 CN 过滤 + 人口降序 + 中文行政区划名提取），重名城市返回多个候选
-- `haversine(lat1, lng1, lat2, lng2)`：球面直线距离（公里），纯本地计算无地图 API
-- 网点数据存 `data/service_point/service_points.json`（不进向量库——精确匹配 + 距离排序，经纬度对 embedding 不友好）
-
-**SOP 框架增强**（为支持网点 SOP 的通用能力，purchase/repair 不受影响）：
-- `skip(slots)` 条件跳过：步骤可带 `skip` 谓词，为真时跳过该步骤——让"重名消歧"这种条件性步骤只在需要时出现
-- `ask`/`retry` 支持 callable：话术可按槽位动态生成（如列出重名候选），不再只能是静态字符串
-- `start_sop(..., **extra)`：外部上下文（前端定位经纬度）可预填进 slots，跳过"问城市"
 
 **关键设计决策**：
 - **触发时机**：选购意图 + 命中 trigger 即进 SOP；已含预算的 query（"1000以内推荐"）也进 SOP，由首轮提取预填预算后继续问宠物，推荐更精准
@@ -659,16 +656,18 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 - **内存过滤与 Chroma where 等价**：`enumerate_models` 改为「缓存全量 + 内存过滤」——`min_price/max_price` 映射到 `price`（条目级切分保证 min_price==max_price==price），`publish_date` 由字符串转 int 比较，`$and` 递归。实测 5 种 filter（全量/预算上限/区间/组合）与 Chroma 结果完全一致。
 - **require_field 仍生效**：`get_all_models` 按 price 过滤（排除 FAQ 无价格条目），`require_field="publish_date"` 等其它字段再内存过滤一次。
 
-### ADR-23：售后网点查询用 SOP + geonamescache（网点数据不进向量库）
+### ADR-23：售后网点查询用 function_tool + agent 分支（而非 SOP）
 
-**背景**：用户问"最近的售后网点在哪"，需要① 知道用户位置，② 网点数据，③ 距离计算。最初实现为 agent.py 里的一个分支 + `_pending_service_location` 反问状态，但"重名城市（如洛阳）让用户抉择"需要条件性多轮，硬编码在编排层很别扭。
+**背景**：用户问"最近的售后网点在哪"，需要① 知道用户位置，② 网点数据，③ 距离计算。曾先做成 SOP（`sops/service_point.py`，问城市 → 重名消歧 → 搜索），但反思后发现：网点查询是「单参数查询」（位置 → 网点列表），与 model_tool（型号 → 详情）同构，属于「查询类」而非「流程类」，不该套完整 SOP。
 
 **原因**：
-- **做成 SOP**：网点查询天然是多轮（问城市 → 消歧 → 出结果），与选购/故障排查同构，收敛到 `sops/service_point.py`；旧分支和 `_pending_service_location` 反问状态删除
-- **位置三级降级**：前端 Geolocation（精确经纬度）→ 城市名 geocode（geonamescache）→ 反问城市；前端定位通过 `start_sop(..., lng=, lat=)` 预填进 slots，有定位时跳过问城市
-- **geonamescache 离线地理编码**：中文城市名 → 经纬度，pip 依赖、纯本地（符合项目无云端依赖）；重名城市返回多个候选（按国家 CN 过滤 + 人口降序 + 中文行政区划名提取），让用户选序号
+- **对齐 model_tool**：查询类走 agent 分支 + function_tool（`_resolve_service_point_query` + `service_point_tool`），流程类（选购/故障排查的多槽位收集）才走 SOP——这条边界 model_tool 早已划好
+- **位置三级降级**：前端 Geolocation（精确经纬度）→ 城市名 geocode（geonamescache）→ 反问城市
+- **触发用「排除政策咨询」而非「要求位置词」**：网点词本身足够强，不需位置词确认；真正要挡的是「网点怎么查询」这类政策咨询（`SERVICE_POINT_CONSULT_WORDS`）。且分支不依赖 intent——意图分类器会把「维修点」这类短口语判 other，靠词表兜住
+- **重名消歧用轻量状态**：geocode 返回多个候选（如"洛阳"）时，用 `_pending_service` 记候选列表 + 反问序号（轻量状态），而非完整 SOP 状态机——重名是 edge case，绝大多数城市唯一，不值得为它套 intro/退出/状态机
+- **乱答重问**：待确认回答（城市名/序号）答错时保留状态重问，越界序号提示范围，退出词才清除状态——对齐 SOP 的 retry 体验但保持轻量
+- **geonamescache 离线地理编码**：中文城市名 → 经纬度，pip 依赖、纯本地；重名返回多个候选（国家 CN 过滤 + 人口降序 + 中文行政区划名提取）
 - **网点数据不进向量库**：网点查询是精确匹配 + 距离排序，经纬度对 embedding 不友好，用独立 `data/service_point/service_points.json`（demo 随机经纬度），Haversine 直线距离纯本地计算
-- **SOP 框架增强**：为支持"重名消歧"这种条件性步骤，给执行器加 `skip(slots)` 条件跳过、`ask`/`retry` 支持 callable 动态话术、`start_sop **extra` 外部上下文预填——三个通用能力
 
 ### ADR-24：日期结构化输出加「品牌事件」guard
 

@@ -102,8 +102,12 @@ def _route_domain(query: str):
 # SOP 退出确认状态：非 None 表示正在询问用户是否退出该 SOP
 _pending_exits = {}
 
+# 网点查询待确认状态：session_id → {"city": True}（反问城市后等城市名）
+#   或 {"pick": [candidates]}（列出重名候选后等用户选序号）
+_pending_service = {}
+
 # SOP 中文名（用于退出提醒）
-_SOP_NAMES = {"purchase": "选购推荐", "repair": "故障排查", "service_point": "售后网点查询"}
+_SOP_NAMES = {"purchase": "选购推荐", "repair": "故障排查"}
 
 
 def _sop_name(sop_id: str) -> str:
@@ -259,6 +263,119 @@ def _resolve_series_query(query: str):
     return None
 
 
+def _format_nearest(coord):
+    """按城市坐标算最近网点并格式化。"""
+    from function_tools.service_point_tool import search_service_points, format_service_points
+    points, _ = search_service_points(lng=coord["lng"], lat=coord["lat"])
+    return format_service_points(points, coord.get("cn_name") or coord.get("name", ""))
+
+
+def _service_choice_prompt(candidates):
+    """列出重名候选让用户选序号。"""
+    lines = []
+    for i, c in enumerate(candidates):
+        label = c.get("cn_name") or c.get("name") or "?"
+        pop = c.get("population") or 0
+        if pop >= 10000:
+            label += f"（人口约 {pop // 10000} 万）"
+        elif pop > 0:
+            label += f"（人口 {pop}）"
+        lines.append(f"{i + 1}. {label}")
+    return "查到多个同名地点：\n" + "\n".join(lines) + "\n请回复序号选择～"
+
+
+def _resolve_service_pending(session_id, state, query):
+    """处理网点查询的待确认回答（反问城市后答城市名 / 重名后选序号）。
+
+    返回 reply：成功直出或乱答重问话术；用户主动退出时返回 None（状态已清除）。
+    """
+    from function_tools.service_point_tool import geocode_city
+
+    # 主动退出（算了/退出/取消等）→ 清除状态，回退正常流程
+    if any(w in query for w in EXIT_WORDS):
+        _pending_service.pop(session_id, None)
+        return None
+
+    if state.get("city"):
+        # 用户答的是城市名
+        candidates = geocode_city(query)
+        if len(candidates) == 1:
+            _pending_service.pop(session_id, None)
+            return _format_nearest(candidates[0])
+        if len(candidates) > 1:
+            _pending_service[session_id] = {"pick": candidates}
+            return _service_choice_prompt(candidates)
+        # 乱答（不是城市名）→ 保留状态重问
+        return "没太听清您在哪个城市，能再说一下城市名吗？比如「开封」「上海」～"
+
+    if state.get("pick"):
+        # 用户答的是序号
+        cands = state["pick"]
+        m = re.search(r"[1-9]", query or "")
+        if m:
+            idx = int(m.group()) - 1
+            if 0 <= idx < len(cands):
+                _pending_service.pop(session_id, None)
+                return _format_nearest(cands[idx])
+            return f"请回复 1-{len(cands)} 之间的序号～"
+        return "请回复序号（如 1）选择您要查询的地点～"
+
+    _pending_service.pop(session_id, None)
+    return None
+
+
+def _resolve_service_point_query(session_id, query, lng=None, lat=None):
+    """售后网点查询：网点词（非政策咨询）→ geonamescache 解析位置 → 距离直出。
+
+    返回 (reply, matched)：
+      - matched=False：未命中网点查询，走正常流程
+      - matched=True 且 reply 非 None：网点结果（或重名候选话术）
+      - matched=True 且 reply 为 None：缺位置，已记状态，调用方需反问城市
+    """
+    from config.word_dict_config import SERVICE_POINT_WORDS, SERVICE_POINT_CONSULT_WORDS
+    if not any(w in query for w in SERVICE_POINT_WORDS):
+        return None, False
+    # "网点怎么查询"这类政策咨询走 RAG
+    if any(w in query for w in SERVICE_POINT_CONSULT_WORDS):
+        return None, False
+
+    from function_tools.service_point_tool import (
+        geocode_city, search_service_points, format_service_points,
+        SERVICE_POINT_TOOL_SCHEMA, SERVICE_POINT_TOOL_MODEL,
+    )
+    # 前端定位最精准
+    if lng is not None and lat is not None:
+        points, origin = search_service_points(lng=lng, lat=lat)
+        return format_service_points(points, origin), True
+
+    # 提取城市：先直接 geocode 整句（用户可能只说城市名），失败 LLM 提取
+    candidates = geocode_city(query)
+    if not candidates:
+        try:
+            from llm_tool import chat_with_tools
+            resp = chat_with_tools(
+                [HumanMessage(content=query)],
+                [SERVICE_POINT_TOOL_SCHEMA],
+                model=SERVICE_POINT_TOOL_MODEL,
+            )
+            tool_calls = getattr(resp, "tool_calls", None) or []
+            if tool_calls:
+                tc = tool_calls[0]
+                args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
+                city = (args.get("location") or "").strip()
+                candidates = geocode_city(city)
+        except Exception as e:
+            logger.warning("[Agent] service point tool calling failed: %s", e)
+
+    if len(candidates) == 1:
+        return _format_nearest(candidates[0]), True
+    if len(candidates) > 1:
+        _pending_service[session_id] = {"pick": candidates}
+        return _service_choice_prompt(candidates), True
+    _pending_service[session_id] = {"city": True}
+    return None, True
+
+
 def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     """流式问答入口 —— 经本地分类头做意图路由，支持多轮 SOP 引导。
 
@@ -266,7 +383,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     unknown → 软引导 + RAG；robot → SOP 引导 / 结构化预算直出 / RAG。
     session_id 用于区分对话会话（上下文按会话持久化到 data/context/）。
     """
-    global _pending_exits
+    global _pending_exits, _pending_service
     # 角色扮演 / 指令注入：直接拒绝，不发给 LLM（最先判断）
     if _INJECT_RE.search(query):
         yield "我是扫地机器人助手，只能帮你解答扫地机器人相关的问题，无法扮演其他角色哦～"
@@ -334,6 +451,15 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
                     yield reply
                 return
 
+    # 网点查询的待确认回答（反问城市后答城市名 / 重名后选序号）
+    if session_id in _pending_service:
+        state = _pending_service[session_id]
+        reply = _resolve_service_pending(session_id, state, query)
+        if reply:
+            yield reply
+            return
+        # 返回 None：用户主动退出（状态已清除）→ 回退正常流程
+
     from intent_router import route_intent, get_guess_hint
     intent = route_intent(query)
 
@@ -359,11 +485,20 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             yield series_reply
             return
 
+    # 售后网点查询：网点词（非政策咨询）→ geonamescache 解析位置 → 距离直出
+    # 不依赖 intent——"离我最近的维修点"可能被分类器误判 other，但网点词信号足够强
+    service_reply, service_matched = _resolve_service_point_query(session_id, query, lng, lat)
+    if service_matched:
+        if service_reply is None:
+            service_reply = "请问您所在的城市是？告诉我城市名，我帮您查最近的售后网点～"
+        yield service_reply
+        return
+
     # SOP 触发：robot/unknown 意图 + 命中场景 trigger（guards 已由 match_sop 评估）
     if intent in ("robot", "unknown"):
         sop_id = match_sop(query)
         if sop_id:
-            reply, _done = start_sop(session_id, sop_id, query, lng=lng, lat=lat)
+            reply, _done = start_sop(session_id, sop_id, query)
             if reply:
                 yield reply
             return

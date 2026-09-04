@@ -18,4 +18,3 @@ from sops.base import (  # noqa: F401
 # 导入各 SOP 模块，触发 register 注册
 import sops.purchase  # noqa: F401
 import sops.repair  # noqa: F401
-import sops.service_point  # noqa: F401
