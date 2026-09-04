@@ -1,0 +1,21 @@
+data/datasets/intent_dataset.jsonl
+  s_40681318f5a20b::t_c3660f95810235 253-262,353-357
+intent_classifier_training/build_intent_dataset.py
+  s_40681318f5a20b::t_27ab57d9f2d137 156-162,196-197,261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "c71ccbc88d50bb20497d6b415f0930c0b5381b93",
+  "prompts": {},
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4-Pro-discount"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
