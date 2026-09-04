@@ -62,11 +62,18 @@ clean_robot_agent/
 │   ├── base.py                  # 会话状态（按 session_id 隔离）+ 执行器 + 知识域定义
 │   ├── purchase.py              # 选购推荐 SOP
 │   └── repair.py                # 故障排查 SOP
-├── test_scripts/                # 测试脚本（意图分类 / SOP / 分域召回 / 结构化维度）
-│   ├── test_cases.py            # 意图分类 + 端到端泛化测试
-│   ├── test_sop.py              # SOP 状态机测试
-│   ├── test_retrieval.py        # 知识库分域召回测试（域路由/域过滤，测真实代码）
-│   └── test_structured.py       # 结构化维度提取（型号属性 aspect + 系列 series）
+├── test_scripts/                # 分模块测试（按模块命名，run_tests.py 聚合）
+│   ├── run_tests.py             # 聚合入口：python run_tests.py [--e2e]
+│   ├── _runner.py               # 共享断言/汇总/e2e 门控
+│   ├── test_intent.py           # 意图分类（robot/other/casual/unknown，需 --e2e）
+│   ├── test_purchase_sop.py     # 选购 SOP（SOP 状态机 + 选购推荐流程）
+│   ├── test_repair_sop.py       # 故障排查 SOP（症状映射 + 流程）
+│   ├── test_context.py          # 上下文存储（append/get_recent/meta/UUID 校验）
+│   ├── test_metadata.py         # 结构化提取（价格/日期/型号/系列/过滤）
+│   ├── test_function_tools.py   # 日期/预算/型号/症状/网点五个工具
+│   ├── test_retrieval.py        # 检索链路（域路由/分词/过滤/RRF/条目切分）
+│   ├── test_agent_guards.py     # Agent 前置防护（情绪/注入/危险/退出意图）
+│   └── test_dialogue.py         # 多轮实战对话（正常 + 非人类，需 --e2e）
 ├── intent_classifier_training/  # 意图分类模型训练工具
 │   ├── build_intent_dataset.py  # 数据集构建（从知识库抽取 + 规则改写）
 │   └── train_intent_classifier.py # 分类头训练脚本

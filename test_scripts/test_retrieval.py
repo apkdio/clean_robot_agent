@@ -1,455 +1,207 @@
-"""知识库分域召回测试脚本（品牌化后：6 域 + 不染一尘知识库）。
+"""检索链路测试：域路由 + 词表 + BM25 分词 + 过滤 + RRF 融合 + 条目切分。
 
-测试覆盖：
-  1. 域路由（agent._route_domain，真实代码）
-  2. 选购咨询检测（sops.base.is_consulting，真实代码）
-  3. 症状映射（config SYMPTOM_MAP，真实数据）
-  4. 混合检索 + 域过滤（mock 检索器，品牌化文件名）
-  5. 稠密检索 + 域过滤（mock 检索器）
-  6. 组合过滤（域 + 预算）
-  7. 故障 SOP 域定向检索
-  8. 边界场景
+覆盖（全部测真实代码，不再复制 mock 副本）：
+  - agent._route_domain（知识域 → file_name）
+  - sops.base.is_consulting / is_aftersales / is_brand
+  - config.word_dict_config 词表完整性（DOMAIN_MAP / SYMPTOM_MAP / SYMPTOM_QUERY_MAP）
+  - SparseRetriever._tokenize（中英混合分词）
+  - sparse_retriever._matches_filter（Chroma where 内存过滤）
+  - rrf_fusion.reciprocal_rank_fusion（稠密+稀疏融合排序）
+  - entry_splitter.split_numbered_entries（编号条目 + 章节前缀）
+  - [--e2e] HybridRetriever 域过滤端到端（需 Ollama + Chroma）
 
 运行：
-  python test_retrieval.py
-  python test_retrieval.py --e2e    # 含端到端检索（需 Chroma 有数据）
+  .venv\\Scripts\\python.exe test_retrieval.py [--e2e]
 """
-
-import os
-import re
 import sys
-from typing import Any, Dict, List, Tuple
-
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _ROOT)
-sys.path.insert(0, os.path.join(_ROOT, "tools"))
-
-# 真实代码（不再复制 mock 副本，测的就是线上逻辑）
-from tools.agent import _route_domain
-from sops.base import is_consulting
-from config.word_dict_config import SYMPTOM_MAP
+from _runner import *
+from langchain_core.documents import Document
 
 
-def _symptom_query(text: str) -> str | None:
-    """规则匹配症状 → 标准 query（与 repair._extract_symptom 的规则部分对齐）。"""
-    for kw, query in SYMPTOM_MAP.items():
-        if kw in text:
-            return query
-    return None
+# ──────────────────────────────────────────────────────────────
+# 1. 域路由（真实 agent._route_domain）
+# ──────────────────────────────────────────────────────────────
 
-
-# ──────────────────────────────────────────────────────────────────
-# mock 检索数据：品牌化后的知识库文件（6 域，repair/maintain 共用维修文件）
-# ──────────────────────────────────────────────────────────────────
-
-_MOCK_CHUNKS: Dict[str, List[Dict[str, Any]]] = {
-    "不染一尘品牌介绍.txt": [
-        {"content": "不染一尘是专注极致清洁体验的高端扫拖机器人品牌，隶属于云境智能集团。", "metadata": {"file_name": "不染一尘品牌介绍.txt"}},
-        {"content": "不染一尘有哪些产品系列？净白 S、净界 P、天工 T、云顶 X 四个系列。", "metadata": {"file_name": "不染一尘品牌介绍.txt"}},
-    ],
-    "不染一尘选购指南.txt": [
-        {"content": "选购扫地机器人时，先定预算，再看户型面积和是否有宠物。", "metadata": {"file_name": "不染一尘选购指南.txt"}},
-        {"content": "吸力参数：全系 3000Pa 到 13000Pa，小户型 4000Pa 足够。", "metadata": {"file_name": "不染一尘选购指南.txt"}},
-        {"content": "预算 1500 以内入门级推荐净白 S 系列。", "metadata": {"file_name": "不染一尘选购指南.txt", "min_price": 899, "max_price": 1499}},
-    ],
-    "不染一尘常见维修问题.txt": [
-        {"content": "故障现象：机器人不移动。检查电源是否接通，轮子是否被异物卡住。", "metadata": {"file_name": "不染一尘常见维修问题.txt"}},
-        {"content": "故障现象：吸力下降。检查尘盒是否已满，滤网是否需要清洗。", "metadata": {"file_name": "不染一尘常见维修问题.txt"}},
-        {"content": "故障现象：水箱漏水。检查水箱盖是否盖紧，密封圈是否老化。", "metadata": {"file_name": "不染一尘常见维修问题.txt"}},
-        {"content": "边刷建议每 2-3 个月更换一次，刷毛变形需提前更换。", "metadata": {"file_name": "不染一尘常见维修问题.txt"}},
-    ],
-    "不染一尘具体型号.txt": [
-        {"content": "1. **不染一尘净白 S1**\n   - 系列：净白 S\n   - 吸力：3000Pa｜导航：视觉导航｜避障：红外\n   - 参考价：899", "metadata": {"file_name": "不染一尘具体型号.txt", "min_price": 899, "max_price": 899}},
-        {"content": "2. **不染一尘净界 P2**\n   - 系列：净界 P\n   - 吸力：5500Pa｜导航：LDS激光｜避障：结构光\n   - 参考价：2299", "metadata": {"file_name": "不染一尘具体型号.txt", "min_price": 2299, "max_price": 2299}},
-        {"content": "3. **不染一尘云顶 X2**\n   - 系列：云顶 X\n   - 吸力：13500Pa｜导航：LDS激光｜避障：AI双摄\n   - 参考价：7999", "metadata": {"file_name": "不染一尘具体型号.txt", "min_price": 7999, "max_price": 7999}},
-    ],
-    "不染一尘售后服务.txt": [
-        {"content": "整机保修 2 年，电机保修 5 年。", "metadata": {"file_name": "不染一尘售后服务.txt"}},
-        {"content": "云顶 X 系列维修超 3 天可申请备用机。", "metadata": {"file_name": "不染一尘售后服务.txt"}},
-    ],
-}
-
-
-def _resolve_file_name(filter: dict | None) -> str | None:
-    """从 filter 里解析 file_name（支持直接值、$eq、$and）。"""
-    if not filter:
-        return None
-    if "file_name" in filter:
-        fn = filter["file_name"]
-        if isinstance(fn, dict) and "$eq" in fn:
-            return fn["$eq"]
-        return fn
-    if "$and" in filter:
-        for cond in filter["$and"]:
-            if isinstance(cond, dict) and "file_name" in cond:
-                return cond["file_name"]
-    return None
-
-
-def _mock_dense_search(query: str, filter: dict | None = None, top_k: int = 10) -> List[Tuple[Dict, float]]:
-    """模拟稠密检索：按域名过滤 + 逐字匹配（模拟 BM25 的字符级命中）。"""
-    file_name = _resolve_file_name(filter)
-    candidates = []
-    for fname, chunks in _MOCK_CHUNKS.items():
-        if file_name and fname != file_name:
-            continue
-        candidates.extend(chunks)
-
-    query_chars = set(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", query))
-    scored = []
-    for c in candidates:
-        content_chars = set(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", c["content"]))
-        overlap = len(query_chars & content_chars)
-        if overlap > 0:
-            scored.append((c, overlap / max(len(query_chars), 1)))
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored[:top_k]
-
-
-def _mock_bm25_search(query: str, filter: dict | None = None, top_k: int = 10) -> List[Tuple[Dict, float]]:
-    """模拟 BM25 稀疏检索：与 dense 相同逻辑。"""
-    return _mock_dense_search(query, filter, top_k)
-
-
-def _mock_hybrid_search(query: str, filter: dict | None = None) -> List[Dict]:
-    """模拟混合检索：dense + sparse → RRF 融合。"""
-    dense = _mock_dense_search(query, filter, top_k=10)
-    sparse = _mock_bm25_search(query, filter, top_k=10)
-
-    all_keys = {}
-    for rank, (doc, _) in enumerate(dense, 1):
-        key = doc["content"]
-        all_keys.setdefault(key, {"doc": doc, "dense_rank": rank, "sparse_rank": 999})
-    for rank, (doc, _) in enumerate(sparse, 1):
-        key = doc["content"]
-        if key in all_keys:
-            all_keys[key]["sparse_rank"] = rank
-        else:
-            all_keys[key] = {"doc": doc, "dense_rank": 999, "sparse_rank": rank}
-
-    scored = []
-    for key, item in all_keys.items():
-        rrf = 1.0 / (60 + item["dense_rank"]) + 1.0 / (60 + item["sparse_rank"])
-        scored.append((item["doc"], rrf))
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return [doc for doc, _ in scored[:5]]
-
-
-# ──────────────────────────────────────────────────────────────────
-# 断言辅助
-# ──────────────────────────────────────────────────────────────────
-
-_total = 0
-_passed = 0
-_failed: List[Tuple[str, str]] = []
-
-
-def _assert(cond: bool, msg: str):
-    global _total, _passed, _failed
-    _total += 1
-    if cond:
-        _passed += 1
-        print(f"  OK  {msg}")
-    else:
-        _failed.append((msg, "断言失败"))
-        print(f"  FAIL {msg}")
-
-
-def _assert_eq(a, b, msg: str):
-    global _total, _passed, _failed
-    _total += 1
-    if a == b:
-        _passed += 1
-        print(f"  OK  {msg}")
-    else:
-        _failed.append((msg, f"期望={b!r}, 实际={a!r}"))
-        print(f"  FAIL {msg}  期望={b!r}  实际={a!r}")
-
-
-def _assert_in(content, container, msg: str):
-    global _total, _passed, _failed
-    _total += 1
-    if content in container:
-        _passed += 1
-        print(f"  OK  {msg}")
-    else:
-        _failed.append((msg, f"内容 '{content}' 不在结果中"))
-        print(f"  FAIL {msg}  — 未找到 '{content}'")
-
-
-# ================================================================
-# 1. 域路由测试（真实 agent._route_domain，返回 file_name）
-# ================================================================
-
-def test_route_domain_brand():
+def test_route_domain():
+    from tools.agent import _route_domain
+    # 品牌域（优先于“买”误判）
     _assert_eq(_route_domain("为什么买不染一尘"), "不染一尘品牌介绍.txt", "为什么买→品牌域")
     _assert_eq(_route_domain("你们家有什么优势"), "不染一尘品牌介绍.txt", "优势→品牌域")
-
-
-def test_route_domain_aftersales():
+    # 售后域（优先于“修”误判）
     _assert_eq(_route_domain("扫地机器人保修多久"), "不染一尘售后服务.txt", "保修→售后域")
     _assert_eq(_route_domain("零件掉了可以报修吗"), "不染一尘售后服务.txt", "报修→售后域")
-
-
-def test_route_domain_consulting():
+    # 选购咨询域
     _assert_eq(_route_domain("选购扫地机器人要注意什么"), "不染一尘选购指南.txt", "选购注意→选购域")
     _assert_eq(_route_domain("买扫地机器人有什么技巧"), "不染一尘选购指南.txt", "购买技巧→选购域")
-
-
-def test_route_domain_repair_maintain():
+    # 故障域
     _assert_eq(_route_domain("机器人不动了怎么办"), "不染一尘常见维修问题.txt", "不动→维修域")
     _assert_eq(_route_domain("水箱漏水怎么处理"), "不染一尘常见维修问题.txt", "漏水→维修域")
-    _assert_eq(_route_domain("边刷多久换一次"), "不染一尘常见维修问题.txt", "边刷→维护域（与维修同文件）")
-
-
-def test_route_domain_none():
-    _assert(_route_domain("扫地机器人对哪个牌子好") is None, "品牌对比→None（全库兜底）")
+    # 维护域（与维修同文件）
+    _assert_eq(_route_domain("边刷多久换一次"), "不染一尘常见维修问题.txt", "边刷→维护域")
+    _assert_eq(_route_domain("尘盒怎么清洗"), "不染一尘常见维修问题.txt", "尘盒→维护域")
+    # 兜底 None
+    _assert(_route_domain("扫地机器人对哪个牌子好") is None, "品牌对比→None")
     _assert(_route_domain("今天天气怎么样") is None, "领域外→None")
     _assert(_route_domain("你好") is None, "闲聊→None")
 
 
-# ================================================================
-# 2. 选购咨询检测（真实 sops.base.is_consulting）
-# ================================================================
+# ──────────────────────────────────────────────────────────────
+# 2. 选购咨询 / 售后 / 品牌判定
+# ──────────────────────────────────────────────────────────────
 
-def test_is_consulting_true():
-    _assert_eq(is_consulting("选购扫地机器人要注意什么"), True, "选购+注意")
-    _assert_eq(is_consulting("买扫地机器人有什么技巧"), True, "买+技巧")
-    _assert_eq(is_consulting("入手扫地机器人有哪些坑"), True, "入手+坑")
-
-
-def test_is_consulting_false():
-    _assert(is_consulting("边刷多久换一次") is False, "纯维护→False")
-    _assert(is_consulting("扫地机器人不走了怎么办") is False, "纯故障→False")
-    _assert(is_consulting("你好") is False, "闲聊→False")
-    _assert(is_consulting("选购一款扫地机器人") is False, "纯选购动作→False")
+def test_is_consulting():
+    from sops.base import is_consulting
+    _assert(is_consulting("选购扫地机器人要注意什么"), "选购+注意→咨询")
+    _assert(is_consulting("买扫地机器人有什么技巧"), "买+技巧→咨询")
+    _assert(is_consulting("入手扫地机器人有哪些坑"), "入手+坑→咨询")
+    _assert(not is_consulting("边刷多久换一次"), "纯维护→非咨询")
+    _assert(not is_consulting("扫地机器人不走了怎么办"), "纯故障→非咨询")
+    _assert(not is_consulting("选购一款扫地机器人"), "纯选购动作→非咨询")
+    _assert(not is_consulting("你好"), "闲聊→非咨询")
 
 
-# ================================================================
-# 3. 症状映射（真实 config.SYMPTOM_MAP）
-# ================================================================
-
-def test_symptom_map_hit():
-    _assert_eq(_symptom_query("机器人不动了"), "机器人不移动怎么办", "不动")
-    _assert_eq(_symptom_query("水箱漏水"), "水箱漏水怎么办", "漏水")
-    _assert_eq(_symptom_query("有异响"), "扫地机器人异响怎么办", "异响")
-    _assert_eq(_symptom_query("充不进电"), "机器人充不进电怎么办", "充不进电")
-    _assert_eq(_symptom_query("找不到充电座"), "机器人找不到充电座怎么办", "找不到充电座")
-    _assert_eq(_symptom_query("吸力变小了"), "吸力下降怎么办", "吸力")
-    _assert_eq(_symptom_query("拖地后地面有水痕"), "拖地后地面有明显水痕", "水痕")
+def test_is_aftersales():
+    from sops.base import is_aftersales
+    _assert(is_aftersales("扫地机器人保修多久"), "保修→售后")
+    _assert(is_aftersales("可以退货吗"), "退货→售后")
+    _assert(not is_aftersales("帮我推荐一款"), "推荐→非售后")
+    _assert(not is_aftersales("边刷多久换一次"), "维护→非售后")
 
 
-def test_symptom_map_miss():
-    _assert(_symptom_query("机器人冒烟了") is None, "冒烟→None（危险现象走安全拦截）")
-    _assert(_symptom_query("电池鼓包") is None, "电池鼓包→None")
-    _assert(_symptom_query("你好") is None, "闲聊→None")
+def test_is_brand():
+    from sops.base import is_brand
+    _assert(is_brand("为什么买不染一尘"), "为什么买→品牌")
+    _assert(is_brand("不染一尘是什么品牌"), "品牌→品牌")
+    _assert(not is_brand("帮我推荐一款"), "推荐→非品牌")
+    _assert(not is_brand("边刷多久换一次"), "维护→非品牌")
 
 
-# ================================================================
-# 4. 稠密检索 + 域过滤（mock）
-# ================================================================
+# ──────────────────────────────────────────────────────────────
+# 3. 词表完整性
+# ──────────────────────────────────────────────────────────────
 
-def test_dense_search_domain_filter():
-    results = _mock_dense_search("吸力下降", filter={"file_name": "不染一尘常见维修问题.txt"})
-    files = {r[0]["metadata"]["file_name"] for r in results}
-    _assert_eq(len(files), 1, "只返回一个域的结果")
-    _assert("不染一尘常见维修问题.txt" in files, "结果来自维修域")
-    _assert(len(results) > 0, "有结果")
-
-
-def test_dense_search_no_filter():
-    results = _mock_dense_search("吸力")
-    files = {r[0]["metadata"]["file_name"] for r in results}
-    _assert(len(files) > 1, "无过滤时返回多个域的结果")
-    _assert("不染一尘常见维修问题.txt" in files, "含维修域")
-    _assert("不染一尘选购指南.txt" in files, "含选购指南域")
-
-
-def test_dense_search_cross_domain():
-    shopping = _mock_dense_search("吸力", filter={"file_name": "不染一尘选购指南.txt"})
-    repair = _mock_dense_search("吸力", filter={"file_name": "不染一尘常见维修问题.txt"})
-    _assert(len(shopping) > 0, "选购指南含吸力参数内容")
-    _assert(len(repair) > 0, "维修域含吸力下降内容")
+def test_word_dict_integrity():
+    from config.word_dict_config import DOMAIN_MAP, SYMPTOM_MAP, SYMPTOM_QUERY_MAP
+    _assert_eq(
+        set(DOMAIN_MAP.keys()),
+        {"brand", "consulting", "model", "repair", "aftersales", "maintain"},
+        "DOMAIN_MAP 六个域",
+    )
+    _assert_eq(DOMAIN_MAP["maintain"], DOMAIN_MAP["repair"], "维护与维修同文件")
+    _assert(len(SYMPTOM_MAP) > 0, "SYMPTOM_MAP 非空")
+    _assert(len(SYMPTOM_QUERY_MAP) > 0, "SYMPTOM_QUERY_MAP 非空")
+    map_values = set(SYMPTOM_MAP.values())
+    for sid, q in SYMPTOM_QUERY_MAP.items():
+        _assert(q in map_values, f"SYMPTOM_QUERY_MAP[{sid}] 出现在 SYMPTOM_MAP 值中")
+    # 危险现象不应进入症状映射（由 agent 前置拦截）
+    for danger in ("冒烟", "鼓包", "着火"):
+        _assert(danger not in SYMPTOM_MAP, f"危险词 {danger} 不在 SYMPTOM_MAP")
 
 
-# ================================================================
-# 5. 混合检索 + 域过滤（mock）
-# ================================================================
+# ──────────────────────────────────────────────────────────────
+# 4. BM25 分词（真实 SparseRetriever._tokenize）
+# ──────────────────────────────────────────────────────────────
 
-def test_hybrid_search_domain_filter():
-    results = _mock_hybrid_search("边刷更换", filter={"file_name": "不染一尘常见维修问题.txt"})
-    files = {r["metadata"]["file_name"] for r in results}
+def test_tokenize():
+    from tools.sparse_retriever import SparseRetriever
+    t = SparseRetriever._tokenize("Python 在机器学习中的应用")
+    _assert_eq(t, ["python", "在", "机", "器", "学", "习", "中", "的", "应", "用"], "中英混合分词")
+    t2 = SparseRetriever._tokenize("扫地 robot100")
+    _assert_in("扫", t2, "中文单字 token")
+    _assert_in("robot100", t2, "数字英文保留为整 token")
+    _assert_eq(SparseRetriever._tokenize("，。！？"), [], "纯标点→空")
+
+
+# ──────────────────────────────────────────────────────────────
+# 5. Chroma where 内存过滤（真实 _matches_filter）
+# ──────────────────────────────────────────────────────────────
+
+def test_matches_filter():
+    from tools.sparse_retriever import _matches_filter
+    doc = Document(page_content="x", metadata={"min_price": 899, "file_name": "a.txt"})
+    _assert(_matches_filter(doc, {"min_price": {"$lte": 1000}}), "lte 命中")
+    _assert(not _matches_filter(doc, {"min_price": {"$gte": 1000}}), "gte 未命中")
+    _assert(_matches_filter(doc, {"$and": [{"file_name": "a.txt"}, {"min_price": {"$lte": 900}}]}), "$and 命中")
+    _assert(not _matches_filter(doc, {"file_name": "b.txt"}), "file_name 未命中")
+    _assert(not _matches_filter(doc, {"unknown_field": {"$eq": 1}}), "缺字段→False")
+    _assert(_matches_filter(doc, None), "None→True")
+    _assert(_matches_filter(doc, {}), "空→True")
+
+
+# ──────────────────────────────────────────────────────────────
+# 6. RRF 融合（真实 reciprocal_rank_fusion）
+# ──────────────────────────────────────────────────────────────
+
+def test_rrf_fusion():
+    from tools.rrf_fusion import reciprocal_rank_fusion
+    d1, d2, d3 = Document(page_content="A"), Document(page_content="B"), Document(page_content="C")
+    dense = [(d1, 0.9), (d2, 0.8)]   # dense 排名：A=1, B=2
+    sparse = [(d2, 5.0), (d3, 3.0)]  # sparse 排名：B=1, C=2
+    fused = reciprocal_rank_fusion(dense, sparse, k=60, top_k=10)
+    _assert_eq(len(fused), 3, "去重后 3 个候选")
+    _assert_eq(fused[0][0].page_content, "B", "双路都命中的 B 排第一")
+    _assert_eq(len(fused[0]), 3, "返回 (doc, score, meta) 三元组")
+    _assert_in("dense_rank", fused[0][2], "meta 含 dense_rank")
+    _assert_in("sparse_rank", fused[0][2], "meta 含 sparse_rank")
+    top2 = reciprocal_rank_fusion(dense, sparse, k=60, top_k=2)
+    _assert_eq(len(top2), 2, "top_k=2 截断")
+
+
+# ──────────────────────────────────────────────────────────────
+# 7. 编号条目切分（真实 split_numbered_entries）
+# ──────────────────────────────────────────────────────────────
+
+def test_split_numbered_entries():
+    from tools.entry_splitter import split_numbered_entries
+    text = (
+        "## 入门级\n"
+        "1. **型号A**\n"
+        "   - 吸力：1000Pa\n"
+        "2. **型号B**\n"
+        "   - 吸力：2000Pa"
+    )
+    docs = split_numbered_entries(text, {"file_name": "x.txt"})
+    _assert_eq(len(docs), 2, "切出 2 个条目")
+    _assert_eq(docs[0].page_content, "## 入门级\n1. **型号A**\n   - 吸力：1000Pa", "条目1含章节前缀")
+    _assert_eq(docs[0].metadata.get("file_name"), "x.txt", "metadata 透传")
+    _assert_eq(split_numbered_entries("普通段落文字", {}), [], "无编号条目→空")
+
+
+# ──────────────────────────────────────────────────────────────
+# 8. 端到端：HybridRetriever 域过滤（需 Ollama + Chroma）
+# ──────────────────────────────────────────────────────────────
+
+@e2e("HybridRetriever 端到端需要 Ollama + Chroma 数据")
+def test_hybrid_domain_filter_e2e():
+    from tools.hybrid_retriever import HybridRetriever
+    hr = HybridRetriever()
+    hr.ensure_sparse_index()
+    chunks = hr.search("吸力下降", filter={"file_name": "不染一尘常见维修问题.txt"})
+    files = {c.metadata.get("file_name") for c in chunks}
+    _assert(len(chunks) > 0, "维修域有召回")
     _assert_eq(len(files), 1, "只返回维修域")
-    _assert("不染一尘常见维修问题.txt" in files, "结果来自维修域")
-    _assert(len(results) > 0, "有结果")
+    _assert_in("不染一尘常见维修问题.txt", files, "结果来自维修域")
 
 
-def test_hybrid_search_domain_isolation():
-    maintain = _mock_hybrid_search("边刷多久换一次", filter={"file_name": "不染一尘常见维修问题.txt"})
-    _assert(len(maintain) > 0, "维修/维护域有结果")
-    _assert_in("边刷", maintain[0]["content"], "top-1 含边刷内容")
+TESTS = [
+    test_route_domain,
+    test_is_consulting,
+    test_is_aftersales,
+    test_is_brand,
+    test_word_dict_integrity,
+    test_tokenize,
+    test_matches_filter,
+    test_rrf_fusion,
+    test_split_numbered_entries,
+    test_hybrid_domain_filter_e2e,
+]
 
 
-# ================================================================
-# 6. 组合过滤（域 + 预算，mock）
-# ================================================================
-
-def test_combined_domain_and_budget_filter():
-    filter_dict = {"$and": [
-        {"file_name": "不染一尘具体型号.txt"},
-        {"min_price": {"$lte": 1000}},
-    ]}
-    results = _mock_dense_search("不染一尘", filter=filter_dict)
-    files = {r[0]["metadata"]["file_name"] for r in results}
-    _assert_eq(len(files), 1, "只返回具体型号域")
-    _assert("不染一尘具体型号.txt" in files, "结果来自具体型号")
-
-
-# ================================================================
-# 7. 故障 SOP 域定向检索（mock）
-# ================================================================
-
-def test_repair_sop_retrieval():
-    query = SYMPTOM_MAP["吸力"]  # → "吸力下降怎么办"
-    results = _mock_hybrid_search(query, filter={"file_name": "不染一尘常见维修问题.txt"})
-    _assert(len(results) > 0, "故障 SOP 在维修域找到了结果")
-    _assert_in("吸力下降", results[0]["content"], "结果包含吸力下降内容")
-
-
-def test_symptom_mapping_retrieval():
-    for kw, std_query in SYMPTOM_MAP.items():
-        results = _mock_hybrid_search(std_query, filter={"file_name": "不染一尘常见维修问题.txt"})
-        _assert(len(results) > 0, f"症状'{kw}'→'{std_query}' 在维修域有结果")
-
-
-# ================================================================
-# 8. 边界场景（mock）
-# ================================================================
-
-def test_domain_filter_empty_query():
-    results = _mock_dense_search("", filter={"file_name": "不染一尘常见维修问题.txt"})
-    _assert_eq(len(results), 0, "空 query 无结果")
-
-
-def test_domain_filter_nonexistent_domain():
-    results = _mock_dense_search("吸力", filter={"file_name": "不存在的文件.txt"})
-    _assert_eq(len(results), 0, "不存在域名返回空")
-
-
-def test_domain_filter_special_chars():
-    results = _mock_dense_search("吸力！！！", filter={"file_name": "不染一尘常见维修问题.txt"})
-    _assert(len(results) > 0, "特殊字符不影响检索")
-
-
-def test_hybrid_search_short_query():
-    results = _mock_hybrid_search("异响", filter={"file_name": "不染一尘常见维修问题.txt"})
-    _assert(len(results) > 0, "短 query 在维修域有结果")
-
-
-# ================================================================
-# 主入口
-# ================================================================
-
-def run_all():
-    global _total, _passed, _failed
-    _total = 0
-    _passed = 0
-    _failed = []
-
-    print("=" * 70)
-    print("知识库分域召回测试（品牌化后）")
-    print("=" * 70)
-
-    print("\n── 1. 域路由 ──")
-    test_route_domain_brand()
-    test_route_domain_aftersales()
-    test_route_domain_consulting()
-    test_route_domain_repair_maintain()
-    test_route_domain_none()
-
-    print("\n── 2. 选购咨询检测 ──")
-    test_is_consulting_true()
-    test_is_consulting_false()
-
-    print("\n── 3. 症状映射 ──")
-    test_symptom_map_hit()
-    test_symptom_map_miss()
-
-    print("\n── 4. 稠密检索 + 域过滤 ──")
-    test_dense_search_domain_filter()
-    test_dense_search_no_filter()
-    test_dense_search_cross_domain()
-
-    print("\n── 5. 混合检索 + 域过滤 ──")
-    test_hybrid_search_domain_filter()
-    test_hybrid_search_domain_isolation()
-
-    print("\n── 6. 组合过滤 ──")
-    test_combined_domain_and_budget_filter()
-
-    print("\n── 7. 故障 SOP 域定向 ──")
-    test_repair_sop_retrieval()
-    test_symptom_mapping_retrieval()
-
-    print("\n── 8. 边界场景 ──")
-    test_domain_filter_empty_query()
-    test_domain_filter_nonexistent_domain()
-    test_domain_filter_special_chars()
-    test_hybrid_search_short_query()
-
-    print()
-    print("=" * 70)
-    print(f"结果: {_passed}/{_total} 通过", end="")
-    if _failed:
-        print(f", {len(_failed)} 失败:")
-        for name, reason in _failed:
-            print(f"  FAIL {name}: {reason}")
-    else:
-        print()
-    print("=" * 70)
-    return _passed, _total
-
-
-def run_e2e():
-    """端到端测试：需要 Chroma 有数据。"""
-    print("\n" + "=" * 70)
-    print("端到端检索测试（需 Chroma + 知识库已入库）")
-    print("=" * 70)
-
-    try:
-        from tools.vector_store import list_collections_info, DenseRetriever
-        from tools.hybrid_retriever import HybridRetriever
-
-        info = list_collections_info()
-        if info.get("chunk_count", 0) == 0:
-            print("  SKIP 向量库为空，跳过端到端测试")
-            return
-
-        hr = HybridRetriever()
-        hr.ensure_sparse_index()
-
-        for label, fname in [
-            ("品牌介绍", "不染一尘品牌介绍.txt"),
-            ("选购指南", "不染一尘选购指南.txt"),
-            ("常见维修", "不染一尘常见维修问题.txt"),
-            ("售后服务", "不染一尘售后服务.txt"),
-        ]:
-            chunks = hr.search("不染一尘", filter={"file_name": fname})
-            print(f"  [{label}] 域过滤 '不染一尘' → {len(chunks)} 条结果")
-
-        combined = hr.search("扫地机器人", filter={"$and": [
-            {"file_name": "不染一尘具体型号.txt"},
-            {"min_price": {"$lte": 1000}},
-        ]})
-        print(f"  [组合] 具体型号 + 预算1000以内 → {len(combined)} 条结果")
-
-    except Exception as e:
-        print(f"  SKIP 端到端测试失败: {e}")
+def run():
+    reset()
+    return run_tests("检索链路测试（域路由/分词/过滤/RRF/切分）", TESTS)
 
 
 if __name__ == "__main__":
-    passed, total = run_all()
-    if "--e2e" in sys.argv:
-        run_e2e()
-    exit_code = 0 if passed == total else 1
-    sys.exit(exit_code)
+    passed, total, skipped = run()
+    sys.exit(0 if passed == total else 1)
