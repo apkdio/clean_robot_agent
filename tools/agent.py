@@ -505,6 +505,15 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
 
     # 领域外：礼貌拒答
     if intent == "other":
+        # 维修强词兜底："维修""故障"等即使被分类器误判 other 也进 repair SOP
+        from config.word_dict_config import REPAIR_STRONG_WORDS
+        if any(w in query for w in REPAIR_STRONG_WORDS):
+            sop_id = match_sop(query)
+            if sop_id == "repair":
+                reply, _done = start_sop(session_id, sop_id, query)
+                if reply:
+                    yield reply
+                return
         yield "抱歉，我是扫地机器人专属助手，对这方面不太了解哦～你可以问我扫地机器人的选购、故障排查、使用维护等问题。"
         return
 
