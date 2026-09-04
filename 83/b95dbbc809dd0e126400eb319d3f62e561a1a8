@@ -1,0 +1,39 @@
+config/word_dict_config.py
+  s_40681318f5a20b::t_06b907b28ce604 151-152,154
+README.md
+  s_40681318f5a20b::t_292973fa66b6b6 64,115,222
+  s_40681318f5a20b::t_705636067c6f7f 48
+tools/agent.py
+  s_40681318f5a20b::t_da5e556d7aed53 328,335,338-339,488-495
+  s_40681318f5a20b::t_f45ccd98997c70 105-108,110,266-287,292,299-302,304-307,311-313,325-327,330-334,336-337,340-378,386,454-455,457-460,462,501
+  s_40681318f5a20b::t_f670697fe84562 288-291,293-298,303,308-310,314-323,456,461
+function_tools/service_point_tool.py
+  s_40681318f5a20b::t_04779b3ce43fe4 3-5,12,14,130,132-137
+sops/base.py
+  s_40681318f5a20b::t_1274e8b40d67a0 99,149,165-166
+project_detail.md
+  s_40681318f5a20b::t_cac04fbff1fb8b 396-407,409-410,412-413
+  s_40681318f5a20b::t_15828c7bb67042 408,411,666,668
+  s_40681318f5a20b::t_8f103925940615 659,661,664-665,667,669
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "83b95dbbc809dd0e126400eb319d3f62e561a1a8",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4-Pro-discount"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
