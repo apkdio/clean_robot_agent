@@ -1,0 +1,44 @@
+sops/base.py
+  h_26b9a38f4942dd 72,82,92
+  s_40681318f5a20b::t_83e1011f574b3b 62,66-71,73-81,83-91,93-98,100,105,110-112,116,121,150,172-174,177-181,183-186,188-244
+config/redis_template.yaml
+  s_40681318f5a20b::t_3f9e11935ecce1 1-8
+README.md
+  s_40681318f5a20b::t_dfe2d7be97bb6a 13,108,214,240
+tools/redis_store.py
+  s_40681318f5a20b::t_20ae5f15659aef 90-122
+  s_40681318f5a20b::t_2753cc99cec348 1-89
+webapp/app.py
+  h_26b9a38f4942dd 139
+  s_40681318f5a20b::t_f775aaf08812bf 86-99,107-109,119-120
+  s_40681318f5a20b::t_21d07400abf214 136-138,171-172
+tools/config_tool.py
+  s_40681318f5a20b::t_2f1a38ed5177e2 10
+tools/hot_ingest.py
+  s_40681318f5a20b::t_2f6734875ed7ca 170-175,192-193
+.gitignore
+  s_40681318f5a20b::t_88369d0651a637 17
+project_detail.md
+  s_40681318f5a20b::t_cadbc5140b5c16 685-695
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "2e19e981e8396fac8e2ab96c9338947e3dfece3d",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4-Pro-discount"
+      },
+      "human_author": null
+    }
+  }
+}
