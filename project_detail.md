@@ -682,6 +682,17 @@ SOP 推荐结束后，用户常追问上一轮结果。按语义分两类：
 
 **原因**：日期结构化输出的语义是"枚举某时间段发布的产品型号"，而非"某时间发生了什么"。在日期解析前加 `BRAND_EVENT_WORDS` 黑名单（经历/大事/发生/新闻/事件/动态/历程/发展/变化/趋势/里程碑/回顾/盘点），命中则跳过日期解析走 RAG（品牌介绍域）。正常日期产品查询（"2025年三月发布了哪些产品""最近半年出了哪些新款"）不受影响。
 
+### ADR-25：SOP 会话状态与锁迁移到 Redis（降级可回退）
+
+**背景**：SOP 会话状态（`_sessions`）、会话并发锁（`_busy_sessions`）、热更新摄入锁（`threading.Lock`）原本都是进程内存态——单进程有效，多 worker/gunicorn 部署即失效，重启即丢失。引入 Redis 后把这些迁移到 Redis。
+
+**原因**：
+- **迁移范围（第一批，进程内存态收益最大）**：① SOP 会话状态 → `sop:session:{id}`（JSON + TTL 30 分钟）；② 会话并发锁 → `lock:session:{id}`；③ 摄入锁 → `lock:ingest`（后两者均 SET NX + EX）
+- **降级可回退**：`tools/redis_store.py` 的 `get_redis()` 懒加载连接，失败返回 None；各业务方在 None 时回退本地 `_sessions`/本地 set，保证无 Redis 也能跑、功能不受影响
+- **锁用 SET NX 原子命令**：Redis 单线程执行模型保证单命令原子，`SET key 1 NX EX ttl` 把「判断不存在 + 设置 + 过期」打包成一条命令，规避"先 GET 再 SET"两步的竞态；EX 过期防死锁
+- **配置不入库**：`config/redis.yaml`（含密码）gitignore，`redis_template.yaml` 提交
+- **剩余迁移（第二批，暂缓）**：上下文缓存、meta 元数据、型号缓存 `models.pkl`、热更新指纹快照——B 类（读多写少），收益主要在"多进程共享 + 统一失效"，不急；BM25/向量库/分类模型不适合 Redis（C 类）
+
 ---
 
 ## 六、已知问题与坑

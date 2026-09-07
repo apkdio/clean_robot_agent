@@ -7,6 +7,7 @@ _CONFIG_PATHS = {
     "chroma": "config/chroma.yaml",
     "prompts": "config/prompts.yaml",
     "agent": "config/agent.yaml",
+    "redis": "config/redis.yaml",
 }
 
 

@@ -31,8 +31,6 @@ _SNAPSHOT_FILE = "data/state/ingest_snapshot.json"
 
 _SUPPORTED_EXTS = (".txt", ".md", ".pdf", ".csv", ".docx", ".pptx", ".xlsx")
 
-_lock = threading.Lock()          # 序列化摄入与重置操作
-
 
 # ──────────────────────────────────────────────────────────────────────────
 # 快照
@@ -169,7 +167,12 @@ def run_once(data_dir: str = None) -> bool:
         logger.warning("[HotIngest] knowledge dir missing: %s", data_dir)
         return False
 
-    with _lock:
+    # 摄入锁：Redis 分布式锁（多实例只有一个摄入），不可用回退本地；被占用则跳过本次周期
+    from redis_store import acquire_lock, release_lock
+    if not acquire_lock("lock:ingest"):
+        logger.info("[HotIngest] another ingest in progress, skip this cycle")
+        return False
+    try:
         old = load_snapshot()
         new = scan_files(data_dir)
         added, changed, removed = diff_snapshot(old, new)
@@ -186,6 +189,8 @@ def run_once(data_dir: str = None) -> bool:
         _rebuild_sparse_index()
         save_snapshot(new)
         return True
+    finally:
+        release_lock("lock:ingest")
 
 
 def hot_ingest_loop(data_dir: str = None, interval: int = _SCAN_INTERVAL) -> None:

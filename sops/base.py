@@ -59,32 +59,66 @@ def get_last_recommend(session_id: str):
     return get_last_models(session_id)
 
 
-# 当前活跃会话，按 session_id 隔离
+# 当前活跃会话，按 session_id 隔离（Redis 可用时存 Redis，否则本地降级）
 _sessions = {}
 
 
+def _session_key(session_id: str) -> str:
+    return f"sop:session:{session_id}"
+
+
+def _load_session(session_id: str):
+    """读会话状态。Redis 可用从 Redis 读，否则从本地 _sessions 读。"""
+    from tools.redis_store import get_redis, json_loads
+    r = get_redis()
+    if r is not None:
+        raw = r.get(_session_key(session_id))
+        return json_loads(raw) if raw else None
+    return _sessions.get(session_id)
+
+
+def _save_session(session_id: str, session: dict):
+    """写会话状态。Redis 可用写 Redis（带 TTL），否则写本地 _sessions。"""
+    from tools.redis_store import get_redis, json_dumps, sop_ttl
+    r = get_redis()
+    if r is not None:
+        r.set(_session_key(session_id), json_dumps(session), ex=sop_ttl())
+    else:
+        _sessions[session_id] = session
+
+
+def _delete_session(session_id: str):
+    """删除会话状态。"""
+    from tools.redis_store import get_redis
+    r = get_redis()
+    if r is not None:
+        r.delete(_session_key(session_id))
+    _sessions.pop(session_id, None)
+
+
 def has_active_sop(session_id: str) -> bool:
-    return session_id in _sessions
+    return _load_session(session_id) is not None
 
 
 def get_active_sop_id(session_id: str):
     """返回指定会话活跃 SOP 的 id；无活跃 SOP 时返回 None。"""
-    s = _sessions.get(session_id)
+    s = _load_session(session_id)
     return s["sop_id"] if s else None
 
 
 def _start(session_id: str, sop_id: str):
-    _sessions[session_id] = {"sop_id": sop_id, "step": 0, "slots": {}, "retry_count": 0}
-    return _sessions[session_id]
+    session = {"sop_id": sop_id, "step": 0, "slots": {}, "retry_count": 0}
+    _save_session(session_id, session)
+    return session
 
 
 def _end(session_id: str):
-    _sessions.pop(session_id, None)
+    _delete_session(session_id)
 
 
 def end_sop(session_id: str):
     """主动结束指定会话的 SOP（用户说「算了/退出」等场景）。"""
-    s = _sessions.get(session_id)
+    s = _load_session(session_id)
     if s:
         logger.info(f"[SOP] SOP End:{s['sop_id']}")
     _end(session_id)
@@ -113,7 +147,7 @@ def start_sop(session_id: str, sop_id: str, query: str):
 
 def continue_sop(session_id: str, query: str):
     """继续指定会话的 SOP。返回 (reply, done)；无活跃 SOP 时返回 None。"""
-    if session_id not in _sessions:
+    if not has_active_sop(session_id):
         return None
     return _run(session_id, query)
 
@@ -135,69 +169,79 @@ def match_sop(query: str):
 
 def _run(session_id: str, user_input: str):
     """执行/推进指定会话的 SOP。返回 (reply_text, done)。"""
-    session = _sessions[session_id]
+    session = _load_session(session_id)
+    if session is None:
+        return "", True
     sop = SOPS[session["sop_id"]]
     steps = sop["steps"]
+    ended = False  # 是否已结束（reply/异常防御里 _end 置 True）
 
-    while session["step"] < len(steps):
-        step = steps[session["step"]]
+    try:
+        while session["step"] < len(steps):
+            step = steps[session["step"]]
 
-        if step["type"] == "ask":
-            # 有用户输入 → 尝试提取槽位；否则 → 问问题
-            if user_input is None:
-                logger.info("[SOP] %s ask slot=%s", sop["id"], step.get("slot"))
-                return step["ask"], False
-            value = step["extract"](user_input, session["slots"])
-            if value is None:
-                # 提取失败：累加重试次数，超过上限则放弃该槽位（记 None 跳过）
-                session["retry_count"] = session.get("retry_count", 0) + 1
-                if session["retry_count"] > sop.get("max_retry", 2):
-                    session["slots"][step["slot"]] = None
-                    session["step"] += 1
-                    session["retry_count"] = 0
-                    user_input = None
-                    logger.warning("[SOP] %s slot %s abandoned after retries", sop["id"], step["slot"])
-                    continue
-                # 首轮提取失败（retry_count==1）→ 用 ask 话术（还没问过用户）
-                # 后续提取失败（retry_count≥2）→ 用 retry 话术（重问）
-                logger.info("[SOP] %s slot %s extract failed (retry=%d)", sop["id"], step["slot"], session["retry_count"])
-                if session["retry_count"] == 1:
+            if step["type"] == "ask":
+                # 有用户输入 → 尝试提取槽位；否则 → 问问题
+                if user_input is None:
+                    logger.info("[SOP] %s ask slot=%s", sop["id"], step.get("slot"))
                     return step["ask"], False
-                return step.get("retry", step["ask"]), False
-            # 提取成功，重置重试计数
-            session["slots"][step["slot"]] = value
-            session["step"] += 1
-            session["retry_count"] = 0
-            user_input = None
-            logger.info("[SOP] %s slot %s = %s", sop["id"], step["slot"], value)
-            continue
+                value = step["extract"](user_input, session["slots"])
+                if value is None:
+                    # 提取失败：累加重试次数，超过上限则放弃该槽位（记 None 跳过）
+                    session["retry_count"] = session.get("retry_count", 0) + 1
+                    if session["retry_count"] > sop.get("max_retry", 2):
+                        session["slots"][step["slot"]] = None
+                        session["step"] += 1
+                        session["retry_count"] = 0
+                        user_input = None
+                        logger.warning("[SOP] %s slot %s abandoned after retries", sop["id"], step["slot"])
+                        continue
+                    # 首轮提取失败（retry_count==1）→ 用 ask 话术（还没问过用户）
+                    # 后续提取失败（retry_count≥2）→ 用 retry 话术（重问）
+                    logger.info("[SOP] %s slot %s extract failed (retry=%d)", sop["id"], step["slot"], session["retry_count"])
+                    if session["retry_count"] == 1:
+                        return step["ask"], False
+                    return step.get("retry", step["ask"]), False
+                # 提取成功，重置重试计数
+                session["slots"][step["slot"]] = value
+                session["step"] += 1
+                session["retry_count"] = 0
+                user_input = None
+                logger.info("[SOP] %s slot %s = %s", sop["id"], step["slot"], value)
+                continue
 
-        elif step["type"] == "action":
-            # 执行 skill，结果存入 result；若含结构化型号列表则保存供追问
-            result = step["action"](session["slots"])
-            session["result"] = result
-            if isinstance(result, dict) and "models" in result:
-                save_recommend(session_id, result["models"])
-            session["step"] += 1
-            model_cnt = len(result.get("models", [])) if isinstance(result, dict) else 0
-            logger.info("[SOP] %s action executed (%d models)", sop["id"], model_cnt)
-            continue
+            elif step["type"] == "action":
+                # 执行 skill，结果存入 result；若含结构化型号列表则保存供追问
+                result = step["action"](session["slots"])
+                session["result"] = result
+                if isinstance(result, dict) and "models" in result:
+                    save_recommend(session_id, result["models"])
+                session["step"] += 1
+                model_cnt = len(result.get("models", [])) if isinstance(result, dict) else 0
+                logger.info("[SOP] %s action executed (%d models)", sop["id"], model_cnt)
+                continue
 
-        elif step["type"] == "reply":
-            # 输出结果并结束
-            ctx = {**session["slots"], **session.get("result", {})}
-            try:
-                reply = step["template"].format(**ctx)
-            except (KeyError, IndexError):
-                reply = step.get("fallback", "抱歉，出了一点小问题，请重新提问～")
-            _end(session_id)
-            logger.info("[SOP] %s finished", sop["id"])
-            return reply, True
+            elif step["type"] == "reply":
+                # 输出结果并结束
+                ctx = {**session["slots"], **session.get("result", {})}
+                try:
+                    reply = step["template"].format(**ctx)
+                except (KeyError, IndexError):
+                    reply = step.get("fallback", "抱歉，出了一点小问题，请重新提问～")
+                ended = True
+                _end(session_id)
+                logger.info("[SOP] %s finished", sop["id"])
+                return reply, True
 
-    # 步骤走完但无 reply（异常防御），安全结束
-    _end(session_id)
-    logger.warning("[SOP] %s ended without reply", sop["id"])
-    return "", True
+        # 步骤走完但无 reply（异常防御），安全结束
+        ended = True
+        _end(session_id)
+        logger.warning("[SOP] %s ended without reply", sop["id"])
+        return "", True
+    finally:
+        # 会话未结束（停在 ask 等下一轮）→ 保存最新状态
+        if not ended:
+            _save_session(session_id, session)
 
 
 def handle_followup(session_id: str, query: str):

@@ -45,9 +45,6 @@ os.makedirs(_upload_dir, exist_ok=True)
 
 _supported_exts = tuple(_rag_cfg.get("supported_exts", [".txt", ".pdf"]))
 
-# 正在处理中的会话（回答未完成时拒绝同会话新请求，防止并发串扰）
-_busy_sessions = set()
-
 
 @app.route("/")
 def index():
@@ -85,14 +82,21 @@ def ingest():
     upload.save(save_path)
     logger.info(f"[Ingest] Saved upload: {save_path}")
 
-    # 摄入到向量库
-    result = ingest_file(save_path)
-
-    # 摄入完成后清理临时文件
     try:
-        os.remove(save_path)
-    except OSError:
-        pass
+        # 摄入到向量库（摄入锁：与热更新/重置互斥）
+        from tools.redis_store import acquire_lock, release_lock
+        if not acquire_lock("lock:ingest"):
+            return jsonify({"status": "busy", "message": "正在摄入知识库，请稍候"}), 409
+        try:
+            result = ingest_file(save_path)
+        finally:
+            release_lock("lock:ingest")
+    finally:
+        # 摄入完成后清理临时文件
+        try:
+            os.remove(save_path)
+        except OSError:
+            pass
 
     code = 200 if result.get("status") == "ok" else 500
     return jsonify(result), code
@@ -100,6 +104,9 @@ def ingest():
 
 @app.route("/api/reset", methods=["POST"])
 def reset():
+    from tools.redis_store import acquire_lock, release_lock
+    if not acquire_lock("lock:ingest"):
+        return jsonify({"status": "busy", "message": "正在摄入知识库，请稍候"}), 409
     try:
         deleted = reset_collection()
         # 使热更新快照失效，以便下一个周期从头重新摄入
@@ -109,6 +116,8 @@ def reset():
     except Exception as e:
         logger.error(f"[Reset] {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        release_lock("lock:ingest")
 
 
 @app.route("/api/chat/stream", methods=["POST"])
@@ -124,10 +133,11 @@ def chat_stream():
     lng = data.get("lng")
     lat = data.get("lat")
 
-    # 会话级锁：同一会话回答未完成时拒绝新请求（前端按钮 + enter 双保险）
-    if session_id in _busy_sessions:
+    # 会话级锁：同一会话回答未完成时拒绝新请求（Redis SETNX + 本地降级）
+    from tools.redis_store import acquire_lock
+    lock_key = f"lock:session:{session_id}"
+    if not acquire_lock(lock_key): # 方法内已经实现加锁逻辑
         return jsonify({"status": "busy", "message": "正在回答中，请稍候"}), 409
-    _busy_sessions.add(session_id)
 
     logger.info(f"[Stream] query: {query[:60]}... session={session_id}")
 
@@ -158,7 +168,8 @@ def chat_stream():
                 logger.warning(f"[Stream] Generate title failed: {e}")
             yield "data: [DONE]\n\n"
         finally:
-            _busy_sessions.discard(session_id)
+            from tools.redis_store import release_lock
+            release_lock(lock_key)
 
     return Response(
         stream_with_context(generate()),

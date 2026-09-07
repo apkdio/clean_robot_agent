@@ -10,6 +10,7 @@
 - **工具调用**：LLM function calling，内置日期/预算/故障分类/型号提取工具，支持"最近半年""一千来块"等口语化结构化提取
 - **多轮 SOP 引导**：选购推荐、故障排查等场景按标准流程多轮引导，进入时给开场提示，支持追问（比较新/更便宜/最贵）与最近发布查询
 - **售后网点定位**：识别"最近的售后网点"等查询，通过 geonamescache 离线解析城市经纬度 + Haversine 距离排序返回最近网点，重名城市（如"洛阳"）多轮消歧
+- **Redis 可选接入**：SOP 会话状态、会话并发锁、热更新摄入锁迁移到 Redis（分布式锁/跨实例共享），未配置 Redis 时自动降级到本地内存，功能不受影响
 - **知识库分域**：按场景（品牌/选购/型号/故障/售后/维护 6 域）定向检索对应知识域，避免跨域词带偏召回
 - **品牌化**：全面转型"不染一尘"品牌专属客服；品牌咨询、售后咨询走 RAG 直答，安全危险现象前置拦截
 - **情绪安抚**：识别负面情绪（投诉/烦躁等）前置安抚，只安抚不拦截
@@ -104,6 +105,7 @@ clean_robot_agent/
 | `log_tool.py` | 日志（控制台彩色 + 文件，按 `logs/<模块>/<日期>/` 分目录） |
 | `config_tool.py` / `path_tool.py` / `prompts_tool.py` | 配置 / 路径 / Prompt 加载 |
 | `context_store.py` | 会话上下文：按 session_id 持久化最近 6 轮对话（jsonl）+ meta 元数据（LLM 标题）+ 会话增删查改 |
+| `redis_store.py` | Redis 连接封装 + 互斥锁（SET NX）+ 降级回退：无 Redis 时自动回退本地内存 |
 
 ## 工具调用模块（function_tools/）
 
@@ -209,6 +211,7 @@ python intent_classifier_training/train_intent_classifier.py
 | `agent.yaml` | `llm.model`（生成模型）、`behavior.retrieval_only`（纯检索模式开关） |
 | `rag.yaml` | `chunk.chunk_size`、`retrieval.dense_top_k/sparse_top_k/final_top_k`、`rrf.*` |
 | `chroma.yaml` | `persist_dir`、`collection_name`、`embedding.model` |
+| `redis.yaml` | `host`/`port`/`password`（Redis 连接）、`sop_ttl`（SOP 会话过期）、`lock_ttl`（锁过期） |
 
 ## 问答流程
 
@@ -234,5 +237,6 @@ python intent_classifier_training/train_intent_classifier.py
 ## 注意事项
 
 - 所有模型本地运行，无云端依赖
+- Redis 为可选依赖：未配置 `config/redis.yaml` 时，SOP 会话状态/并发锁/摄入锁自动降级到本地内存，功能不受影响
 - `data/vector_store/`、`data/pkl/`、`data/state/`、`data/bgm_model/`、`data/context/`、`data/context_meta/` 为运行时产物，已加入 `.gitignore`
 - 配置文件 `config/*.yaml`（非 template）含本地环境信息，已加入 `.gitignore`
