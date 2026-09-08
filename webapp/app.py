@@ -31,6 +31,24 @@ from tools.vector_store import (
     reset_collection,
 )
 
+# 统一「裸导入」与「包导入」的模块身份。
+# tools 内部模块用裸导入（from xxx import），webapp 用包导入（from tools.xxx import），
+# 同一文件会被加载两次、模块级状态分裂（如 agent._hybrid_retriever 单例、redis_store 锁）。
+# 这里把所有 tools 模块统一按包加载，并把裸模块名指向包实例，后续裸 import 命中同一实例。
+import importlib as _importlib
+_TOOL_MODULES = (
+    "agent", "config_tool", "log_tool", "context_store", "metadata_extractor",
+    "redis_store", "vector_store", "llm_tool", "prompts_tool", "hot_ingest",
+    "hybrid_retriever", "sparse_retriever", "rrf_fusion", "entry_splitter",
+    "file_tools", "path_tool", "intent_router",
+)
+for _name in _TOOL_MODULES:
+    try:
+        _pkg_module = _importlib.import_module(f"tools.{_name}")
+        sys.modules[_name] = _pkg_module
+    except ImportError:
+        pass
+
 logger = get_logger(name="webapp")
 
 app = Flask(
@@ -44,6 +62,33 @@ _upload_dir = os.path.join(str(_PROJECT_ROOT), "temp", "uploads")
 os.makedirs(_upload_dir, exist_ok=True)
 
 _supported_exts = tuple(_rag_cfg.get("supported_exts", [".txt", ".pdf"]))
+
+# 停止回答标志（Redis + 内存降级）
+_stop_flags = set()
+
+
+def _set_stop(session_id: str):
+    from tools.redis_store import get_redis
+    r = get_redis()
+    if r is not None:
+        r.set(f"stop:{session_id}", "1", ex=120)
+    _stop_flags.add(session_id)
+
+
+def _is_stopped(session_id: str) -> bool:
+    from tools.redis_store import get_redis
+    r = get_redis()
+    if r is not None:
+        return bool(r.exists(f"stop:{session_id}"))
+    return session_id in _stop_flags
+
+
+def _clear_stop(session_id: str):
+    from tools.redis_store import get_redis
+    r = get_redis()
+    if r is not None:
+        r.delete(f"stop:{session_id}")
+    _stop_flags.discard(session_id)
 
 
 @app.route("/")
@@ -120,6 +165,16 @@ def reset():
         release_lock("lock:ingest")
 
 
+@app.route("/api/chat/stop", methods=["POST"])
+def chat_stop():
+    """设置停止标志，中断当前会话的流式回答。"""
+    data = request.get_json(silent=True) or {}
+    session_id = ensure_session_id(data.get("session_id", ""))
+    _set_stop(session_id)
+    logger.info(f"[Stream] stop requested, session={session_id}")
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/chat/stream", methods=["POST"])
 def chat_stream():
     """通过 Server-Sent Events 流式返回回答片段。"""
@@ -144,17 +199,26 @@ def chat_stream():
     def generate():
         try:
             import json
-            from tools.context_store import append_message
+            from tools.context_store import append_message, rollback_last_user_message
             from sops.base import get_last_recommend
             parts = []
+            stopped = False
             try:
                 for chunk in ask_stream(query, session_id, lng=lng, lat=lat):
+                    if _is_stopped(session_id):
+                        stopped = True
+                        break
                     parts.append(chunk)
                     # JSON 编码，避免 chunk 内的换行符破坏 SSE 帧格式
                     yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
             except Exception as e:
                 logger.error(f"[Stream] {e}")
                 yield f"data: {json.dumps(f'[错误: {e}]', ensure_ascii=False)}\n\n"
+            if stopped:
+                # 停止：回滚这一轮（忽略进上下文），首句取消则会话不落地磁盘
+                rollback_last_user_message(session_id)
+                yield "data: [STOPPED]\n\n"
+                return
             # 记录 assistant 完整回答 + 结构化推荐（供自由指代消解）
             full_answer = "".join(parts)
             append_message(session_id, "assistant", full_answer, models=get_last_recommend(session_id))
@@ -170,6 +234,7 @@ def chat_stream():
         finally:
             from tools.redis_store import release_lock
             release_lock(lock_key)
+            _clear_stop(session_id)
 
     return Response(
         stream_with_context(generate()),

@@ -153,6 +153,54 @@ def append_message(session_id: str, role: str, content: str, **meta):
         f.write(json.dumps(msg, ensure_ascii=False) + "\n")
 
 
+def rollback_last_user_message(session_id: str):
+    """停止回答时回滚最后一条用户消息（这一轮不进入上下文）。
+
+    jsonl 追加写，回滚 = 删除最后一条 user 及其后的消息（此时 assistant 尚未写入）。
+    若删除后会话为空（第一句就取消），删除整个会话（jsonl + meta + 缓存），不落地磁盘。
+    """
+    # 1. 内存缓存回滚：pop 最后一条 user 及其后的消息
+    cache = _cache.get(session_id)
+    if cache is not None:
+        while cache and cache[-1].get("role") != "user":
+            cache.pop()
+        if cache:
+            cache.pop()
+
+    # 2. jsonl 回滚：删除最后一条 user 及其后的行
+    fp = _file_path(session_id)
+    if not os.path.exists(fp):
+        return
+    try:
+        with open(fp, encoding="utf-8") as f:
+            lines = f.readlines()
+    except Exception:
+        return
+
+    while lines:
+        try:
+            last = json.loads(lines[-1])
+        except json.JSONDecodeError:
+            lines.pop()
+            continue
+        if last.get("role") != "user":
+            lines.pop()
+            continue
+        lines.pop()  # 删除最后一条 user
+        break
+
+    if not lines:
+        # 第一句就取消 → 会话不落地，删除 jsonl + meta + 缓存
+        delete_session(session_id)
+        return
+
+    try:
+        with open(fp, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+    except Exception:
+        pass
+
+
 def get_recent(session_id: str, n: int = None) -> list:
     """取最近 n 条消息（默认 6 轮）。优先内存缓存，未缓存则读文件。"""
     n = n or _MAX_MESSAGES

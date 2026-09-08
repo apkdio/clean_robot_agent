@@ -269,7 +269,7 @@
 
     <div class="chat-input-area">
       <textarea id="chatInput" rows="1" placeholder="输入你的问题…" onkeydown="handleKey(event)"></textarea>
-      <button id="sendBtn" onclick="sendMessage()" title="发送">➤</button>
+      <button id="sendBtn" onclick="handleSendBtn()" title="发送">➤</button>
     </div>
   </div>
 
@@ -647,6 +647,7 @@
     scrollBottom();
 
     let streamedText = '';
+    let stoppedByUser = false;
 
     try {
       // 查网点时尝试获取定位（授权一次后缓存），失败静默降级到城市提取
@@ -676,6 +677,7 @@
           if (part.startsWith('data: ')) {
             const payload = part.slice(6);
             if (payload === '[DONE]') continue;
+            if (payload === '[STOPPED]') { stoppedByUser = true; break; }
             let chunk;
             try { chunk = JSON.parse(payload); } catch { chunk = payload; }
             streamedText += chunk;
@@ -683,12 +685,40 @@
             scrollBottom();
           }
         }
+        if (stoppedByUser) break;
+      }
+
+      if (stoppedByUser) {
+        bubble.innerHTML = md(streamedText + '\n\n（已停止）');
+        scrollBottom();
       }
     } catch (err) {
       bubble.innerHTML = md('抱歉，连接失败，请检查服务是否启动。');
     }
 
     if (retry) retry.style.display = '';
+  }
+
+  function setSendBtn(streaming) {
+    sendBtn.innerHTML = streaming ? '■' : '➤';
+    sendBtn.title = streaming ? '停止回答' : '发送';
+    sendBtn.disabled = false;
+  }
+
+  function stopAnswer() {
+    fetch('/api/chat/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId })
+    });
+  }
+
+  function handleSendBtn() {
+    if (isStreaming) {
+      stopAnswer();
+    } else {
+      sendMessage();
+    }
   }
 
   async function sendMessage() {
@@ -702,7 +732,7 @@
     chatInput.value = '';
     chatInput.style.height = 'auto';
     isStreaming = true;
-    sendBtn.disabled = true;
+    setSendBtn(true);
 
     // Create bot bubble with loading dots
     const botDiv = document.createElement('div');
@@ -724,7 +754,7 @@
       loadSessions();
     } finally {
       isStreaming = false;
-      sendBtn.disabled = false;
+      setSendBtn(false);
       chatInput.focus();
     }
   }

@@ -19,7 +19,7 @@ chunk:
 retrieval:
   dense_top_k: 10           # candidate count per dense search（before RRF）
   sparse_top_k: 10           # candidate count per BM25 search（before RRF）
-  final_top_k: 3             # result count after RRF fusion
+  final_top_k: 5             # result count after RRF fusion
   score_threshold: 0.25     # minimum similarity score (cosine) to include a chunk
 
 # Sparse retrieval (BM25 keyword matching)

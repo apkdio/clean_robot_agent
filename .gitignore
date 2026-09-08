@@ -26,6 +26,11 @@ temp/
 # Independent demo modules
 Multi_Route_Retrieval/
 
+# Local planning docs（本地规划文档，不随仓库发布）
+OPTIMIZATION_ROADMAP.md
+graduation_project.md
+project_detail.md
+
 # OS
 .DS_Store
 Thumbs.db

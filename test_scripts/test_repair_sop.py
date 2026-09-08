@@ -18,6 +18,15 @@ import sops.repair
 
 def _cleanup():
     sops.base._sessions = {}
+    # 会话状态已迁到 Redis，同时清空 Redis 里的 SOP 会话，避免测试间残留
+    try:
+        from tools.redis_store import get_redis
+        r = get_redis()
+        if r is not None:
+            for k in r.keys("sop:session:*"):
+                r.delete(k)
+    except Exception:
+        pass
 
 
 # ──────────────────────────────────────────────────────────────

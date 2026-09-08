@@ -215,23 +215,34 @@ python intent_classifier_training/train_intent_classifier.py
 
 ## 问答流程
 
-```
-用户提问
-  → 提示词注入检测（命中直接拒绝）
-  → 记录用户消息（RAG 生成时拼接历史，LLM 自主消解指代）
-  → 负面情绪安抚（只安抚不拦截）
-  → SOP 会话检查（有活跃 SOP → 继续多轮引导）
-  → intent_router（本地分类头）
-      ├─ other（领域外）→ 礼貌拒答
-      ├─ casual（闲聊）→ 自然回应
-      ├─ unknown（模糊）→ 软引导 + RAG
-      └─ robot（领域内）
-          ├─ 选购意图且无预算 → 进入选购 SOP 多轮引导
-          ├─ 含日期 → 日期工具（规则解析 / LLM function calling）→ 日期范围
-          ├─ 含预算 → metadata 过滤 → 结构化直出型号列表
-          ├─ 网点查询 → 网点工具（geonamescache 解析位置 → 距离直出）
-          └─ 其他 → 知识域路由 → 双路召回（dense+sparse→RRF）→ LLM 生成
-  → 流式输出（SSE）
+```mermaid
+flowchart TD
+    Q["用户提问"] --> G1["① 提示词注入检测 → 命中直接拒绝<br/>② 危险现象检测 → 命中停机转售后"]
+    G1 --> G2["③ 记录用户消息（供 RAG 拼接历史、自主消解指代）<br/>④ 负面情绪安抚（只安抚不拦截）"]
+    G2 --> G3{"⑤ 有活跃 SOP？"}
+    G3 -->|是| S1["继续多轮引导"]
+    G3 -->|否| IR{"⑥ intent_router（本地分类头）"}
+    IR -->|other| O1["礼貌拒答"]
+    IR -->|casual| O2["自然回应"]
+    IR -->|unknown| O3["软引导"]
+    IR -->|robot| G4["⑦ 场景分支（按序判定，命中即返回）"]
+    O3 --> G4
+    G4 --> C1["追问检测 → 基于上一轮推荐筛选"]
+    G4 --> C2["型号查询 → 型号详情 / 对比"]
+    G4 --> C3["系列查询 → 系列型号枚举直出"]
+    G4 --> C4["网点查询 → geonamescache 解析位置 → 距离直出"]
+    G4 --> C5["SOP 触发 → 选购 / 故障排查多轮引导"]
+    G4 --> C6["含日期 → 日期工具（规则 / LLM function calling）→ 日期范围"]
+    G4 --> C7["含预算 → metadata 过滤 → 结构化直出型号列表"]
+    G4 --> C8["其他 → 知识域路由 → 双路召回（dense+sparse→RRF）→ LLM 生成"]
+    C1 --> OUT["SSE 流式输出"]
+    C2 --> OUT
+    C3 --> OUT
+    C4 --> OUT
+    C5 --> OUT
+    C6 --> OUT
+    C7 --> OUT
+    C8 --> OUT
 ```
 
 ## 注意事项
