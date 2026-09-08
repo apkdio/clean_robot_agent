@@ -1,0 +1,28 @@
+test_scripts/test_purchase_sop.py
+  s_40681318f5a20b::t_9fa184a8f5ebb7 31-39
+tools/context_store.py
+  s_40681318f5a20b::t_f0d1e02f9389e7 156-203
+test_scripts/test_repair_sop.py
+  s_40681318f5a20b::t_bad810a408aa94 21-29
+webapp/templates/index.html
+  s_40681318f5a20b::t_81387165cae21d 272,650,680,688-693,702-723,735,757
+webapp/app.py
+  s_40681318f5a20b::t_bb2c186e20716b 66-92,168-177,202,205,208-210,217-221,237
+  s_40681318f5a20b::t_2640d1b602b1f0 34-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "ec4bb3200252268f27fd305d061988efc9c364e6",
+  "prompts": {},
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4-Pro-discount"
+      },
+      "human_author": null
+    }
+  }
+}
