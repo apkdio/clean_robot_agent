@@ -8,6 +8,7 @@
   - delete_session（清理 jsonl + meta + 缓存）
   - ensure_session_id（UUID 双端校验）
   - list_sessions（会话列表）
+  - 文件命名：新会话带创建时间戳、历史命名兼容
   - generate_session_title（LLM 失败时的 fallback，monkeypatch 强制异常）
 
 运行：
@@ -117,11 +118,49 @@ def test_list_sessions():
     entry = next(s for s in ctx.list_sessions() if s["session_id"] == sid)
     _assert_eq(entry["title"], "选购咨询", "列表读标题")
     _assert_eq(entry["messages"], 1, "列表消息数")
+    _assert(entry["created_at"].startswith("20"), "列表带创建时间")
     ctx.delete_session(sid)
 
 
 # ──────────────────────────────────────────────────────────────
-# 4. 会话标题生成（LLM 失败 fallback）
+# 4. 文件命名：带会话创建时间（新命名 + 历史命名兼容）
+# ──────────────────────────────────────────────────────────────
+
+def test_session_filename_has_created_ts():
+    """新会话文件名 = <session_id>_<YYYYMMDD_HHMM>.jsonl，meta 与它同名。"""
+    import os
+    import re
+    sid = _new_sid()
+    ctx.append_message(sid, "user", "你好")
+    fp, mp = ctx._paths(sid)
+    base, meta_base = os.path.basename(fp), os.path.basename(mp)
+    _assert(re.match(rf"^{re.escape(sid)}_\d{{8}}_\d{{4}}\.jsonl$", base),
+            f"jsonl 命名带创建时间: {base}")
+    _assert_eq(meta_base, base[:-6] + ".meta.json", "meta 与 jsonl 同名")
+    # 同一进程内重复解析不应改变文件名（创建时间只在首次确定）
+    _assert_eq(ctx._file_path(sid), fp, "重复解析路径不变")
+    ctx.delete_session(sid)
+
+
+def test_legacy_filename_compat():
+    """历史命名 <session_id>.jsonl（无时间戳）仍可读写与列出。"""
+    import os
+    sid = _new_sid()
+    legacy = os.path.join(ctx._CONTEXT_DIR, f"{sid}.jsonl")
+    os.makedirs(ctx._CONTEXT_DIR, exist_ok=True)
+    with open(legacy, "w", encoding="utf-8") as f:
+        f.write('{"role": "user", "content": "老会话", "ts": "2026-09-01T10:00:00"}\n')
+    try:
+        _assert_eq(len(ctx.get_recent(sid)), 1, "历史文件可回读")
+        entry = next((s for s in ctx.list_sessions() if s["session_id"] == sid), None)
+        _assert(entry is not None, "历史会话出现在列表中")
+        _assert_eq(entry["created_at"], "", "历史文件无创建时间")
+    finally:
+        ctx.delete_session(sid)
+
+
+# ──────────────────────────────────────────────────────────────
+# 5. 会话标题生成（LLM 失败 fallback）
 # ──────────────────────────────────────────────────────────────
 
 def test_generate_session_title_fallback():
@@ -150,6 +189,8 @@ TESTS = [
     test_delete_session,
     test_ensure_session_id,
     test_list_sessions,
+    test_session_filename_has_created_ts,
+    test_legacy_filename_compat,
     test_generate_session_title_fallback,
 ]
 

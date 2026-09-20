@@ -45,12 +45,13 @@ clean_robot_agent/
 │   ├── knowledge/               # 知识库源文件（txt/pdf，热更新监控目录）
 │   ├── knowledge_example/       # 知识库格式模板示例
 │   ├── datasets/                # 意图分类训练数据集（JSONL）
-│   ├── context/                 # 对话上下文持久化（jsonl，按会话分文件）
+│   ├── context/                 # 对话上下文持久化（jsonl，文件名 = session_id + 创建时间）
 │   ├── service_point/           # 售后网点数据（网点清单，城市坐标由 geonamescache 提供）
 │   ├── bgm_model/               # 训练好的分类头模型
 │   ├── pkl/                     # BM25 pickle 缓存
 │   ├── state/                   # 热更新指纹快照
-│   └── vector_store/            # Chroma 持久化向量库
+│   ├── vector_store/            # Chroma 持久化向量库
+│   └── eval/                    # 检索评测集与基线（本地数据，已 gitignore）
 ├── prompts/                     # Prompt 模板（system/摘要/报告）
 ├── tools/                       # 核心工具模块（详见下节）
 ├── function_tools/              # LLM 工具调用（function calling）工具
@@ -74,7 +75,8 @@ clean_robot_agent/
 │   ├── test_function_tools.py   # 日期/预算/型号/症状/网点五个工具
 │   ├── test_retrieval.py        # 检索链路（域路由/分词/过滤/RRF/阈值/精排/条目切分）
 │   ├── test_agent_guards.py     # Agent 前置防护（情绪/注入/危险/退出意图）
-│   └── test_dialogue.py         # 多轮实战对话（正常 + 非人类，需 --e2e）
+│   ├── test_dialogue.py         # 多轮实战对话（正常 + 非人类，需 --e2e）
+│   └── test_retrieval_eval.py   # 检索质量评测（hit@k/MRR，需 --e2e；评测集在 data/eval）
 ├── intent_classifier_training/  # 意图分类模型训练工具
 │   ├── build_intent_dataset.py  # 数据集构建（从知识库抽取 + 规则改写）
 │   └── train_intent_classifier.py # 分类头训练脚本
@@ -239,12 +241,67 @@ python intent_classifier_training/train_intent_classifier.py
 
 训练产物输出到 `data/bgm_model/`，推理时由 `intent_router.py` 自动加载。
 
+## 测试
+
+测试脚本在 `test_scripts/`，按模块拆分，由 `run_tests.py` 聚合运行。分两层：
+
+- **单元测试**（默认）：纯规则逻辑，快、确定性，**不依赖** Ollama / Chroma / torch；
+- **集成 / 端到端**（加 `--e2e`）：需本地 Ollama + Chroma + 精排模型，覆盖意图分类、多轮对话、SOP 全流程、检索质量评测等；
+- **数据隔离**：测试产生的会话/上下文文件写入 `data/test_context/`、`data/test_context_metadata/`，不污染真实会话数据。
+
+> 请用项目虚拟环境解释器运行——`torch` 等依赖只装在 `.venv`，系统 Python 没有。
+
+```bash
+# 全部单元测试（快，无需模型）
+.venv/Scripts/python.exe test_scripts/run_tests.py
+
+# 追加集成 / 端到端（需 Ollama + Chroma + reranker）
+.venv/Scripts/python.exe test_scripts/run_tests.py --e2e
+
+# 单个模块也可独立运行
+.venv/Scripts/python.exe test_scripts/test_retrieval.py [--e2e]
+```
+
+### 测试模块
+
+| 模块 | 覆盖范围 | 需 `--e2e` |
+|------|---------|:---------:|
+| `test_intent.py` | 意图分类（robot/other/casual/unknown，常规 + 极端泛化） | ✓ |
+| `test_purchase_sop.py` | 选购 SOP（状态机 + 选购推荐流程） | |
+| `test_repair_sop.py` | 故障排查 SOP（症状映射 + 流程） | |
+| `test_context.py` | 上下文存储（消息读写 / meta / UUID 校验 / 会话列表） | |
+| `test_metadata.py` | 结构化提取（价格 / 日期 / 型号 / 系列 / 过滤） | |
+| `test_function_tools.py` | 日期 / 预算 / 型号 / 症状 / 网点五个工具 | |
+| `test_retrieval.py` | 检索链路（域路由 / 分词 / 过滤 / RRF / 阈值 / 精排 / 条目切分） | 部分 |
+| `test_agent_guards.py` | Agent 前置防护（情绪 / 注入 / 危险 / 退出意图） | |
+| `test_dialogue.py` | 多轮实战对话（正常对话 + 非人类对话） | ✓ |
+| `test_retrieval_eval.py` | 检索质量评测（hit@k / MRR / 无召回率 / 结构化直出命中率） | ✓ |
+
+集成用例用 `@e2e` 装饰器标注，未加 `--e2e` 时自动跳过；意图分类是统计模型，用准确率阈值（常规 ≥90%、极端 ≥75%）断言，误判只打印、不计失败。
+
+### 检索质量评测
+
+`test_retrieval_eval.py` 基于 golden 评测集度量检索质量，用于改动前后的回归对比（对应路线图 P1-1）。
+
+- **评测集**：`data/eval/retrieval_golden.jsonl`（**本地数据，已 gitignore**，不随仓库发布），覆盖域路由 / 型号精准 / 预算过滤 / 时间过滤 / 领域外五类；
+- **指标**：域路由准确率、hit@1/@3/@5、MRR、无召回率、结构化直出命中率；
+- **构建准则与扩充方法**：见同目录 `data/eval/README.md`；评测集缺失时该模块自动跳过，不影响其它测试。
+
+```bash
+# 跑评测
+.venv/Scripts/python.exe test_scripts/test_retrieval_eval.py --e2e
+# 与基线对比（data/eval/retrieval_baseline.json）
+.venv/Scripts/python.exe test_scripts/test_retrieval_eval.py --e2e --compare
+# 刷新基线
+.venv/Scripts/python.exe test_scripts/test_retrieval_eval.py --e2e --save-baseline
+```
+
 ## 配置说明
 
 | 配置 | 关键项 |
 |------|--------|
-| `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关） |
-| `rag.yaml` | `chunk.chunk_size`、`retrieval.dense_top_k/sparse_top_k/final_top_k/score_threshold`、`rrf.*`、`rerank.*`（精排开关/模型/候选宽度/阈值） |
+| `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关）、`behavior.verbose_log`（文件日志是否降到 DEBUG） |
+| `rag.yaml` | `chunk.chunk_size`、`retrieval.dense_top_k/sparse_top_k/final_top_k/score_threshold`、`rrf.*`、`rerank.*`（精排开关/模型/候选宽度/阈值）、`data_dir`（知识库源目录） |
 | `chroma.yaml` | `persist_dir`、`collection_name`、`embedding.model` |
 | `redis.yaml` | `host`/`port`/`password`（Redis 连接）、`sop_ttl`（SOP 会话过期）、`lock_ttl`（锁过期） |
 
@@ -285,4 +342,6 @@ flowchart TD
 - 所有模型本地运行，无云端依赖；其中精排模型 `bge-reranker-v2-m3`（约 2.2GB）首次运行需联网下载（见「快速开始 §3」），加载失败会自动降级为“不精排”，也可在 `rag.yaml` 设 `rerank.enabled: false` 主动关闭
 - Redis 为可选依赖：未配置 `config/redis.yaml` 时，SOP 会话状态/并发锁/摄入锁自动降级到本地内存，功能不受影响
 - `data/vector_store/`、`data/pkl/`、`data/state/`、`data/bgm_model/`、`data/context/`、`data/context_meta/` 为运行时产物，已加入 `.gitignore`
+- `data/eval/`（检索质量评测集与基线）为本地数据，同样已加入 `.gitignore`；缺失时 `test_retrieval_eval.py` 自动跳过
+- `data/test_context/`、`data/test_context_metadata/`（测试产生的会话文件）同样已加入 `.gitignore`
 - 配置文件 `config/*.yaml`（非 template）含本地环境信息，已加入 `.gitignore`

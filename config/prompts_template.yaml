@@ -1,5 +1,6 @@
 # Prompt file paths (relative to project root)
 # 使用方式：复制本文件为 prompts.yaml，无需额外配置。
 main_prompts_path: prompts/main_prompts.txt
+# 以下两项为预留，当前未接线（无代码读取）；接入摘要/报告功能后再启用
 rag_summarize_prompts_path: prompts/rag_summarize_prompts.txt
 report_prompts_path: prompts/report_prompts.txt

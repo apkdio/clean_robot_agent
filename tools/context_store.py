@@ -4,8 +4,11 @@
 重启可恢复），内存缓存与读取时保留最近 6 轮（12 条消息）供自由指代与
 LLM 生成拼接。
 
-文件布局：
-  data/context/<session_id>.jsonl   每行一条 JSON 消息
+文件布局（文件名带**会话创建时间**，便于在磁盘上直接辨认）：
+  data/context/<session_id>_<YYYYMMDD_HHMM>.jsonl          每行一条 JSON 消息
+  data/context_meta/<session_id>_<YYYYMMDD_HHMM>.meta.json 标题 / 上一轮推荐
+
+兼容历史命名：早期为 <session_id>.jsonl（无时间戳），仍可正常读写；新会话一律带时间戳。
 
 消息格式：
   {"role": "user"|"assistant", "content": "...", "intent": "...", "models": [...], "ts": "..."}
@@ -19,21 +22,85 @@ from datetime import datetime
 
 from path_tool import get_abs_path
 
-_CONTEXT_DIR = get_abs_path("data/context")
-_CONTEXT_META_DATA_DIR = get_abs_path("data/context_meta")
+# 存储目录支持环境变量覆盖（测试指向 data/test_context(_metadata) 与真实会话隔离）；
+# 未设置时用生产默认 data/context、data/context_meta。
+_CONTEXT_DIR = get_abs_path(os.environ.get("CONTEXT_DIR", "data/context"))
+_CONTEXT_META_DATA_DIR = get_abs_path(os.environ.get("CONTEXT_META_DIR", "data/context_meta"))
 _MAX_TURNS = 6                      # 上下文保留最近 6 轮
 _MAX_MESSAGES = _MAX_TURNS * 2      # 一轮 = 用户 + 客服，共 12 条消息
 
 # 内存缓存：session_id → 最近的消息列表（供快速访问，避免频繁读文件）
 _cache = {}
 
+# 会话文件名里的创建时间后缀（如 20260912_0926）
+_TS_FORMAT = "%Y%m%d_%H%M"
+_TS_SUFFIX_RE = re.compile(r"_(\d{8}_\d{4})$")
+
+# session_id → (jsonl 路径, meta 路径)。首次解析时确定并缓存，保证同一进程内
+# 「创建时间」取的是首次访问那一刻（即会话创建时间），不会因后续调用晚了几分钟
+# 而算出不同的文件名。
+_path_cache: dict[str, tuple[str, str]] = {}
+
+
+def _split_created(stem: str) -> tuple[str, str | None]:
+    """从文件名主干拆出 (session_id, 创建时间串)；无时间戳后缀则时间为 None。"""
+    m = _TS_SUFFIX_RE.search(stem)
+    if m:
+        return stem[:m.start()], m.group(1)
+    return stem, None
+
+
+def _created_iso(created: str | None) -> str:
+    """把文件名里的 20260912_0926 转成 ISO（2026-09-12T09:26）；无/非法则空串。"""
+    if not created:
+        return ""
+    try:
+        return datetime.strptime(created, _TS_FORMAT).isoformat(timespec="minutes")
+    except ValueError:
+        return ""
+
+
+def _scan_existing(session_id: str) -> tuple[str, str] | None:
+    """查找该会话已存在的文件（带时间戳的新命名与不带时间戳的历史命名都认）。"""
+    if not os.path.isdir(_CONTEXT_DIR):
+        return None
+    for fn in os.listdir(_CONTEXT_DIR):
+        if not fn.endswith(".jsonl"):
+            continue
+        stem = fn[:-6]
+        sid, _created = _split_created(stem)
+        if sid != session_id:
+            continue
+        return (
+            os.path.join(_CONTEXT_DIR, fn),
+            os.path.join(_CONTEXT_META_DATA_DIR, f"{stem}.meta.json"),
+        )
+    return None
+
+
+def _paths(session_id: str) -> tuple[str, str]:
+    """解析会话的两个文件路径：已有文件沿用原名，新会话按当前时间生成。"""
+    cached = _path_cache.get(session_id)
+    if cached is not None:
+        return cached
+
+    found = _scan_existing(session_id)
+    if found is None:
+        stem = f"{session_id}_{datetime.now().strftime(_TS_FORMAT)}"
+        found = (
+            os.path.join(_CONTEXT_DIR, f"{stem}.jsonl"),
+            os.path.join(_CONTEXT_META_DATA_DIR, f"{stem}.meta.json"),
+        )
+    _path_cache[session_id] = found
+    return found
+
 
 def _file_path(session_id: str) -> str:
-    return os.path.join(_CONTEXT_DIR, f"{session_id}.jsonl")
+    return _paths(session_id)[0]
 
 
 def _meta_path(session_id: str) -> str:
-    return os.path.join(_CONTEXT_META_DATA_DIR, f"{session_id}.meta.json")
+    return _paths(session_id)[1]
 
 
 def _get_meta_field(session_id: str, field: str):
@@ -117,8 +184,8 @@ def generate_session_title(query: str, answer: str) -> str:
 def delete_session(session_id: str) -> bool:
     """删除指定会话：清理 jsonl 数据文件、meta 文件与内存缓存。"""
     _cache.pop(session_id, None)
-    fp = _file_path(session_id)
-    meta_fp = _meta_path(session_id)
+    fp, meta_fp = _paths(session_id)
+    _path_cache.pop(session_id, None)
     deleted = False
     if os.path.exists(fp):
         try:
@@ -248,14 +315,14 @@ def ensure_session_id(session_id):
 
 
 def list_sessions() -> list:
-    """列出所有会话：session_id + 标题(title) + 消息数 + 更新时间(updated_at/ts)。"""
+    """列出所有会话：session_id + 标题 + 消息数 + 创建时间(created_at) + 更新时间(updated_at)。"""
     os.makedirs(_CONTEXT_DIR, exist_ok=True)
     os.makedirs(_CONTEXT_META_DATA_DIR, exist_ok=True)
     sessions = []
     for fn in os.listdir(_CONTEXT_DIR):
         if not fn.endswith(".jsonl"):
             continue
-        sid = fn[:-6]
+        sid, created = _split_created(fn[:-6])
         fp = os.path.join(_CONTEXT_DIR, fn)
         msgs = []
         with open(fp, encoding="utf-8") as f:
@@ -285,6 +352,7 @@ def list_sessions() -> list:
             "title": title,
             "summary": title,
             "messages": len(msgs),
+            "created_at": _created_iso(created),
             "ts": ts,
             "updated_at": ts,
         })

@@ -280,7 +280,8 @@ def remove_session(sid):
 @app.route("/api/ingest/batch", methods=["POST"])
 def ingest_batch():
     """一次性摄入知识目录中所有受支持的文件。"""
-    data_dir = os.path.join(_PROJECT_ROOT, "data", "knowledge")
+    from tools.config_tool import get_data_dir
+    data_dir = get_data_dir()
     try:
         results = ingest_data_dir(data_dir)
         return jsonify({"status": "ok", "results": results})

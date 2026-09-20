@@ -36,9 +36,27 @@ log_path = get_abs_path("logs")
 if not os.path.exists(log_path):
     os.makedirs(log_path)
 
-# 文件日志级别：默认 INFO，避免检索结果的 DEBUG 详情（top-N chunk 内容）刷屏撑大日志文件。
-# 排查检索问题时，设环境变量 LOG_LEVEL=DEBUG 临时开启调试细节。
-_DEFAULT_FILE_LEVEL = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
+def _resolve_file_level() -> int:
+    """文件日志级别，优先级：环境变量 LOG_LEVEL > agent.yaml behavior.verbose_log > INFO。
+
+    默认 INFO 是为了避免检索结果的 DEBUG 详情（top-N chunk 内容）撑大日志文件；
+    需要排查检索问题时，把 `agent.yaml` 的 `behavior.verbose_log` 设为 true 即可，
+    也可临时用环境变量 `LOG_LEVEL=DEBUG`（优先级更高、无需改配置）。
+
+    只影响**文件**日志；控制台始终按 INFO 输出，避免调试细节刷屏。
+    """
+    env_level = os.environ.get("LOG_LEVEL", "").strip().upper()
+    if env_level:
+        return getattr(logging, env_level, logging.INFO)
+    try:
+        from config_tool import load_config
+        verbose = bool(load_config("agent").get("behavior", {}).get("verbose_log", False))
+    except Exception:
+        verbose = False
+    return logging.DEBUG if verbose else logging.INFO
+
+
+_DEFAULT_FILE_LEVEL = _resolve_file_level()
 
 # 单个日志文件上限（字节）与滚动备份数：防止同一天内文件无限增长
 _LOG_MAX_BYTES = 5 * 1024 * 1024   # 5MB
@@ -60,7 +78,8 @@ def get_logger(name: str = "agent",
                log_file=None):
     """返回一个已配置的 logger，包含彩色控制台输出 + 文件输出。
 
-    file_level 默认取环境变量 LOG_LEVEL（默认 INFO）；传显式值时覆盖。
+    file_level 默认按「环境变量 LOG_LEVEL → agent.yaml behavior.verbose_log → INFO」
+    依次解析；传显式值时覆盖。
     """
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)

@@ -17,10 +17,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 
+from tools.config_tool import get_data_dir
 from tools.entry_splitter import split_numbered_entries
 from tools.file_tools import extract_file
 
-_KNOWLEDGE_DIR = "data/knowledge"
 _OUT_PATH = "data/datasets/intent_dataset.jsonl"
 
 
@@ -58,7 +58,7 @@ def _to_question(title: str) -> str:
 
 def collect_robot_samples() -> list[str]:
     samples = []
-    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), _KNOWLEDGE_DIR)
+    root = get_data_dir()
     for fname in sorted(os.listdir(root)):
         fp = os.path.join(root, fname)
         if not os.path.isfile(fp):

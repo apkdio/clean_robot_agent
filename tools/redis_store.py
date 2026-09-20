@@ -56,11 +56,6 @@ def get_redis():
     return _redis
 
 
-def is_enabled() -> bool:
-    """Redis 当前是否可用。"""
-    return get_redis() is not None
-
-
 def _cfg_int(key: str, default: int) -> int:
     try:
         return int(_load_config().get(key, default))

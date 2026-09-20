@@ -1,7 +1,7 @@
 """热更新：周期性扫描知识目录并将变更同步到 Chroma。
 
 每隔 SCAN_INTERVAL 秒（默认 30 分钟），它会：
-  1. 递归扫描 data/knowledge/，计算每个文件的 MD5。
+  1. 递归扫描知识目录（rag.yaml 的 data_dir，默认 data/knowledge/），计算每个文件的 MD5。
   2. 与上一次快照（data/state/ingest_snapshot.json）进行对比。
   3. 增量应用差异：添加新文件、重新摄入变更过的文件、
      删除已移除文件的 chunk。
@@ -26,7 +26,6 @@ logger = get_logger(name="hot_ingest")
 # ──────────────────────────────────────────────────────────────────────────
 
 _SCAN_INTERVAL = 30 * 60          # 30 分钟
-_KNOWLEDGE_DIR = "data/knowledge"
 _SNAPSHOT_FILE = "data/state/ingest_snapshot.json"
 
 _SUPPORTED_EXTS = (".txt", ".md", ".pdf", ".csv", ".docx", ".pptx", ".xlsx")
@@ -42,8 +41,9 @@ def _snapshot_path() -> str:
 
 
 def _knowledge_path() -> str:
-    from path_tool import get_abs_path
-    return get_abs_path(_KNOWLEDGE_DIR)
+    """知识库源目录（rag.yaml 的 data_dir，默认 data/knowledge）。"""
+    from config_tool import get_data_dir
+    return get_data_dir()
 
 
 def load_snapshot() -> dict:

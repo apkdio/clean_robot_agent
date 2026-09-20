@@ -38,11 +38,6 @@ def _rerank_cfg() -> dict:
         return {}
 
 
-def is_available() -> bool:
-    """精排模型是否已就绪（可用于测试与状态展示）。"""
-    return _model is not None
-
-
 def _ensure_model() -> bool:
     """懒加载精排模型；成功返回 True，失败返回 False 并降级。"""
     global _model, _tokenizer, _load_failed

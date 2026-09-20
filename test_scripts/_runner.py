@@ -39,6 +39,12 @@ if hasattr(sys.stderr, "reconfigure"):
     except Exception:
         pass
 
+# 测试隔离：把会话/上下文文件写到 data/test_context(_metadata)，不污染真实会话数据。
+# context_store 在 import 时读取这两个变量，而 _runner 总先于其它模块被导入，
+# 故能保证首次加载时就指向测试目录（已显式设置时不覆盖）。
+os.environ.setdefault("CONTEXT_DIR", "data/test_context")
+os.environ.setdefault("CONTEXT_META_DIR", "data/test_context_metadata")
+
 E2E = "--e2e" in sys.argv
 
 _total = 0
@@ -165,8 +171,13 @@ def summary(title):
     return passed, total, _skipped
 
 
+def stats():
+    """返回当前计数 (passed, total, skipped)，供自定义 run() 模块读取。"""
+    return _passed, _total, _skipped
+
+
 __all__ = [
-    "E2E", "reset", "run_tests", "summary", "e2e", "_skip",
+    "E2E", "reset", "run_tests", "summary", "stats", "e2e", "_skip",
     "_assert", "_assert_eq", "_assert_true", "_assert_false",
     "_assert_in", "_assert_not_in", "_assert_raises",
 ]

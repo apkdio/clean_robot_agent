@@ -7,6 +7,8 @@ data/bgm_model/
 data/context/
 data/eval
 data/context_meta/
+data/test_context/
+data/test_context_metadata/
 __pycache__/
 *.pyc
 

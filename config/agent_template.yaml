@@ -12,6 +12,5 @@ llm:
 
 # 行为开关
 behavior:
-  rag_enabled: true
   retrieval_only: true           # true=直接返回检索片段原文（小模型推荐）；false=走 LLM 生成
-  verbose_log: false
+  verbose_log: false             # true=文件日志降到 DEBUG（召回详情/top-N 命中内容）；环境变量 LOG_LEVEL 优先级更高

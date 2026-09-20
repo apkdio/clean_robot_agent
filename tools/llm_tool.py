@@ -64,18 +64,23 @@ def get_chat_model(
     base_url: str | None = None,
     api_key: str | None = None,
     temperature: float = 0.3,
+    max_tokens: int | None = None,
     **kwargs,
 ) -> ChatOpenAI:
     """返回一个连接到本地 Ollama（或其他 OpenAI 兼容服务）的 ChatOpenAI 实例。
 
-    model / base_url / api_key 留空时按 agent.yaml 的 llm 段解析，
+    model / base_url / api_key / max_tokens 留空时按 agent.yaml 的 llm 段解析，
     配置缺该键时回退到环境变量与内置默认。
     """
     cfg = _chat_cfg()
     model = model or cfg.get("model") or _DEFAULT_CHAT_MODEL
     base_url = base_url or cfg.get("base_url") or _DEFAULT_BASE_URL
     api_key = api_key or cfg.get("api_key") or _DEFAULT_API_KEY
-    logger.info(f"[Chat] init model={model} base_url={base_url}")
+    if max_tokens is None:
+        max_tokens = cfg.get("max_tokens")
+    if max_tokens:
+        kwargs.setdefault("max_tokens", int(max_tokens))
+    logger.info(f"[Chat] init model={model} base_url={base_url} max_tokens={max_tokens or '-'}")
     return ChatOpenAI(
         model=model,
         base_url=base_url,

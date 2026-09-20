@@ -19,6 +19,7 @@
   - 检索          test_retrieval.py
   - Agent 前置防护 test_agent_guards.py
   - 多轮实战对话  test_dialogue.py      （需 --e2e：Ollama + Chroma）
+  - 检索质量评测  test_retrieval_eval.py （需 --e2e：Ollama + Chroma + reranker，输出 hit@k/MRR 等指标）
 """
 import os
 import sys
@@ -36,6 +37,7 @@ import test_function_tools   # noqa: E402
 import test_retrieval        # noqa: E402
 import test_agent_guards     # noqa: E402
 import test_dialogue         # noqa: E402
+import test_retrieval_eval   # noqa: E402
 
 
 MODULES = [
@@ -48,6 +50,7 @@ MODULES = [
     ("检索", test_retrieval),
     ("Agent 前置防护", test_agent_guards),
     ("多轮实战对话", test_dialogue),
+    ("检索质量评测", test_retrieval_eval),
 ]
 
 

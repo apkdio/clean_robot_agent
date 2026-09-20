@@ -150,13 +150,14 @@ def ingest_data_dir(data_dir: str = None) -> list[dict]:
     """把知识库目录下所有支持的文件入库。
 
     参数：
-        data_dir: 知识库目录路径，默认 project_root/data/knowledge。
+        data_dir: 知识库目录路径，默认取 rag.yaml 的 data_dir（默认 data/knowledge）。
 
     返回：
         入库结果列表，每个文件一个 dict。
     """
     if data_dir is None:
-        data_dir = get_abs_path("data/knowledge")
+        from config_tool import get_data_dir
+        data_dir = get_data_dir()
     if not os.path.isdir(data_dir):
         logger.error(f"[IngestDataDir] {data_dir} is not a directory.")
         return [{"status": "error", "message": f"{data_dir} is not a directory."}]
