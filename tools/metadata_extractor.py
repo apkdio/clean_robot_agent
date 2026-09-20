@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from typing import Dict, Optional
 
+from llm_tool import get_small_model_name
 from log_tool import get_logger
 
 logger = get_logger(name="metadata_extractor")
@@ -24,8 +25,8 @@ _BUDGET_HINT_RE = re.compile(
     r"|(?:\d+|[一二两三四五六七八九十百千万]+)\s*(?:以内|以下|以上|起|左右|上下|出头|到|至|多)"
 )
 
-# 预算提取兜底用的小模型（3b 更快；精度不够可切回 "qwen2.5:7b"）
-_BUDGET_TOOL_MODEL = "qwen2.5:3b"
+# 预算提取兜底用的小模型（默认 3b 更快；精度不够可在 agent.yaml 调 llm.small_model）
+_BUDGET_TOOL_MODEL = get_small_model_name()
 
 # ──────────────────────────────────────────────────────────────────────────
 # chunk → metadata（入库时）

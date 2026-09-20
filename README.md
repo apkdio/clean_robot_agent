@@ -4,10 +4,10 @@
 
 ## 核心特性
 
-- **双路召回**：稠密检索（bge-m3 向量）+ 稀疏检索（BM25 关键词）→ RRF 融合，兼顾语义近似与精确关键词匹配
+- **双路召回 + 精排**：稠密检索（bge-m3 向量）+ 稀疏检索（BM25 关键词）→ RRF 融合 → Cross-Encoder 精排，兼顾语义近似、精确关键词匹配与长尾噪声压制
 - **意图分类**：本地深度学习分类头（bge-m3 embedding + Linear 分类器）前置判断用户意图，毫秒级推理
 - **结构化查询**：识别"预算 1000 以内""净白 S 系列"等约束，通过 Chroma metadata 过滤精确枚举预算内/系列内产品；支持"云顶 X2 多少钱"等型号属性精准查询
-- **工具调用**：LLM function calling，内置日期/预算/故障分类/型号提取工具，支持"最近半年""一千来块"等口语化结构化提取
+- **工具调用**：LLM function calling，内置日期/预算/故障分类/型号提取/售后网点五个工具，支持"最近半年""一千来块"等口语化结构化提取
 - **多轮 SOP 引导**：选购推荐、故障排查等场景按标准流程多轮引导，进入时给开场提示，支持追问（比较新/更便宜/最贵）与最近发布查询
 - **售后网点定位**：识别"最近的售后网点"等查询，通过 geonamescache 离线解析城市经纬度 + Haversine 距离排序返回最近网点，重名城市（如"洛阳"）多轮消歧
 - **Redis 可选接入**：SOP 会话状态、会话并发锁、热更新摄入锁迁移到 Redis（分布式锁/跨实例共享），未配置 Redis 时自动降级到本地内存，功能不受影响
@@ -24,7 +24,7 @@
 | 层 | 技术 |
 |----|------|
 | 前端 | Flask + 原生 HTML/CSS/JS |
-| 检索 | Chroma（向量库）+ BM25（rank-bm25）+ RRF 融合 |
+| 检索 | Chroma（向量库）+ BM25（rank-bm25）+ RRF 融合 + bge-reranker-v2-m3 精排 |
 | Embedding | bge-m3（本地 Ollama） |
 | 生成模型 | qwen2.5:7b（本地 Ollama） |
 | 意图分类 | bge-m3 + PyTorch 分类头（本地推理） |
@@ -72,7 +72,7 @@ clean_robot_agent/
 │   ├── test_context.py          # 上下文存储（append/get_recent/meta/UUID 校验）
 │   ├── test_metadata.py         # 结构化提取（价格/日期/型号/系列/过滤）
 │   ├── test_function_tools.py   # 日期/预算/型号/症状/网点五个工具
-│   ├── test_retrieval.py        # 检索链路（域路由/分词/过滤/RRF/条目切分）
+│   ├── test_retrieval.py        # 检索链路（域路由/分词/过滤/RRF/阈值/精排/条目切分）
 │   ├── test_agent_guards.py     # Agent 前置防护（情绪/注入/危险/退出意图）
 │   └── test_dialogue.py         # 多轮实战对话（正常 + 非人类，需 --e2e）
 ├── intent_classifier_training/  # 意图分类模型训练工具
@@ -93,10 +93,11 @@ clean_robot_agent/
 |------|------|
 | `agent.py` | RAG 编排：意图路由 → 知识域路由 → 检索 → 结构化直出或 LLM 生成 |
 | `intent_router.py` | 意图分类：本地分类头（bge-m3 + Linear）判 robot/casual/other/unknown |
-| `hybrid_retriever.py` | 双路召回编排：dense + sparse → RRF 融合 |
+| `hybrid_retriever.py` | 召回编排：dense + sparse → RRF 融合 → 精排 → 截断 |
 | `vector_store.py` | Chroma 稠密检索、入库、metadata 过滤、稀疏索引构建 |
 | `sparse_retriever.py` | BM25 关键词检索（含 pickle 持久化缓存） |
 | `rrf_fusion.py` | RRF（倒数排名融合）算法 |
+| `reranker.py` | Cross-Encoder 精排（bge-reranker-v2-m3，本地推理；不可用时降级回 RRF 顺序）|
 | `metadata_extractor.py` | 结构化元数据：价格提取、预算解析、发布时间提取、型号信息抽取 |
 | `entry_splitter.py` | 编号条目分块器（每个问答/型号一个 chunk） |
 | `hot_ingest.py` | 知识库热更新：定时扫描 + 增量入库 |
@@ -131,7 +132,7 @@ clean_robot_agent/
 
 - Python 3.13+
 - [Ollama](https://ollama.com)（本地已运行）
-- 内存 ≥ 16GB（三个模型常驻：bge-m3 + qwen2.5:3b + qwen2.5:7b）
+- 内存 ≥ 20GB（Ollama 三模型常驻：bge-m3 + qwen2.5:3b + qwen2.5:7b；精排模型再占约 2.5GB，不需要时可用 `rag.yaml` 的 `rerank.enabled: false` 省下）
 
 ### 2. 安装依赖
 
@@ -141,11 +142,31 @@ pip install -r requirements.txt
 
 ### 3. 拉取模型
 
+**Ollama 模型**（embedding + 生成 + 兜底）：
+
 ```bash
 ollama pull bge-m3        # embedding 模型
 ollama pull qwen2.5:7b    # 生成模型 + 型号提取（function calling）
 ollama pull qwen2.5:3b    # 预算/故障现象 function calling 兜底（可选）
 ```
+
+**精排模型 `bge-reranker-v2-m3`**（约 2.2GB）：它不是 Ollama 模型——Ollama 没有 rerank 端点，
+由 `tools/reranker.py` 走 transformers 本地推理，**首次检索时自动从 HuggingFace 下载并缓存**，
+无需手动执行命令。国内网络慢可先设镜像再启动：
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+# PowerShell: $env:HF_ENDPOINT="https://hf-mirror.com"
+```
+
+也可提前手动下载：
+
+```bash
+python -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-reranker-v2-m3')"
+```
+
+加载时**优先只用本地缓存**（避免每次启动都卡在联网校验上），缓存未命中才联网；加载失败会记
+WARNING 并降级为「不精排」，功能不受影响。需要换用其它 reranker 时改 `rag.yaml` 的 `rerank.model`。
 
 ### 4. 配置
 
@@ -158,7 +179,20 @@ cp config/chroma_template.yaml config/chroma.yaml
 cp config/prompts_template.yaml config/prompts.yaml
 ```
 
-### 5. 启动
+### 5. 训练意图分类头（首次必需）
+
+意图分类头（`data/bgm_model/`）是**训练产物、已 gitignore**，仓库里不包含，
+**首次运行前必须先训练**，否则启动后首次提问会报错（找不到分类头文件）：
+
+```bash
+python intent_classifier_training/build_intent_dataset.py
+python intent_classifier_training/train_intent_classifier.py
+```
+
+训练会用 Ollama bge-m3 生成 embedding（需 §3 的模型已就绪），产物输出到 `data/bgm_model/`。
+详见下方「意图分类模型训练」。
+
+### 6. 启动
 
 ```bash
 python webapp/app.py
@@ -190,7 +224,8 @@ python webapp/app.py
 
 ## 意图分类模型训练
 
-系统默认用本地分类头做意图分类（速度快），也保留了 3b 模型兜底。
+系统用**本地分类头**做意图分类（bge-m3 embedding + Linear 1024→4），毫秒级、不调 LLM；
+分类头文件缺失时会直接报错，**首次运行前必须先训练一次**（见「快速开始 §5」）。
 
 **重新训练**（当需要扩充数据集时）：
 
@@ -208,8 +243,8 @@ python intent_classifier_training/train_intent_classifier.py
 
 | 配置 | 关键项 |
 |------|--------|
-| `agent.yaml` | `llm.model`（生成模型）、`behavior.retrieval_only`（纯检索模式开关） |
-| `rag.yaml` | `chunk.chunk_size`、`retrieval.dense_top_k/sparse_top_k/final_top_k`、`rrf.*` |
+| `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关） |
+| `rag.yaml` | `chunk.chunk_size`、`retrieval.dense_top_k/sparse_top_k/final_top_k/score_threshold`、`rrf.*`、`rerank.*`（精排开关/模型/候选宽度/阈值） |
 | `chroma.yaml` | `persist_dir`、`collection_name`、`embedding.model` |
 | `redis.yaml` | `host`/`port`/`password`（Redis 连接）、`sop_ttl`（SOP 会话过期）、`lock_ttl`（锁过期） |
 
@@ -234,7 +269,7 @@ flowchart TD
     G4 --> C5["SOP 触发 → 选购 / 故障排查多轮引导"]
     G4 --> C6["含日期 → 日期工具（规则 / LLM function calling）→ 日期范围"]
     G4 --> C7["含预算 → metadata 过滤 → 结构化直出型号列表"]
-    G4 --> C8["其他 → 知识域路由 → 双路召回（dense+sparse→RRF）→ LLM 生成"]
+    G4 --> C8["其他 → 知识域路由 → 双路召回（dense+sparse→RRF）→ 精排 → LLM 生成"]
     C1 --> OUT["SSE 流式输出"]
     C2 --> OUT
     C3 --> OUT
@@ -247,7 +282,7 @@ flowchart TD
 
 ## 注意事项
 
-- 所有模型本地运行，无云端依赖
+- 所有模型本地运行，无云端依赖；其中精排模型 `bge-reranker-v2-m3`（约 2.2GB）首次运行需联网下载（见「快速开始 §3」），加载失败会自动降级为“不精排”，也可在 `rag.yaml` 设 `rerank.enabled: false` 主动关闭
 - Redis 为可选依赖：未配置 `config/redis.yaml` 时，SOP 会话状态/并发锁/摄入锁自动降级到本地内存，功能不受影响
 - `data/vector_store/`、`data/pkl/`、`data/state/`、`data/bgm_model/`、`data/context/`、`data/context_meta/` 为运行时产物，已加入 `.gitignore`
 - 配置文件 `config/*.yaml`（非 template）含本地环境信息，已加入 `.gitignore`

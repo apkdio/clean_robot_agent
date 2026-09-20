@@ -3,9 +3,12 @@
 from sops.base import register, is_aftersales
 from config.word_dict_config import SYMPTOM_MAP, REPAIR_TRIGGER
 
-# 故障现象兜底用的小模型（3b 更快；精度不够可切回 "qwen2.5:7b"）
-_SYMPTOM_TOOL_MODEL = "qwen2.5:3b"
+from tools.llm_tool import get_small_model_name
 from tools.log_tool import get_logger
+
+# 故障现象兜底用的小模型（默认 3b 更快；精度不够可在 agent.yaml 调 llm.small_model）
+_SYMPTOM_TOOL_MODEL = get_small_model_name()
+
 logger = get_logger(name="repair_sop")
 
 def _extract_symptom(text: str, slots: dict):

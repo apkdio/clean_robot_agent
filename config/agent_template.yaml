@@ -3,7 +3,8 @@
 
 # LLM 设置（OpenAI 兼容端点，默认连接本地 Ollama）
 llm:
-  model: <YOUR_MODEL_NAME>        # Ollama 模型名，如 qwen2.5:3b / qwen3:8b / llama3.1:8b
+  model: <YOUR_MODEL_NAME>        # 主生成模型：Ollama 模型名，如 qwen2.5:7b / qwen3:8b / llama3.1:8b
+  small_model: <YOUR_SMALL_MODEL> # 轻量兜底模型（预算/故障分类/会话标题），如 qwen2.5:3b
   base_url: <OLLAMA_BASE_URL>     # 本地 Ollama 默认地址；云端服务改为对应 API 地址
   api_key: ollama                       # 本地 Ollama 无需真实 key；云端服务填入实际 API Key
   temperature: 0.3

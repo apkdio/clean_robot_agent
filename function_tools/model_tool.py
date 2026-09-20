@@ -3,13 +3,13 @@
 让模型自主决策要查询哪个型号（处理指代「这两个/它」、对比「区别」），
 再按型号名精准检索型号详情，作为"型号详情咨询 / 上下文对比"的兜底。
 
-与 budget_tool/symptom_tool 不同：这里用 7b——型号名是 string 参数，
-且需要理解上下文指代（"这两个"指谁），3b 的 function calling 对 string
-参数会原样返回 query、不做提取，不稳定。
+与 budget_tool/symptom_tool 不同：这里用主生成模型（默认 7b）——型号名是
+string 参数，且需要理解上下文指代（"这两个"指谁），3b 的 function calling
+对 string 参数会原样返回 query、不做提取，不稳定。
 
 对外提供：
   - MODEL_TOOL_SCHEMA     : 供 LLM 使用的 function-calling schema
-  - MODEL_TOOL_MODEL      : 提取型号用的小模型名
+  - MODEL_TOOL_MODEL      : 提取型号用的模型名（跟随 agent.yaml llm.model）
   - get_all_model_names   : 全量型号名列表（缓存，供型号上下文判断）
   - search_models_by_names: 型号名列表（逗号分隔）→ 检索型号详情
 """
@@ -18,8 +18,10 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-# 型号提取用 7b（string 参数 + 上下文指代理解，3b 不稳定）
-MODEL_TOOL_MODEL = "qwen2.5:7b"
+from tools.llm_tool import get_chat_model_name
+
+# 型号提取跟随主生成模型（string 参数 + 上下文指代理解，3b 不稳定）
+MODEL_TOOL_MODEL = get_chat_model_name()
 
 # 品牌名（型号名前缀，型号上下文判断时去掉，得到「云顶 X2」这类用户口中的型号）
 _BRAND_NAME = "不染一尘"

@@ -33,6 +33,15 @@ rrf:
   dense_weight: 1.0          # dense route weight
   sparse_weight: 1.0         # sparse route weight
 
+# Cross-Encoder rerank（RRF 融合之后、final_top_k 截断之前）
+rerank:
+  enabled: true
+  model: BAAI/bge-reranker-v2-m3   # 与 embedding 同家族；Ollama 无 rerank 端点，走本地 transformers
+  candidate_top_k: 12       # RRF 阶段保留的候选数（精排输入宽度，与 final_top_k 解耦）
+  score_threshold: 0.2      # sigmoid 归一化后的最低相关分（0 = 不过滤）
+  max_length: 512           # query + chunk 截断长度
+  batch_size: 8
+
 # Data source directory (files here are ingested into the vector store)
 data_dir: data
 

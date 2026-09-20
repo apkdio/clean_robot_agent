@@ -8,7 +8,7 @@ data/service_point/service_points.json（demo 随机经纬度），不进向量�
 
 对外提供：
   - SERVICE_POINT_TOOL_SCHEMA : 供 LLM 提取城市/地点名（string 参数）
-  - SERVICE_POINT_TOOL_MODEL  : 提取地点用的小模型名
+  - SERVICE_POINT_TOOL_MODEL  : 提取地点用的模型名（跟随 agent.yaml llm.model）
   - geocode_city              : 中文城市名 → 经纬度候选列表（geonamescache）
   - haversine                 : 两个经纬度点的球面直线距离（km）
   - search_service_points     : 按经纬度算距离，返回最近网点
@@ -21,8 +21,10 @@ import json
 from math import atan2, cos, radians, sin, sqrt
 from typing import Dict, List, Optional, Tuple
 
-# 提取城市/地点用 7b（string 参数 + 口语地点，3b 不稳定，同 model_tool）
-SERVICE_POINT_TOOL_MODEL = "qwen2.5:7b"
+from tools.llm_tool import get_chat_model_name
+
+# 提取城市/地点跟随主生成模型（string 参数 + 口语地点，3b 不稳定，同 model_tool）
+SERVICE_POINT_TOOL_MODEL = get_chat_model_name()
 
 _SERVICE_POINTS_FILE = "data/service_point/service_points.json"
 

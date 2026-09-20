@@ -39,7 +39,7 @@ import importlib as _importlib
 _TOOL_MODULES = (
     "agent", "config_tool", "log_tool", "context_store", "metadata_extractor",
     "redis_store", "vector_store", "llm_tool", "prompts_tool", "hot_ingest",
-    "hybrid_retriever", "sparse_retriever", "rrf_fusion", "entry_splitter",
+    "hybrid_retriever", "sparse_retriever", "rrf_fusion", "reranker", "entry_splitter",
     "file_tools", "path_tool", "intent_router",
 )
 for _name in _TOOL_MODULES:

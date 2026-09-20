@@ -2,37 +2,80 @@
 
 Ollama 暴露了 OpenAI 兼容端点 http://localhost:11434/v1，因此直接复用已安装的
 `langchain_openai` 包（ChatOpenAI / OpenAIEmbeddings），把 base_url 指向 Ollama。
-这样只需改配置里的 base_url / api_key / model，就能无缝切换到任意其他
-OpenAI 兼容服务商（云端或自建）。
+
+**chat 模型与端点的单一真源是 config/agent.yaml 的 llm 段**：
+
+  - 主生成模型   → `llm.model`（默认 qwen2.5:7b）
+  - 轻量兜底模型 → `llm.small_model`（默认 qwen2.5:3b，用于预算/症状/标题）
+  - 端点与鉴权   → `llm.base_url` / `llm.api_key`
+
+入参留空时按上述配置解析；配置缺该键时回退到环境变量
+（LLM_BASE_URL / LLM_API_KEY / LLM_CHAT_MODEL / LLM_SMALL_MODEL）与内置默认。
+embedding 的端点由 config/chroma.yaml 的 embedding 段提供（调用方显式传入）。
 """
 
 import os
 
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
+from config_tool import load_config
 from log_tool import get_logger
 
 logger = get_logger(name="llm_tool")
 
-# Ollama 默认连接配置（本地运行，无需真实 API key）
+# 兜底默认值：配置项缺失时使用（可先由环境变量覆盖）
 _DEFAULT_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1")
 _DEFAULT_API_KEY = os.environ.get("LLM_API_KEY", "ollama")
 _DEFAULT_CHAT_MODEL = os.environ.get("LLM_CHAT_MODEL", "qwen2.5:7b")
+_DEFAULT_SMALL_MODEL = os.environ.get("LLM_SMALL_MODEL", "qwen2.5:3b")
 _DEFAULT_EMBED_MODEL = os.environ.get("LLM_EMBED_MODEL", "bge-m3")
+
+_chat_cfg_cache = None
+
+
+def _chat_cfg() -> dict:
+    """延迟读取 agent.yaml 的 llm 段（读盘失败则回退到环境变量/内置默认）。"""
+    global _chat_cfg_cache
+    if _chat_cfg_cache is None:
+        try:
+            _chat_cfg_cache = load_config("agent").get("llm", {}) or {}
+        except Exception as e:
+            logger.warning(f"[Config] load agent llm config failed: {e}")
+            _chat_cfg_cache = {}
+    return _chat_cfg_cache
+
+
+def get_chat_model_name() -> str:
+    """主生成模型名（agent.yaml llm.model → 环境变量 → 内置默认）。"""
+    return _chat_cfg().get("model") or _DEFAULT_CHAT_MODEL
+
+
+def get_small_model_name() -> str:
+    """轻量提取/兜底模型名（agent.yaml llm.small_model → 环境变量 → 内置默认）。
+
+    用于预算/故障分类的 function calling 兜底与会话标题生成：这些场景对速度
+    敏感、对精度要求有限，故单独一档（见 ADR-4 与 4.10/4.11）。
+    """
+    return _chat_cfg().get("small_model") or _DEFAULT_SMALL_MODEL
 
 
 def get_chat_model(
-    model: str = _DEFAULT_CHAT_MODEL,
-    base_url: str = _DEFAULT_BASE_URL,
-    api_key: str = _DEFAULT_API_KEY,
+    model: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
     temperature: float = 0.3,
     **kwargs,
 ) -> ChatOpenAI:
-    """返回一个连接到本地 Ollama 的 ChatOpenAI 实例。
+    """返回一个连接到本地 Ollama（或其他 OpenAI 兼容服务）的 ChatOpenAI 实例。
 
-    参数可通过构造函数入参或环境变量（LLM_BASE_URL / LLM_API_KEY / LLM_CHAT_MODEL）覆盖。
+    model / base_url / api_key 留空时按 agent.yaml 的 llm 段解析，
+    配置缺该键时回退到环境变量与内置默认。
     """
-    logger.info(f"[Chat] init model={model}")
+    cfg = _chat_cfg()
+    model = model or cfg.get("model") or _DEFAULT_CHAT_MODEL
+    base_url = base_url or cfg.get("base_url") or _DEFAULT_BASE_URL
+    api_key = api_key or cfg.get("api_key") or _DEFAULT_API_KEY
+    logger.info(f"[Chat] init model={model} base_url={base_url}")
     return ChatOpenAI(
         model=model,
         base_url=base_url,
@@ -50,7 +93,8 @@ def get_embedding_model(
 ) -> OpenAIEmbeddings:
     """返回一个连接到本地 Ollama 的 OpenAIEmbeddings 实例。
 
-    参数可通过构造函数入参或环境变量（LLM_BASE_URL / LLM_API_KEY / LLM_EMBED_MODEL）覆盖。
+    参数可通过构造函数入参或环境变量（LLM_BASE_URL / LLM_API_KEY / LLM_EMBED_MODEL）覆盖；
+    生产路径由调用方（vector_store）显式传入 config/chroma.yaml 的 embedding 段。
     """
     logger.info(f"[Embed] init model={model}")
     return OpenAIEmbeddings(
@@ -71,7 +115,7 @@ def stream_chat(messages: list, model: str = "", temperature: float = 0.3) -> an
     对支持思考过程的模型（qwen3、deepseek-r1），可设 model_kwargs
     为 `extra_body={"reasoning": True}` 来包含推理 token。
     """
-    m = model or _DEFAULT_CHAT_MODEL
+    m = model or get_chat_model_name()
     llm = get_chat_model(model=m, temperature=temperature, streaming=True)
     logger.info(f"[Stream] start model={m}")
     try:
@@ -90,7 +134,7 @@ def chat_with_tools(messages: list, tools: list, model: str = "", temperature: f
     `tools` 是一组 OpenAI 风格的 function schema（{"type": "function", "function": {...}}）。
     """
 
-    m = model or _DEFAULT_CHAT_MODEL
+    m = model or get_chat_model_name()
     llm = get_chat_model(model=m, temperature=temperature)
     llm_tools = llm.bind_tools(tools)
     logger.info("[ToolChat] start model=%s tools=%s", m, [t["function"]["name"] for t in tools])

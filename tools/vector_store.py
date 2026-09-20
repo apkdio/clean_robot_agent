@@ -181,12 +181,24 @@ class DenseRetriever:
         k = top_k if top_k is not None else _rag_cfg.get("retrieval", {}).get("dense_top_k", 10)
         store = get_vector_store()
         results = store.similarity_search_with_relevance_scores(query, k=k, filter=filter)
-        logger.info("[Dense] query='%s' filter=%s → %d results", query[:50], filter, len(results))
-        for rank, (doc, score) in enumerate(results, 1):
+
+        # 相关性阈值过滤：低于 score_threshold 的 chunk 不进入后续融合与 Prompt。
+        # 0 或未配置 = 不过滤。bge-m3 + cosine 下实测：领域内 query 通常 0.36+，
+        # 明显领域外（天气/闲聊/乱码）落在 0.16~0.24，0.25 正好压在噪声底噪之上。
+        threshold = _rag_cfg.get("retrieval", {}).get("score_threshold", 0) or 0
+        kept = results
+        if threshold > 0:
+            kept = [(doc, score) for doc, score in results if score >= threshold]
+
+        logger.info(
+            "[Dense] query='%s' filter=%s → %d results (threshold=%.2f, kept=%d)",
+            query[:50], filter, len(results), threshold, len(kept),
+        )
+        for rank, (doc, score) in enumerate(kept, 1):
             src = doc.metadata.get("file_name", "?")
             preview = doc.page_content[:60].replace("\n", " ")
             logger.debug("  [Dense #%d score=%.4f] %s | %s", rank, score, src, preview)
-        return results
+        return kept
 
 
 def search_by_filter(filter: dict) -> list[Document]:

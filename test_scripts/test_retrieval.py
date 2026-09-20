@@ -1,4 +1,4 @@
-"""检索链路测试：域路由 + 词表 + BM25 分词 + 过滤 + RRF 融合 + 条目切分。
+"""检索链路测试：域路由 + 词表 + BM25 分词 + 过滤 + RRF 融合 + 阈值 + 精排 + 条目切分。
 
 覆盖（全部测真实代码，不再复制 mock 副本）：
   - agent._route_domain（知识域 → file_name）
@@ -8,7 +8,9 @@
   - sparse_retriever._matches_filter（Chroma where 内存过滤）
   - rrf_fusion.reciprocal_rank_fusion（稠密+稀疏融合排序）
   - entry_splitter.split_numbered_entries（编号条目 + 章节前缀）
-  - [--e2e] HybridRetriever 域过滤端到端（需 Ollama + Chroma）
+  - HybridRetriever._drop_without_dense_support（融合侧兜底）
+  - reranker.rerank 的降级契约（模型不可用 → None）
+  - [--e2e] HybridRetriever 端到端：域过滤 / 阈值过滤 / 精排打分（需 Ollama + Chroma + reranker 模型）
 
 运行：
   .venv\\Scripts\\python.exe test_retrieval.py [--e2e]
@@ -168,7 +170,41 @@ def test_split_numbered_entries():
 
 
 # ──────────────────────────────────────────────────────────────
-# 8. 端到端：HybridRetriever 域过滤（需 Ollama + Chroma）
+# 8. 融合侧兜底：丢弃无稠密支撑的候选（P0-1）
+# ──────────────────────────────────────────────────────────────
+
+def test_drop_without_dense_support():
+    from tools.hybrid_retriever import HybridRetriever
+    a, b, c = (Document(page_content=t) for t in ("A", "B", "C"))
+    fused = [(a, 0.03, {}), (b, 0.02, {}), (c, 0.01, {})]
+    dense = [(a, 0.5), (c, 0.4)]        # B 只被稀疏路命中
+    kept = HybridRetriever._drop_without_dense_support(fused, dense)
+    _assert_eq([d.page_content for d, _, _ in kept], ["A", "C"], "无稠密支撑的 B 被丢弃")
+    _assert_eq(len(HybridRetriever._drop_without_dense_support(fused, [])), 0, "稠密全空→全部丢弃")
+    _assert_eq(len(HybridRetriever._drop_without_dense_support([], dense)), 0, "空融合→空")
+    all_dense = [(a, 0.5), (b, 0.4), (c, 0.3)]
+    _assert_eq(len(HybridRetriever._drop_without_dense_support(fused, all_dense)), 3, "全有支撑→不丢")
+
+
+# ──────────────────────────────────────────────────────────────
+# 9. 精排模块的降级契约（P0-2）
+# ──────────────────────────────────────────────────────────────
+
+def test_reranker_unavailable_returns_none():
+    """模型不可用时 rerank 必须返回 None（调用方据此退回 RRF 顺序），且不抛异常。"""
+    from tools import reranker
+    cands = [(Document(page_content="边刷每 6 个月更换一次"), 0.03, {"dense_rank": 1})]
+    _assert_eq(reranker.rerank("边刷多久换一次", []), [], "空候选→空列表（不触发模型加载）")
+    orig = reranker._ensure_model
+    reranker._ensure_model = lambda: False
+    try:
+        _assert_eq(reranker.rerank("边刷多久换一次", cands), None, "模型不可用→None")
+    finally:
+        reranker._ensure_model = orig
+
+
+# ──────────────────────────────────────────────────────────────
+# 10. 端到端：阈值过滤 + 精排（需 Ollama + Chroma + 本地 reranker 模型）
 # ──────────────────────────────────────────────────────────────
 
 @e2e("HybridRetriever 端到端需要 Ollama + Chroma 数据")
@@ -183,6 +219,33 @@ def test_hybrid_domain_filter_e2e():
     _assert_in("不染一尘常见维修问题.txt", files, "结果来自维修域")
 
 
+@e2e("阈值/精排端到端需要 Ollama + Chroma 数据")
+def test_score_threshold_filters_out_of_domain_e2e():
+    """P0-1 验收：领域外 query 召回应为 0 或显著减少，领域内不受影响。"""
+    from tools.hybrid_retriever import HybridRetriever
+    hr = HybridRetriever()
+    hr.ensure_sparse_index()
+    for q in ("今天天气怎么样", "给我讲个笑话", "asdfghjkl 123456"):
+        _assert_eq(len(hr.search(q)), 0, f"领域外无召回: {q}")
+    for q in ("边刷多久换一次", "机器人不动了怎么办", "吸力下降"):
+        _assert(len(hr.search(q)) > 0, f"领域内仍有召回: {q}")
+
+
+@e2e("精排端到端需要本地 bge-reranker-v2-m3 模型")
+def test_rerank_scores_e2e():
+    from tools import reranker
+    if not reranker._ensure_model():
+        _skip("精排模型不可用（未下载或依赖缺失）——降级契约另由 test_reranker_unavailable_returns_none 覆盖")
+        return
+    on = Document(page_content="边刷建议每 6 个月更换一次，磨损后清扫效果明显下降")
+    off = Document(page_content="今天天气晴朗，适合外出散步和野餐")
+    res = reranker.rerank("边刷多久换一次", [(on, 0.03, {}), (off, 0.02, {})])
+    _assert(res is not None, "模型已就绪时 rerank 不应返回 None")
+    _assert_eq(res[0][0].page_content, on.page_content, "相关文档排第一")
+    _assert(res[0][1] > res[1][1], "相关分高于无关分")
+    _assert_in("rerank_score", res[0][2], "meta 内含 rerank_score")
+
+
 TESTS = [
     test_route_domain,
     test_is_consulting,
@@ -193,7 +256,11 @@ TESTS = [
     test_matches_filter,
     test_rrf_fusion,
     test_split_numbered_entries,
+    test_drop_without_dense_support,
+    test_reranker_unavailable_returns_none,
     test_hybrid_domain_filter_e2e,
+    test_score_threshold_filters_out_of_domain_e2e,
+    test_rerank_scores_e2e,
 ]
 
 

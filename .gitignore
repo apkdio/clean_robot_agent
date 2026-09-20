@@ -5,6 +5,7 @@ data/pkl/
 data/state/
 data/bgm_model/
 data/context/
+data/eval
 data/context_meta/
 __pycache__/
 *.pyc
@@ -26,10 +27,8 @@ temp/
 # Independent demo modules
 Multi_Route_Retrieval/
 
-# Local planning docs（本地规划文档，不随仓库发布）
-OPTIMIZATION_ROADMAP.md
-graduation_project.md
-project_detail.md
+# Local notes（本地笔记，不随仓库发布）
+notes/
 
 # OS
 .DS_Store
