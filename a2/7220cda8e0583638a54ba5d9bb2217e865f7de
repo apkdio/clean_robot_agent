@@ -1,0 +1,77 @@
+tools/log_tool.py
+  s_40681318f5a20b::t_1e45f3b673279f 39-59,81-82
+test_scripts/_runner.py
+  s_321753db235424::t_82a8773ee412f6 42-47
+  s_321753db235424::t_481d5cdc4fd553 174-178,180
+test_scripts/test_retrieval_eval.py
+  s_321753db235424::t_a391f494ca7748 232-236
+  s_321753db235424::t_9f2c7a8df135f2 3-11,13-14
+  s_321753db235424::t_d25842ef011595 1-2,12,15-106,109-226,228-229,231,237-261,263-267
+  s_321753db235424::t_0154dc012afe71 227,230,262
+  s_321753db235424::t_bb1e58844234f2 107-108
+tools/context_store.py
+  s_321753db235424::t_53feab3de2874d 25-28
+  s_40681318f5a20b::t_9fd3c5036af373 7-11,35-96,99,103,187-188,318,325,355
+test_scripts/run_tests.py
+  s_321753db235424::t_8834c2cbfa99f6 40,53
+tools/hot_ingest.py
+  s_40681318f5a20b::t_1899854717a6a4 4,44-46
+tools/vector_store.py
+  s_40681318f5a20b::t_1dab64284d0855 153,159-160
+config/prompts_template.yaml
+  s_40681318f5a20b::t_a6f7dd8684c9fb 4
+intent_classifier_training/build_intent_dataset.py
+  s_40681318f5a20b::t_e3f6a67d5a9ec8 20,61
+test_scripts/test_context.py
+  s_40681318f5a20b::t_41e61d73d30fb7 11,121,126-163,192-193
+README.md
+  s_321753db235424::t_d39e7ca2d5533c 78-79
+  s_321753db235424::t_9c49ddf03290d0 345
+  s_321753db235424::t_a273ede73567ac 252
+  s_321753db235424::t_d394d701fdbb81 249-250
+  s_40681318f5a20b::t_b5381cf9678349 303
+  s_40681318f5a20b::t_1d8118e6e774fe 48
+  s_40681318f5a20b::t_1f209d7b9bb011 304
+  s_321753db235424::t_73d68002a1975e 53-54
+  s_321753db235424::t_f277163298feeb 244-248,251,253-298
+  s_321753db235424::t_0e5e10a9efd3ff 346
+webapp/app.py
+  s_40681318f5a20b::t_185e61dfbcd39f 283-284
+.gitignore
+  s_321753db235424::t_1675df161963d9 10-11
+tools/config_tool.py
+  s_40681318f5a20b::t_b464504fae2926 22-29
+tools/llm_tool.py
+  s_40681318f5a20b::t_417ce548800f5a 67,72,79-83
+config/agent_template.yaml
+  s_40681318f5a20b::t_83e37f925f2147 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.44-trip",
+  "base_commit_sha": "a27220cda8e0583638a54ba5d9bb2217e865f7de",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_321753db235424": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_vqwohz01c4pd",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    },
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
