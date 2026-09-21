@@ -506,7 +506,11 @@
   }
 
   function clearChat() {
-    document.querySelectorAll('#chatMessages .msg').forEach(el => el.remove());
+    // 「重新回答」按钮是 .msg 的兄弟节点，必须一起清掉：否则切换会话后它会被
+    // 新插入的历史消息挤到最上面，而且点击它会把上一轮的问题发到当前会话
+    // （它的回调仍指向已被移除的气泡）。
+    document.querySelectorAll('#chatMessages .msg, #chatMessages .retry-btn')
+      .forEach(el => el.remove());
     welcome.style.display = 'block';
   }
 

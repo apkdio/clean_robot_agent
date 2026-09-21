@@ -18,6 +18,7 @@ config/chroma.yaml
 config/rag.yaml
 config/prompts.yaml
 config/redis.yaml
+config/context.yaml
 
 # IDE
 .idea/

@@ -8,6 +8,7 @@ _CONFIG_PATHS = {
     "prompts": "config/prompts.yaml",
     "agent": "config/agent.yaml",
     "redis": "config/redis.yaml",
+    "context": "config/context.yaml",
 }
 
 

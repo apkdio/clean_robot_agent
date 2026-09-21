@@ -20,6 +20,7 @@
   - Agent 前置防护 test_agent_guards.py
   - 多轮实战对话  test_dialogue.py      （需 --e2e：Ollama + Chroma）
   - 检索质量评测  test_retrieval_eval.py （需 --e2e：Ollama + Chroma + reranker，输出 hit@k/MRR 等指标）
+  - 多轮上下文评测 test_context_eval.py  （需 --e2e：Ollama + Chroma；回放真实会话断言当前轮行为，xfail 语义）
 """
 import os
 import sys
@@ -38,6 +39,7 @@ import test_retrieval        # noqa: E402
 import test_agent_guards     # noqa: E402
 import test_dialogue         # noqa: E402
 import test_retrieval_eval   # noqa: E402
+import test_context_eval     # noqa: E402
 
 
 MODULES = [
@@ -51,6 +53,7 @@ MODULES = [
     ("Agent 前置防护", test_agent_guards),
     ("多轮实战对话", test_dialogue),
     ("检索质量评测", test_retrieval_eval),
+    ("多轮上下文评测", test_context_eval),
 ]
 
 

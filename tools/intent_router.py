@@ -63,8 +63,13 @@ def _load_model():
     return _head, _labels
 
 
-def route_intent(query: str) -> str:
-    """把 query 分类为 robot | other | casual | unknown（本地模型）。"""
+def route_intent_with_margin(query: str) -> tuple[str, float]:
+    """同 route_intent，但额外返回 margin（top1 - top2 概率差）。
+
+    margin 衡量分类头有多确定：接近 0 说明它自己也拿不准——典型是追问句，
+    指代对象在上文，单看这一句没有任何信号。调用方据此做低置信判定，
+    而不是把 argmax 的结果当成确定结论。
+    """
     import numpy as np
     import torch
 
@@ -76,12 +81,18 @@ def route_intent(query: str) -> str:
 
     x = torch.tensor(np.array([vec], dtype=np.float32))
     with torch.no_grad():
-        logits = head(x)
-        idx = int(logits.argmax(dim=1).item())
+        probs = torch.softmax(head(x), dim=1)[0]
+    top2 = torch.topk(probs, k=2).values
+    margin = float(top2[0] - top2[1])
 
-    intent = labels[idx]
-    logger.info("[IntentRouter] local → %s (%s)", intent, query[:40])
-    return intent
+    intent = labels[int(probs.argmax().item())]
+    logger.info("[IntentRouter] local → %s (margin=%.3f, %s)", intent, margin, query[:40])
+    return intent, margin
+
+
+def route_intent(query: str) -> str:
+    """把 query 分类为 robot | other | casual | unknown（本地模型）。"""
+    return route_intent_with_margin(query)[0]
 
 
 def get_guess_hint() -> str:

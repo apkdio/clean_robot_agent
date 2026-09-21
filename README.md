@@ -17,6 +17,7 @@
 - **流式输出**：SSE 流式返回答案，前端逐字渲染
 - **知识库热更新**：每 30 分钟自动扫描 `data/knowledge/`，检测文件增删改并增量入库
 - **多轮友好**：领域外问题礼貌拒答，模糊问题软引导，闲聊自然回应
+- **低置信追问承接**：追问句的指代在上文时分类头会判不准；命中「低置信 + 上文有可承接话题」就不硬拒答——安全话题（冒烟/漏电等）直接承接并复述处理方式，其余先用上文改写 query 再检索；检索确实无果时给兜底话术，不凭自身知识作答
 - **多会话与上下文**：按会话（session_id）隔离多轮对话，对话持久化到本地（jsonl + meta），支持新建/切换/删除历史会话，首轮回答后自动生成 LLM 语义标题与更新时间；自由指代通过拼接历史由 LLM 自主消解
 
 ## 技术栈
@@ -39,6 +40,7 @@ clean_robot_agent/
 │   ├── rag.yaml                 # RAG 配置（分块、检索、RRF 参数）
 │   ├── chroma.yaml              # Chroma/embedding 配置
 │   ├── prompts.yaml             # Prompt 文件路径
+│   ├── context.yaml             # 上下文承接与查询改写（低置信阈值、改写开关）
 │   ├── word_dict_config.py      # 词表配置中心（情绪/退出/域/触发/症状等词表集中管理）
 │   └── *_template.yaml          # 对应模板（含注释说明，复制后填值）
 ├── data/
@@ -179,6 +181,7 @@ cp config/agent_template.yaml  config/agent.yaml
 cp config/rag_template.yaml    config/rag.yaml
 cp config/chroma_template.yaml config/chroma.yaml
 cp config/prompts_template.yaml config/prompts.yaml
+cp config/context_template.yaml config/context.yaml
 ```
 
 ### 5. 训练意图分类头（首次必需）
@@ -281,7 +284,7 @@ python intent_classifier_training/train_intent_classifier.py
 
 ### 检索质量评测
 
-`test_retrieval_eval.py` 基于 golden 评测集度量检索质量，用于改动前后的回归对比（对应路线图 P1-1）。
+`test_retrieval_eval.py` 基于 golden 评测集度量检索质量，用于改动前后的回归对比。
 
 - **评测集**：`data/eval/retrieval_golden.jsonl`（**本地数据，已 gitignore**，不随仓库发布），覆盖域路由 / 型号精准 / 预算过滤 / 时间过滤 / 领域外五类；
 - **指标**：域路由准确率、hit@1/@3/@5、MRR、无召回率、结构化直出命中率；
@@ -303,6 +306,7 @@ python intent_classifier_training/train_intent_classifier.py
 | `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关）、`behavior.verbose_log`（文件日志是否降到 DEBUG） |
 | `rag.yaml` | `chunk.chunk_size`、`retrieval.dense_top_k/sparse_top_k/final_top_k/score_threshold`、`rrf.*`、`rerank.*`（精排开关/模型/候选宽度/阈值）、`data_dir`（知识库源目录） |
 | `chroma.yaml` | `persist_dir`、`collection_name`、`embedding.model` |
+| `context.yaml` | `intent.low_conf_margin`（低置信降级阈值，0 关闭）、`context.topic_window`（回看多少条会话记录判定话题与安全告警）、`context.rewrite.*`（改写开关/模式/选轮相似度阈值） |
 | `redis.yaml` | `host`/`port`/`password`（Redis 连接）、`sop_ttl`（SOP 会话过期）、`lock_ttl`（锁过期） |
 
 ## 问答流程

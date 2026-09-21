@@ -269,10 +269,15 @@ def rollback_last_user_message(session_id: str):
 
 
 def get_recent(session_id: str, n: int = None) -> list:
-    """取最近 n 条消息（默认 6 轮）。优先内存缓存，未缓存则读文件。"""
+    """取最近 n 条消息（默认 6 轮 = 12 条）。
+
+    内存缓存只是**滚动窗口**（_MAX_MESSAGES 条），所以请求超过窗口长度时必须
+    回读文件：否则会被静默截断 —— 前端历史接口原本取 n=1000 想拿全量，实际只
+    拿到窗口里的 12 条，导致多轮会话的前几轮在界面上凭空消失。
+    """
     n = n or _MAX_MESSAGES
     cache = _cache.get(session_id)
-    if cache is not None:
+    if cache is not None and n <= _MAX_MESSAGES:
         return cache[-n:]
 
     msgs = []
@@ -288,7 +293,8 @@ def get_recent(session_id: str, n: int = None) -> list:
                 except json.JSONDecodeError:
                     continue
     msgs = msgs[-n:]
-    _cache[session_id] = msgs
+    # 缓存只留滚动窗口，不把整份历史（可能上千条）常驻内存
+    _cache[session_id] = msgs[-_MAX_MESSAGES:]
     return msgs
 
 

@@ -15,7 +15,12 @@ from config_tool import load_config
 from llm_tool import get_chat_model_name, stream_chat
 from log_tool import get_logger
 from prompts_tool import load_main_prompts
-from config.word_dict_config import EMOTION_STRONG, EMOTION_MILD, EXIT_WORDS
+from config.word_dict_config import EMOTION_STRONG, EMOTION_MILD, EXIT_WORDS, NO_ANSWER_REPLIES
+
+# 注意：本文件里的 context_store 刻意用 `tools.` 前缀导入，与 app.py / sops/ 保持一致。
+# 项目里同时存在 `tools.X` 与裸 `X` 两种写法，会加载出**两个模块实例**、各持一份内存缓存。
+# app.py 用 `tools.context_store` 追加客服回复，这里若走裸模块去读就永远读不到
+# ——会话历史会缺掉 assistant 那一半。要统一时请整体统一，别单独把这几处改回去。
 
 logger = get_logger(name="agent")
 
@@ -132,6 +137,217 @@ def _match_exit_intent(query: str) -> bool:
     return True
 
 
+def _history_block(session_id: str) -> str:
+    """拼最近对话历史，供 LLM 自主消解指代（如"它怎么样""那这个呢"）。
+
+    跳过 blocked 项：被注入防护拦下的内容只留档，不再回灌给 LLM。
+    """
+    from tools.context_store import get_recent
+
+    return "\n".join(
+        f"{'用户' if m.get('role') == 'user' else '客服'}：{(m.get('content') or '')[:200]}"
+        for m in get_recent(session_id)
+        if not m.get("blocked")
+    )
+
+
+# ── 上下文承接与查询改写（P0-3）───────────────────────────────────────────
+# 追问句（"那这个电流现象影响大吗"）的指代在上文，单看没有信号，会被意图分类头
+# 判成领域外而直接拒答。这里做两件事：判不了时先看上文有没有可承接的话题；
+# 该走检索的，先用上文把 query 补成自足形式（只影响检索，会话记录仍是原文）。
+# 设计见 notes/OPTIMIZATION_ROADMAP.md 的「P0-3 详细设计」。
+
+_ctx_cfg_cache = None
+
+
+def _ctx_cfg() -> dict:
+    """读取 context.yaml（失败返回空 dict，走内置默认）。"""
+    global _ctx_cfg_cache
+    if _ctx_cfg_cache is None:
+        try:
+            _ctx_cfg_cache = load_config("context") or {}
+        except Exception as e:
+            logger.warning("[Context] load config failed: %s", e)
+            _ctx_cfg_cache = {}
+    return _ctx_cfg_cache
+
+
+def _ctx_enabled() -> bool:
+    return bool((_ctx_cfg().get("context") or {}).get("enabled", True))
+
+
+def _rewrite_cfg() -> dict:
+    return (_ctx_cfg().get("context") or {}).get("rewrite") or {}
+
+
+def _window_messages(session_id: str) -> list:
+    """最近 topic_window 条会话记录（判近期话题与是否发生过安全告警用）。"""
+    from tools.context_store import get_recent
+
+    n = int((_ctx_cfg().get("context") or {}).get("topic_window", 8) or 8)
+    return get_recent(session_id, n=n)
+
+
+def _window_danger_word(session_id: str) -> str | None:
+    """窗口内若发生过安全告警，返回命中的危险词（取最近一条）；没有则 None。"""
+    from config.word_dict_config import DANGER_WORDS
+
+    for m in reversed(_window_messages(session_id)):
+        if m.get("danger"):
+            text = m.get("content") or ""
+            return next((w for w in DANGER_WORDS if w in text), "")
+    return None
+
+
+def _window_domain(session_id: str) -> str | None:
+    """窗口内最近一条能路由到知识域的 user 消息所属域；没有则 None。
+
+    用来判断低置信的这一句有没有上文可承接——没有就是真域外，维持拒答。
+    """
+    for m in reversed(_window_messages(session_id)):
+        if m.get("role") == "user" and not m.get("blocked"):
+            domain = _route_domain(m.get("content") or "")
+            if domain:
+                return domain
+    return None
+
+
+_SAFETY_CARRY_PREFIX = "您前面提到的"
+
+_SAFETY_CARRY = (
+    _SAFETY_CARRY_PREFIX + "{danger}属于安全隐患，不建议继续使用机器人：请保持断电停机，"
+    "不要自行拆机、也不要继续充电，尽快联系官方售后（400-860-1314）安排检测。\n\n"
+    "如果您还有其他问题，也可以继续问我～"
+)
+
+
+def _last_reply_is_safety_carry(session_id: str) -> bool:
+    """上一条客服回复是否已经是安全承接？避免同一句连着刷。"""
+    for m in reversed(_window_messages(session_id)):
+        if m.get("role") == "assistant":
+            return (m.get("content") or "").startswith(_SAFETY_CARRY_PREFIX)
+    return False
+
+
+def _cosine(a, b) -> float:
+    import numpy as np
+
+    va, vb = np.asarray(a, dtype="float32"), np.asarray(b, dtype="float32")
+    denom = float(np.linalg.norm(va) * np.linalg.norm(vb))
+    return float(va @ vb / denom) if denom else 0.0
+
+
+def _select_history_turns(session_id: str, query: str) -> list:
+    """挑出与当前 query 最相关的历史用户话术（过了相似度下限的）。
+
+    只服务于改写，挑不出来就不改写（宁缺毋滥）。
+    实测 bge-m3 在同域短句上区分度很低（无关句也能到 0.53），所以取严：
+    只保留 top-N 且必须过 min_similarity。
+    """
+    cfg = _rewrite_cfg()
+    top_k = int(cfg.get("max_history_turns", 2) or 2)
+    min_sim = float(cfg.get("min_similarity", 0.55) or 0)
+
+    msgs = _window_messages(session_id)
+    # 当前这一句在 ask_stream 开头就已落盘（assistant 回复还没写），必须从候选里
+    # 去掉：否则它与自己的余弦恒为 1.0，改写会变成把整句重复两遍。
+    if msgs and msgs[-1].get("role") == "user":
+        msgs = msgs[:-1]
+    users = [
+        m.get("content") or ""
+        for m in msgs
+        if m.get("role") == "user" and not m.get("blocked") and (m.get("content") or "").strip()
+    ]
+    if not users:
+        return []
+
+    try:
+        from llm_tool import get_embedding_model
+
+        vecs = get_embedding_model().embed_documents([query] + users)
+    except Exception as e:
+        logger.warning("[Rewrite] embedding failed, skip turn selection: %s", e)
+        return []
+
+    scored = sorted(((_cosine(vecs[0], v), t) for t, v in zip(users, vecs[1:])), reverse=True)
+    picked = [t for sim, t in scored[:top_k] if sim >= min_sim]
+    logger.info(
+        "[Rewrite] history turns: picked=%d, top_sim=%.3f, threshold=%.2f",
+        len(picked), scored[0][0] if scored else 0.0, min_sim,
+    )
+    return picked
+
+
+def _validate_rewrite(text: str, query: str, grounding: str, max_chars: int) -> str | None:
+    """校验改写结果；不合格返回 None（宁可不改，也不要把 query 改坏）。"""
+    text = (text or "").strip().strip("\"'“”「」《》 \n")
+    if not text or len(text) > max_chars:
+        return None
+    pattern = r"[\u4e00-\u9fffA-Za-z0-9]"
+    in_query = set(re.findall(pattern, query)) & set(re.findall(pattern, text))
+    in_grounding = set(re.findall(pattern, grounding or "")) & set(re.findall(pattern, text))
+    # 改写必须有据：要么贴着原 query，要么用上了上文；两头都不沾就是凭空换话题
+    return text if (in_query or in_grounding) else None
+
+
+def _llm_rewrite(query: str, history_block: str) -> str | None:
+    """用小模型把追问改写成自足 query（输出受约束，校验不过即放弃）。"""
+    from llm_tool import get_small_model_name, stream_chat
+
+    max_chars = int(_rewrite_cfg().get("max_chars", 80) or 80)
+    prompt = (
+        "下面是一段客服对话历史，以及用户当前这一句。\n"
+        "请把当前这一句改写成一个不依赖上文、单独也看得懂的问题："
+        "把「这个 / 那个 / 它」这类指代替换成历史里明确提到的对象，补全省略的信息。\n"
+        f"要求：只输出改写后的问题本身（不要解释、不要引号、不要加粗），不超过 {max_chars} 字；"
+        "如果当前这一句本身已经完整，就原样输出。\n\n"
+        f"对话历史：\n{history_block or '（无）'}\n\n"
+        f"用户当前这一句：{query}"
+    )
+    try:
+        out = "".join(
+            stream_chat(
+                [HumanMessage(content=prompt)],
+                model=get_small_model_name(),
+                temperature=0.0,
+            )
+        )
+    except Exception as e:
+        logger.warning("[Rewrite] llm rewrite failed: %s", e)
+        return None
+    return _validate_rewrite(out, query, history_block, max_chars)
+
+
+def _rewrite_query(session_id: str, query: str) -> tuple[str, str]:
+    """把依赖上文的追问改写成自足 query，返回 (effective_query, via)。
+
+    via ∈ {"none", "rule", "llm"}；none 表示不改写，调用方直接用原 query。
+    只作用于检索（域路由 + 双路召回）：会话记录永远写原文，审计保真。
+    """
+    cfg = _rewrite_cfg()
+    if not _ctx_enabled() or not cfg.get("enabled", True):
+        return query, "none"
+
+    max_chars = int(cfg.get("max_chars", 80) or 80)
+    turns = _select_history_turns(session_id, query)
+    if turns:
+        budget = max(0, max_chars - len(query) - 1)
+        hist = " ".join(t[:40] for t in turns)[:budget].strip()
+        if hist:
+            effective = f"{hist} {query}"
+            logger.info("[Rewrite] via=rule origin=%s → effective=%s", query[:40], effective[:80])
+            return effective, "rule"
+
+    if str(cfg.get("mode", "rule")).lower() == "rule+llm":
+        history_block = _history_block(session_id)
+        result = _llm_rewrite(query, history_block)
+        if result and result != query:
+            logger.info("[Rewrite] via=llm origin=%s → effective=%s", query[:40], result[:80])
+            return result, "llm"
+
+    return query, "none"
+
+
 def _resolve_date_filter(query: str) -> dict | None:
     """把问题里的日期表达（绝对或相对）解析成 Chroma 过滤条件。
 
@@ -211,13 +427,9 @@ def _resolve_model_query(session_id: str, query: str):
             MODEL_TOOL_SCHEMA, MODEL_TOOL_MODEL, search_models_by_names,
         )
         from llm_tool import chat_with_tools
-        from context_store import get_recent
         from sops.base import _format_models
         # 拼最近对话历史，让 LLM 理解指代（"这两个"指谁）
-        history_block = "\n".join(
-            f"{'用户' if m.get('role') == 'user' else '客服'}：{(m.get('content') or '')[:200]}"
-            for m in get_recent(session_id)
-        )
+        history_block = _history_block(session_id)
         resp = chat_with_tools(
             [HumanMessage(content=f"对话历史：\n{history_block}\n\n用户当前问题：{query}")],
             [MODEL_TOOL_SCHEMA],
@@ -384,20 +596,36 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     session_id 用于区分对话会话（上下文按会话持久化到 data/context/）。
     """
     global _pending_exits, _pending_service
+    from tools.context_store import append_message
+
     # 角色扮演 / 指令注入：直接拒绝，不发给 LLM（最先判断）
+    # 拦截轮次同样落盘（blocked 标记）：否则历史里只剩 assistant、缺 user，
+    # 既破坏喂给 LLM 的上下文结构，也让这轮在文件里无从复盘。
+    # blocked 项在拼对话历史时被跳过，不会回灌给 LLM。
     if _INJECT_RE.search(query):
+        append_message(session_id, "user", query, blocked="inject")
+        logger.warning("[Guard] injection blocked: %s", query[:60])
         yield "我是扫地机器人助手，只能帮你解答扫地机器人相关的问题，无法扮演其他角色哦～"
         return
 
     # 危险现象：安全优先，在一切改写/路由之前拦截，立即停机联系售后
     from config.word_dict_config import DANGER_WORDS
-    if any(w in query for w in DANGER_WORDS):
+    danger_hit = next((w for w in DANGER_WORDS if w in query), None)
+    if danger_hit:
+        # danger 标记供后续判断"近期是否发生过安全告警"；该轮是正常对话的一部分，
+        # 照常进入对话历史（区别于 injection）
+        append_message(session_id, "user", query, danger=True)
+        logger.warning("[Guard] danger word hit: %s | %s", danger_hit, query[:60])
+        # 已升级为停机 + 联系售后，继续故障排查流程自相矛盾 → 结束 SOP 及其待答子状态
+        from sops import end_sop
+        end_sop(session_id)
+        _pending_exits.pop(session_id, None)
+        _pending_service.pop(session_id, None)
         yield ("请立即停止使用机器人并断开电源！涉及冒烟/烧焦/进水等安全风险，"
                "不要自行拆机或继续充电，请马上联系官方售后（400-860-1314）处理。")
         return
 
     # 上下文：记录用户消息（对话历史持久化，供 RAG 生成拼接，由 LLM 自主消解指代）
-    from context_store import append_message
     append_message(session_id, "user", query)
 
     # 负面情绪：先安抚一句，再继续正常流程（只安抚、不拦截）
@@ -460,8 +688,34 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             return
         # 返回 None：用户主动退出（状态已清除）→ 回退正常流程
 
-    from intent_router import route_intent, get_guess_hint
-    intent = route_intent(query)
+    from intent_router import route_intent_with_margin, get_guess_hint
+    intent, margin = route_intent_with_margin(query)
+
+    # S2-a：判不出意图 + 近期发生过安全告警 → 直接承接（零检索、零 LLM）。
+    # 知识库里没有“漏电影响大不大”这类条目，检索必然空手；这里要的是承接，不是知识。
+    # 触发面用 other ∪ unknown：两者都表示“靠这一句判不出意图”。实测追问句常被判成
+    # **高置信的 unknown**（“那这个影响大吗” → unknown 0.954），只看 low_conf 会漏掉。
+    low_conf_margin = float((_ctx_cfg().get("intent") or {}).get("low_conf_margin", 0) or 0)
+    low_conf = low_conf_margin > 0 and margin < low_conf_margin
+    if (_ctx_enabled() and intent in ("other", "unknown")
+            and not _last_reply_is_safety_carry(session_id)):
+        danger_word = _window_danger_word(session_id)
+        if danger_word is not None:
+            logger.info(
+                "[Context] intent=%s (margin=%.3f) + 安全告警(%s) → 安全承接",
+                intent, margin, danger_word or "-",
+            )
+            yield _SAFETY_CARRY.format(danger=f"「{danger_word}」" if danger_word else "情况")
+            return
+
+    # S1：低置信的 other 不硬拒答——但“低置信”只是入场券，
+    # 还要上文有可承接的话题，否则就是真域外，维持拒答。
+    if intent == "other" and low_conf:
+        if _window_domain(session_id):
+            logger.info("[Intent] low-confidence other (margin=%.3f) + 可承接话题 → 降级为 unknown", margin)
+            intent = "unknown"
+        else:
+            logger.info("[Intent] low-confidence other (margin=%.3f) 无可承接话题 → 维持拒答", margin)
 
     # 追问检测：基于上一轮推荐结果回答（"有没有更新的""有没有更便宜的"等）
     if intent in ("robot", "unknown"):
@@ -571,32 +825,38 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         logger.warning("[Agent] Structured filter matched no models, falling back to RAG")
 
     # 普通 RAG：双路召回（按知识域定向，识别不准则全库兜底）
-    domain = _route_domain(query)
-    chunks = hr.search(query, filter={"file_name": domain} if domain else None)
+    # 低置信追问 / unknown：先按上文把 query 补成自足形式再检索（记录仍是原文）
+    if low_conf or intent == "unknown":
+        effective_query, rewrite_via = _rewrite_query(session_id, query)
+    else:
+        effective_query, rewrite_via = query, "none"
+
+    domain = _route_domain(effective_query)
+    chunks = hr.search(effective_query, filter={"file_name": domain} if domain else None)
+
+    # 保底 ①：域路由可能选错文件。实测「边刷多久换一次」被判进维修域，而正确答案在
+    # 选购指南的「耗材更换周期」条目里——带着错的 filter 检索会直接 0 命中，
+    # 正确答案就再也够不着了（去掉 filter 后该条 top1=0.91）。所以 0 命中就撤掉域过滤重来。
+    if not chunks and domain:
+        logger.info("[RAG] 0 hit under domain filter(%s), retry over full KB", domain)
+        chunks = hr.search(effective_query, filter=None)
+
+    # 保底 ②：改写后 0 命中 → 用原 query 在全库再检一次（把误改的代价降到多一次检索）
+    if not chunks and effective_query != query and _rewrite_cfg().get("retry_with_origin", True):
+        logger.info("[Rewrite] no hit via %s, retry with origin over full KB: %s", rewrite_via, query[:40])
+        chunks = hr.search(query, filter=None)
 
     # 拼接最近对话历史，供 LLM 自主消解指代（如"它怎么样"指代上文型号）
-    from context_store import get_recent
-    history_block = "\n".join(
-        f"{'用户' if m.get('role') == 'user' else '客服'}：{(m.get('content') or '')[:200]}"
-        for m in get_recent(session_id)
-    )
+    history_block = _history_block(session_id)
 
     if not chunks:
-        for chunk in stream_chat(
-                [
-                    SystemMessage(content=load_main_prompts()),
-                    HumanMessage(
-                        content=(
-                                f"知识库中暂无相关内容，请结合对话历史消解指代并回答，若无对话历史，则根据自身知识回答。\n\n"
-                                f"{'对话历史：' + history_block if history_block else '暂无'}\n\n"
-                                f"问题：{query}"
-                        )
-                    )
-                ],
-                model=get_chat_model_name(),
-                temperature=_llm_cfg.get("temperature", 0.3),
-        ):
-            yield chunk
+        # 无召回 → 不自由作答（P1-4 层①）。原提示词让模型“根据自身知识回答”，会复述
+        # 上一轮内容甚至编造事实（BC-20260920-01 断点③）；实测改成“禁止凭自身知识作答”
+        # 的提示词也约束不住（模型照答不误），所以这里直接走确定性兜底话术。
+        import random
+
+        logger.info("[RAG] 0 chunk retrieved, fall back to canned reply (query=%s)", query[:40])
+        yield random.choice(NO_ANSWER_REPLIES)
         return
 
     if _behavior.get("retrieval_only", False):
