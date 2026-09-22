@@ -1,0 +1,114 @@
+tools/metadata_extractor.py
+  s_40681318f5a20b::t_7add3e08f09583 17-18,22,369-374
+  s_d35390abca27d8::t_80325310781b20 1,3-4,40,42,52,54
+  s_d35390abca27d8::t_6ed56a143727a2 65,67-68,115,221,223-224
+  s_d35390abca27d8::t_ed6f56baeba187 328-331
+tools/entry_splitter.py
+  s_d35390abca27d8::t_5b68bcaeeb2d36 1,3-5,22,63
+test_scripts/test_metadata.py
+  s_d35390abca27d8::t_f13d069c9eac0b 13
+tools/sparse_retriever.py
+  s_d35390abca27d8::t_780fe889eb4b55 1,3,34,36,75,93,113,115-116
+tools/__init__.py
+  s_d35390abca27d8::t_c9208d0c86e7e0 3
+function_tools/model_tool.py
+  s_d35390abca27d8::t_4b1fda8c4c9cbc 1,3-5
+  s_40681318f5a20b::t_149bb453f7aee1 78,82,87
+  s_d35390abca27d8::t_1bda39c2bf0529 67,69-71
+  s_40681318f5a20b::t_9798f62400480d 79-81,83-86
+tools/context_store.py
+  s_d35390abca27d8::t_71184d80136361 3-4,6,10
+function_tools/service_point_tool.py
+  s_d35390abca27d8::t_b4ac2d0368bdb1 1-5,45,90,92
+test_scripts/test_intent.py
+  s_d35390abca27d8::t_f13d069c9eac0b 7
+test_scripts/test_context.py
+  s_d35390abca27d8::t_f13d069c9eac0b 12
+function_tools/symptom_tool.py
+  s_d35390abca27d8::t_f7f426bfe4ce64 1,3-4,6-7
+tools/llm_tool.py
+  s_d35390abca27d8::t_2295b31a201506 1,3-5,47,60,62,88,90-91,106,108-109,124
+function_tools/budget_tool.py
+  s_d35390abca27d8::t_ecf84a8728101c 1,3-4,6-8
+tools/reranker.py
+  s_d35390abca27d8::t_ff5ca82f2f0462 1-2,4-5,48-49,99,101
+tools/rrf_fusion.py
+  s_d35390abca27d8::t_f5703b02cdd739 1,3-4,36-39,56-57
+function_tools/date_tool.py
+  s_d35390abca27d8::t_76be8a6ce98ab0 67,104,186,218,223,225
+  s_d35390abca27d8::t_08b6e3098ce8c3 1,3-4,20,40
+test_scripts/test_retrieval.py
+  s_d35390abca27d8::t_f13d069c9eac0b 13
+tools/redis_store.py
+  s_d35390abca27d8::t_26885cf209508f 1,3
+test_scripts/test_agent_guards.py
+  s_d35390abca27d8::t_f13d069c9eac0b 10
+config/word_dict_config.py
+  h_26b9a38f4942dd 54
+  s_40681318f5a20b::t_9b7875ea0d9e92 52-53,55
+test_scripts/test_dialogue.py
+  s_d35390abca27d8::t_f13d069c9eac0b 18
+prompts/main_prompts.txt
+  s_40681318f5a20b::t_c014e31695ab6d 41,53
+sops/base.py
+  s_d35390abca27d8::t_9233586b1331b2 3-4,6
+test_scripts/test_purchase_sop.py
+  s_d35390abca27d8::t_f13d069c9eac0b 9
+test_scripts/test_repair_sop.py
+  s_d35390abca27d8::t_f13d069c9eac0b 7
+test_scripts/_runner.py
+  s_d35390abca27d8::t_f13d069c9eac0b 18
+tools/hybrid_retriever.py
+  s_d35390abca27d8::t_b31fc2c86c1c5b 80-85,128-135
+  s_40681318f5a20b::t_0f45f46099968f 152
+  s_40681318f5a20b::t_0679352cd42f47 105,107-108,123-127,137-151,153-157
+  s_40681318f5a20b::t_87ccb9c5999e6c 110,114
+  s_40681318f5a20b::t_53cd45f60c7a75 104
+  s_40681318f5a20b::t_1bfda24e2fccbb 79,100
+  s_40681318f5a20b::t_058116d7cf3a54 49-50,52,73-78,86-99,101-103,111-112,115-118,122,136
+test_scripts/test_function_tools.py
+  s_d35390abca27d8::t_f13d069c9eac0b 11
+README.md
+  s_40681318f5a20b::t_c7109b54d11b05 8,101,334
+  s_40681318f5a20b::t_a40c79d6bf0996 10-11,16,21
+tools/agent.py
+  s_d35390abca27d8::t_e10bf6461454cd 411,413-416
+  s_40681318f5a20b::t_79e800d9cc799a 839-842
+  s_40681318f5a20b::t_da9f248449e3ee 836-838,843
+  s_40681318f5a20b::t_cf535275bf2017 691,693-698,701
+tools/hot_ingest.py
+  s_d35390abca27d8::t_86411cde2dd156 1,3-4
+tools/vector_store.py
+  s_d35390abca27d8::t_3cec71ca60973e 62,64,145,161,170-171,189,191,204,206
+test_scripts/run_tests.py
+  s_d35390abca27d8::t_e4033234cbce5f 1,3-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.45-trip",
+  "base_commit_sha": "239be500b01d3c941e4187921243ef1d723ee5c0",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    },
+    "s_d35390abca27d8": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_nn5eblx0bifh",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
