@@ -6,11 +6,7 @@
   - 槽位提取：预算（extract_price_constraint，真实）、宠物（purchase._extract_has_pet）
   - 重试循环 / 槽位放弃（max_retry）/ 模板 fallback / 异常防御
   - purchase SOP 触发与 guard（选购咨询/售后/品牌不触发选购）
-  - [数据可用时] 选购 SOP 全流程（真实 enumerate_models）
-
-运行：
-  .venv\\Scripts\\python.exe test_purchase_sop.py
-"""
+  - [数据可用时] 选购 SOP 全流程（真实 enumerate_models）"""
 import sys
 import re
 from _runner import *

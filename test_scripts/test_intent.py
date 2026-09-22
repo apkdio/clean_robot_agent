@@ -4,11 +4,7 @@
   - 常规表达（每类约 30 条，含口语/笔误）
   - 极端泛化（错别字 / 全拼音 / 中英混杂 / 描述性指代）
 
-依赖：torch（本地分类头）+ Ollama bge-m3（embedding），加 ``--e2e`` 运行。
-
-运行：
-  .venv\\Scripts\\python.exe test_intent.py --e2e
-"""
+依赖：torch（本地分类头）+ Ollama bge-m3（embedding），加 ``--e2e`` 运行。"""
 import sys
 from collections import defaultdict
 from _runner import *

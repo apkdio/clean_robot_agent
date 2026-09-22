@@ -1,12 +1,7 @@
-"""结构化元数据提取工具。
+"""结构化元数据提取：chunk 文本 → metadata（入库时），用户 query → Chroma filter（检索时）。
 
-从 chunk 文本提取结构化维度（价格、发布时间等），并把用户 query 转成
-Chroma 的 `where` 过滤条件。这是让 RAG 流水线在不改动向量检索核心的前提下，
-精确处理结构化查询（预算、价格区间、发布时间）的可插拔层。
-
-下面的规则是通用设计，可按领域扩展：
-  - extract_*  : chunk 文本 → metadata 字典（入库时用）
-  - query_*    : 用户 query → Chroma filter 字典（检索时用）
+让 RAG 流水线在不改动向量检索核心的前提下，精确处理预算、价格区间、发布时间等结构化查询。
+命名约定：`extract_*` 用于入库侧，`query_*` 用于检索侧。
 """
 
 from __future__ import annotations
@@ -19,10 +14,12 @@ from log_tool import get_logger
 
 logger = get_logger(name="metadata_extractor")
 
-# 预算提示特征（决定是否走 LLM 预算兜底）：货币单位/预算词，或"数字 + 范围词"
+# 预算提示特征（决定是否走 LLM 预算兜底）：货币单位/预算词，或"数字 + 范围词"，
+# 或"数字 + 语气词收尾"（「两千吧」这类口语，交给 LLM 兜底）
 _BUDGET_HINT_RE = re.compile(
     r"(?:元|块钱?|预算|价位|多少钱)"
     r"|(?:\d+|[一二两三四五六七八九十百千万]+)\s*(?:以内|以下|以上|起|左右|上下|出头|到|至|多)"
+    r"|(?:\d+|[一二两三四五六七八九十百千万]+)\s*(?:元|块|块钱)?\s*[吧呢啊呀]"
 )
 
 # 预算提取兜底用的小模型（默认 3b 更快；精度不够可在 agent.yaml 调 llm.small_model）
@@ -40,13 +37,10 @@ _PUBLISH_DATE_PATTERN = re.compile(
 
 
 def extract_price_metadata(text: str) -> Dict:
-    """从 chunk 提取最低/最高价。
+    """从 chunk 提取最低/最高价，无价格时返回 {}。
 
-    一个 chunk 可能包含多条价格不同的产品；存 min/max 是为了让预算过滤
+    一个 chunk 可能包含多条价格不同的产品，存 min/max 是为了让预算过滤
     能保留「包含任意一款预算内产品」的 chunk。
-
-    返回：
-        {"min_price": int, "max_price": int}，无价格时返回 {}。
     """
     prices = [float(m) for m in _PRICE_PATTERN.findall(text)]
     if not prices:
@@ -55,10 +49,9 @@ def extract_price_metadata(text: str) -> Dict:
 
 
 def extract_publish_date(text: str) -> Dict:
-    """从 chunk 提取发布时间（归一化为 ISO 格式）。
+    """从 chunk 提取发布时间（归一化为 int YYYYMMDD，便于 $gte/$lte 数值比较）。
 
-    识别：发布时间：2024-01-01 / 2024/1/1 / 2024年1月1日
-    返回 {"publish_date": "YYYY-MM-DD"}，无发布时间时返回 {}。
+    识别「发布时间：」后的 2024-01-01 / 2024/1/1 / 2024年1月1日；无则返回 {}。
     """
     m = _PUBLISH_DATE_PATTERN.search(text)
     if not m:
@@ -69,15 +62,10 @@ def extract_publish_date(text: str) -> Dict:
 
 
 def extract_model_info(doc) -> Dict:
-    """从单型号 chunk 提取结构化型号信息。
+    """从单型号 chunk 提取结构化型号信息（name/series/price/吸力/导航/避障/发布时间）。
 
-    读取型号名（**加粗**）、价格（来自 metadata，条目级切分后对每个条目都精确）
-    以及关键参数。
-
-    返回：
-        {"name": str, "series": str, "price": int, "suction": str,
-         "navigation": str, "obstacle": str, "publish_date": str}
-        —— 缺失字段为空字符串/None。
+    型号名取 **加粗** 内容，价格取 metadata（条目级切分保证 min_price 即该条目价）；
+    缺失字段为空字符串或 None。
     """
     text = doc.page_content
 
@@ -124,8 +112,7 @@ MODEL_ASPECTS = {
 def format_model_line(info: Dict, aspect: str = None) -> str:
     """把单个型号信息格式化成一行可读文本。
 
-    aspect 指定时只输出对应属性维度（见 MODEL_ASPECTS，如「价格」→ 参考价）；
-    否则输出全字段（吸力/导航/避障 + 价格 + 发布时间）。
+    aspect 指定时只输出该属性维度（见 MODEL_ASPECTS），否则输出全字段。
     """
     name = info.get("name", "")
     if aspect:
@@ -231,10 +218,10 @@ def _enumerate_models_from_store(filter: dict, require_field: str) -> list[Dict]
 
 
 def get_all_models() -> list[Dict]:
-    """全量型号 info 列表（pickle 缓存，chunk_count 做 fingerprint）。
+    """全量型号 info 列表，走 data/pkl/models.pkl 缓存（fingerprint = chunk_count）。
 
-    优先读 data/pkl/models.pkl；失效或不存在则从 Chroma 重建并写缓存。
-    型号数据在知识库变更前完全稳定，缓存可跨进程复用，避免每次枚举读 Chroma。
+    注意：fingerprint 只看条数，**改内容但不改条数时缓存不会失效**，
+    需由调用方（如热更新）显式删缓存文件。
     """
     import os
     import pickle
@@ -338,14 +325,10 @@ def _cn_to_int(s: str) -> Optional[int]:
 
 
 def extract_price_constraint(query: str) -> Optional[tuple]:
-    """从 query 提取价格约束，返回 (min_price, max_price) 元组。
+    """从 query 提取价格约束，返回 (min_price, max_price) 元组，未命中返回 None。
 
-    支持：
-      - 区间："1000-2000" / "1000到2000" → (1000, 2000)
-      - 上限："1000以内" / "1000以下" → (None, 1000)
-      - 下限："1000以上" / "1000起" → (1000, None)
-      - 浮动："1000左右" → (500, 1500)（预算 ±500）
-    未检测到预算约束时返回 None。
+    支持区间（"1000-2000"）、上限（"1000以内"）、下限（"1000以上"）、
+    浮动（"1000左右" → ±500）、口语尾音（"2000吧"，见 BC-20260921-07）。
     """
     # 1. 显式区间
     m = _PRICE_RANGE_PATTERN.search(query)
@@ -382,6 +365,13 @@ def extract_price_constraint(query: str) -> Optional[tuple]:
         v = _cn_to_int(m.group(1))
         if v is not None:
             return (max(0, v - 500), v + 500)
+
+    # 5. 口语尾音：「2000吧」「3000呢」→ 同“左右”按 ±500 浮动。
+    #    要求语气词紧跟在数字（可带单位）之后、且数字至少三位——避免"保修 2 年吧"这类误判
+    m = re.search(r"(\d{3,})\s*(?:元|块|块钱)?\s*[吧呢啊呀](?![0-9])", query)
+    if m:
+        v = int(m.group(1))
+        return (max(0, v - 500), v + 500)
 
     return None
 

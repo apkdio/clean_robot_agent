@@ -1,13 +1,7 @@
-"""热更新：周期性扫描知识目录并将变更同步到 Chroma。
+"""热更新：周期性扫描知识目录，把文件增删改增量同步到 Chroma，并重建 BM25 索引。
 
-每隔 SCAN_INTERVAL 秒（默认 30 分钟），它会：
-  1. 递归扫描知识目录（rag.yaml 的 data_dir，默认 data/knowledge/），计算每个文件的 MD5。
-  2. 与上一次快照（data/state/ingest_snapshot.json）进行对比。
-  3. 增量应用差异：添加新文件、重新摄入变更过的文件、
-     删除已移除文件的 chunk。
-  4. 重建稀疏（BM25）索引并更新快照。
-
-在守护线程上运行，因此绝不会阻塞 Flask 请求循环。
+比对依据是文件 MD5 快照（data/state/ingest_snapshot.json）。跑在守护线程上，
+不阻塞 Flask 请求循环。
 """
 
 from __future__ import annotations

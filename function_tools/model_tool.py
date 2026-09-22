@@ -1,17 +1,8 @@
-"""LLM function calling 的型号搜索工具。
+"""型号搜索工具：让模型自主决策要查哪个型号，再按型号名精准检索型号详情。
 
-让模型自主决策要查询哪个型号（处理指代「这两个/它」、对比「区别」），
-再按型号名精准检索型号详情，作为"型号详情咨询 / 上下文对比"的兜底。
-
-与 budget_tool/symptom_tool 不同：这里用主生成模型（默认 7b）——型号名是
-string 参数，且需要理解上下文指代（"这两个"指谁），3b 的 function calling
-对 string 参数会原样返回 query、不做提取，不稳定。
-
-对外提供：
-  - MODEL_TOOL_SCHEMA     : 供 LLM 使用的 function-calling schema
-  - MODEL_TOOL_MODEL      : 提取型号用的模型名（跟随 agent.yaml llm.model）
-  - get_all_model_names   : 全量型号名列表（缓存，供型号上下文判断）
-  - search_models_by_names: 型号名列表（逗号分隔）→ 检索型号详情
+用于「型号详情咨询 / 上下文对比」兜底（处理指代「这两个/它」、对比「区别」）。
+与 budget_tool/symptom_tool 不同，这里用主生成模型（默认 7b）——型号名是 string
+参数且需理解上下文指代，3b 对 string 参数会原样返回 query、不做提取。
 """
 
 from __future__ import annotations
@@ -73,23 +64,27 @@ def get_all_model_names() -> List[str]:
 
 
 def search_models_by_names(model_names: str) -> List[Dict]:
-    """根据型号名（逗号分隔）检索型号详情。
+    """根据型号名（逗号分隔，LLM 提取结果）检索型号详情。
 
-    对全量型号做子串匹配：查询名（去掉「系列」后缀）含于型号名即命中，
-    兼容 LLM 偶发提取成系列名（「云顶 X 系列」→ 命中云顶 X1/X2 等）。
+    两段式匹配（见 BC-20260921-06）：① 去品牌前缀后**以查询名结尾**算精确命中，
+    任一 key 精确命中时只返回精确结果（「净界 P2」不再带出 P2 Lite / P2 Pro）；
+    ② 精确全未命中才退回子串匹配，兼容 LLM 偶发把系列名当型号（「云顶 X」）。
     """
     names = [n.strip() for n in (model_names or "").split(",") if n.strip()]
     if not names:
         return []
 
     models = _enumerate_model_infos()
-    keys = [n.replace("系列", "").strip() for n in names]
-    matched = []
-    for m in models:
-        mn = m.get("name", "")
-        if any(k and k in mn for k in keys):
-            matched.append(m)
-    return matched
+    # 两边都去品牌前缀：型号名来自知识库（带「不染一尘」），而 LLM 提取的 key 可能带也可能不带
+    def bare(name: str) -> str:
+        return name[len(_BRAND_NAME):] if name.startswith(_BRAND_NAME) else name
+
+    keys = [bare(n.replace("系列", "").strip()) for n in names]
+    exact = [m for m in models if any(k and bare(m.get("name", "")).endswith(k) for k in keys)]
+    if exact:
+        return exact
+
+    return [m for m in models if any(k and k in bare(m.get("name", "")) for k in keys)]
 
 
 def model_name_in_query(query: str) -> bool:

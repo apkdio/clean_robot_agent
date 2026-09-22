@@ -1,17 +1,13 @@
 """对话上下文存储：按 session_id 分隔的 jsonl 文件 + 内存缓存。
 
-每轮追加一条消息（role + content + 可选元数据），文件保留全量（持久化、
-重启可恢复），内存缓存与读取时保留最近 6 轮（12 条消息）供自由指代与
-LLM 生成拼接。
+每轮追加一条消息，文件保留全量（持久化、重启可恢复），内存缓存与读取保留最近
+6 轮（12 条消息）供指代消解与 LLM 拼接。
 
-文件布局（文件名带**会话创建时间**，便于在磁盘上直接辨认）：
+文件布局（文件名带会话创建时间，便于在磁盘上辨认）：
   data/context/<session_id>_<YYYYMMDD_HHMM>.jsonl          每行一条 JSON 消息
   data/context_meta/<session_id>_<YYYYMMDD_HHMM>.meta.json 标题 / 上一轮推荐
 
-兼容历史命名：早期为 <session_id>.jsonl（无时间戳），仍可正常读写；新会话一律带时间戳。
-
-消息格式：
-  {"role": "user"|"assistant", "content": "...", "intent": "...", "models": [...], "ts": "..."}
+兼容历史命名：早期为 <session_id>.jsonl（无时间戳），仍可读写；新会话一律带时间戳。
 """
 
 import json

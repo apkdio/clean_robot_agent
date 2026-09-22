@@ -8,11 +8,7 @@
   - model_tool：search_models_by_names / model_name_in_query（monkeypatch 型号源）
   - symptom_tool：symptom_id_to_query（编号 → 标准检索 query）
   - service_point_tool：haversine / _pick_cn_name / search_service_points /
-    format_service_points / geocode_city
-
-运行：
-  .venv\\Scripts\\python.exe test_function_tools.py
-"""
+    format_service_points / geocode_city"""
 import sys
 from datetime import date
 from _runner import *

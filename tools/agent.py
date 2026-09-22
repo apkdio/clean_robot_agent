@@ -408,15 +408,12 @@ def _has_model_ref(query: str) -> bool:
 
 
 def _resolve_model_query(session_id: str, query: str):
-    """型号查询兜底：命中触发词 → LLM 提取型号名 → 精准检索详情。
+    """型号查询兜底：命中触发词 → LLM 提取型号名 → 按名精准检索型号详情。
 
-    处理指代/对比（"这两个有什么区别""它怎么样"）这类 query：把对话历史拼给
-    LLM，让它自主提取要查询的型号名，再按型号名精准检索，避免用原始指代句检索
-    导致召不回具体型号。提取不到型号时返回 None，退回正常 RAG 历史拼接。
-
-    触发分两档：
-      - 强触发（对比/明确指代）直接走；
-      - 弱触发（咨询词，如「怎么样」）需 query 有型号上下文才走，防误伤泛咨询。
+    把对话历史拼给 LLM，让它消解指代/对比（"这两个有什么区别""它怎么样"），
+    避免用指代句直接检索而召不回具体型号；提取不到型号时返回 None，退回正常 RAG。
+    触发分两档：强触发（对比/明确指代）直接走；弱触发（咨询词）需 query 带型号
+    上下文才走，防误伤泛咨询。
     """
     from config.word_dict_config import MODEL_QUERY_WORDS, MODEL_CONSULT_WORDS
     if not any(w in query for w in MODEL_QUERY_WORDS):
@@ -691,13 +688,17 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     from intent_router import route_intent_with_margin, get_guess_hint
     intent, margin = route_intent_with_margin(query)
 
-    # S2-a：判不出意图 + 近期发生过安全告警 → 直接承接（零检索、零 LLM）。
+    # S2-a：判不出意图（或闲聊）+ 近期发生过安全告警 → 直接承接（零检索、零 LLM）。
     # 知识库里没有“漏电影响大不大”这类条目，检索必然空手；这里要的是承接，不是知识。
-    # 触发面用 other ∪ unknown：两者都表示“靠这一句判不出意图”。实测追问句常被判成
-    # **高置信的 unknown**（“那这个影响大吗” → unknown 0.954），只看 low_conf 会漏掉。
+    # 触发面用 other ∪ unknown ∪ casual：
+    #   · other / unknown 表示“靠这一句判不出意图”。实测追问句常被判成**高置信的 unknown**
+    #     （“那这个影响大吗” → unknown 0.954），只看 low_conf 会漏掉；
+    #   · casual 是实测漏网（BC-20260921-01）：告警后的追问「啊，但是他之前没有这种情况哎」
+    #     被判 casual(0.243) → 走闲聊分支给了常规排查建议，安全话题当场断掉。
+    # 不连刷由 _last_reply_is_safety_carry 兜住：最多承接一次就回到正常流程。
     low_conf_margin = float((_ctx_cfg().get("intent") or {}).get("low_conf_margin", 0) or 0)
     low_conf = low_conf_margin > 0 and margin < low_conf_margin
-    if (_ctx_enabled() and intent in ("other", "unknown")
+    if (_ctx_enabled() and intent in ("other", "unknown", "casual")
             and not _last_reply_is_safety_carry(session_id)):
         danger_word = _window_danger_word(session_id)
         if danger_word is not None:
@@ -832,14 +833,15 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         effective_query, rewrite_via = query, "none"
 
     domain = _route_domain(effective_query)
+    # 域定向检索：filter 是**软约束**（hybrid_retriever 内部据此走两遍召回）。
+    # 域内精排 top1 低于阈值时，它会撤掉 filter 再做一次全库召回并**合并**两池，
+    # 覆盖两类实测情形：
+    #   ① 域路由选错文件：「边刷多久换一次」被判进维修域，答案在选购指南里 ——
+    #      域内 top1=0.0141，全库 top1=0.9091；
+    #   ② 精排对短/口语 query 整体压分：「那你们的品牌呢」的相关条目就在池里、
+    #      RRF 排第 2，却被打到 0.0124。
+    # 域路由不中（domain 为空）时没有 filter，只跑一遍，硬阈值照旧挡领域外。
     chunks = hr.search(effective_query, filter={"file_name": domain} if domain else None)
-
-    # 保底 ①：域路由可能选错文件。实测「边刷多久换一次」被判进维修域，而正确答案在
-    # 选购指南的「耗材更换周期」条目里——带着错的 filter 检索会直接 0 命中，
-    # 正确答案就再也够不着了（去掉 filter 后该条 top1=0.91）。所以 0 命中就撤掉域过滤重来。
-    if not chunks and domain:
-        logger.info("[RAG] 0 hit under domain filter(%s), retry over full KB", domain)
-        chunks = hr.search(effective_query, filter=None)
 
     # 保底 ②：改写后 0 命中 → 用原 query 在全库再检一次（把误改的代价降到多一次检索）
     if not chunks and effective_query != query and _rewrite_cfg().get("retry_with_origin", True):

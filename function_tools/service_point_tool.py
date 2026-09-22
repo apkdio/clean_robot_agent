@@ -1,18 +1,8 @@
-"""LLM function calling 的服务网点查询工具。
+"""服务网点查询工具。
 
-把用户位置（经纬度）换算成最近的售后网点，按直线距离排序。
-城市名 → 经纬度由 geonamescache 离线解析（geocode_city），网点数据存
-data/service_point/service_points.json（demo 随机经纬度），不进向量库——
-网点查询是「精确匹配 + 距离排序」，经纬度对 embedding 不友好，语义检索
-反而是浪费。
-
-对外提供：
-  - SERVICE_POINT_TOOL_SCHEMA : 供 LLM 提取城市/地点名（string 参数）
-  - SERVICE_POINT_TOOL_MODEL  : 提取地点用的模型名（跟随 agent.yaml llm.model）
-  - geocode_city              : 中文城市名 → 经纬度候选列表（geonamescache）
-  - haversine                 : 两个经纬度点的球面直线距离（km）
-  - search_service_points     : 按经纬度算距离，返回最近网点
-  - format_service_points     : 格式化成回复文本
+城市名 → 经纬度由 geonamescache 离线解析，网点数据存
+`data/service_point/service_points.json`，不进向量库——网点查询是「精确匹配 + 距离排序」，
+经纬度对 embedding 不友好。
 """
 
 from __future__ import annotations
@@ -52,7 +42,7 @@ SERVICE_POINT_TOOL_SCHEMA = {
 
 
 def haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    """两个经纬度点之间的球面直线距离（公里，纯本地计算，无地图 API 依赖）。"""
+    """两个经纬度点之间的球面直线距离（公里）。"""
     r = 6371.0  # 地球平均半径（km）
     dlat = radians(lat2 - lat1)
     dlng = radians(lng2 - lng1)
@@ -97,10 +87,9 @@ def _pick_cn_name(altnames) -> Optional[str]:
 
 
 def geocode_city(name: str) -> List[Dict]:
-    """城市名 → 候选经纬度列表（geonamescache 离线中文匹配）。
+    """城市名 → 候选经纬度列表（按国家 CN 过滤 + 人口降序；无匹配返回 []）。
 
-    按国家 CN 过滤 + 人口降序，返回 [{name, cn_name, lng, lat, population}]；
-    无匹配返回 []。重名城市（如「洛阳」）会返回多个候选，供上层消歧。
+    重名城市会返回多个候选，供上层消歧。
     """
     key = (name or "").strip()
     if not key:

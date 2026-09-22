@@ -1,26 +1,8 @@
-"""聚合运行所有分模块测试。
+"""聚合运行所有分模块测试（每个 test_*.py 也可独立运行，约定见 _runner.py）。
 
-用法（请用 .venv 解释器，torch 等依赖只装在 .venv）：
-  .venv\\Scripts\\python.exe run_tests.py            # 运行全部单元测试（快、确定性）
-  .venv\\Scripts\\python.exe run_tests.py --e2e      # 追加集成/端到端（意图分类、多轮对话、SOP 全流程）
-
-等价于逐个运行（每个模块都可独立跑）：
-  .venv\\Scripts\\python.exe test_intent.py [--e2e]
-  .venv\\Scripts\\python.exe test_purchase_sop.py
-  ...
-
-模块清单：
-  - 意图分类      test_intent.py        （需 --e2e：torch + Ollama）
-  - 选购 SOP      test_purchase_sop.py
-  - 故障排查 SOP  test_repair_sop.py
-  - 上下文存储    test_context.py
-  - 结构化提取    test_metadata.py
-  - Function Tools test_function_tools.py
-  - 检索          test_retrieval.py
-  - Agent 前置防护 test_agent_guards.py
-  - 多轮实战对话  test_dialogue.py      （需 --e2e：Ollama + Chroma）
-  - 检索质量评测  test_retrieval_eval.py （需 --e2e：Ollama + Chroma + reranker，输出 hit@k/MRR 等指标）
-  - 多轮上下文评测 test_context_eval.py  （需 --e2e：Ollama + Chroma；回放真实会话断言当前轮行为，xfail 语义）
+默认只跑纯规则用例（快、确定性）；加 --e2e 追加需要 Ollama / Chroma / torch 的
+集成用例（意图分类、多轮实战对话、检索质量评测、多轮上下文评测）。
+模块清单见下方 import 与 TESTS 列表。解释器用 .venv\\Scripts\\python.exe。
 """
 import os
 import sys

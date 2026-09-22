@@ -1,16 +1,8 @@
-"""编号条目切分器。
+"""编号条目切分器：把结构化为编号列表的文档按条目切分为 chunk。
 
-将结构化为编号列表的文档按条目切分为一个个 chunk。
-
-支持知识库中出现的两种形式：
-  - "1. **加粗标题**" 后跟 "- 内容" 行（FAQ / 型号）
-  - "1. 纯文本内容" 单行条目（故障排除 / 维护保养 / 选购指南）
-
-章节标题（## / ###）会作为前缀保留在其后第一条目上，
-使每个 chunk 都携带其分类上下文（例如 "入门级" + 型号内容）。
-
-不含编号条目的文件（例如普通段落或 CSV）
-会回退到调用方的通用切分器。
+支持两种形式：「1. **加粗标题**」后跟「- 内容」行，以及「1. 纯文本」单行条目。
+章节标题（## / ###）作为前缀保留在其后第一条目上，使 chunk 携带分类上下文。
+不含编号条目时返回空列表，由调用方回退到通用切分器。
 """
 
 from __future__ import annotations
@@ -27,10 +19,7 @@ _SECTION_RE = re.compile(r"^#{1,6}\s+")
 
 
 def _detect_entries(text: str) -> List[tuple]:
-    """扫描文本并返回 [(章节前缀, 条目文本), ...]。
-
-    章节前缀是最近的上一级 ##/### 标题，没有则为 ""。
-    """
+    """返回 [(章节前缀, 条目文本), ...]；章节前缀是最近的上级标题，无则空串。"""
     entries: List[tuple] = []
     current_section = ""
     current_lines: List[str] = []
@@ -71,15 +60,7 @@ def _detect_entries(text: str) -> List[tuple]:
 
 
 def split_numbered_entries(text: str, metadata: dict | None = None) -> List[Document]:
-    """将编号列表文档切分为每个条目一个 Document。
-
-    参数：
-        text: 原始文档文本。
-        metadata: 复制到每个生成的 Document 上的基础 metadata 字典。
-
-    返回：
-        Document 列表。如果文本不含编号条目则为空列表。
-    """
+    """把编号列表文档切分为每个条目一个 Document；不含编号条目时返回空列表。"""
     entries = _detect_entries(text)
     if not entries:
         return []

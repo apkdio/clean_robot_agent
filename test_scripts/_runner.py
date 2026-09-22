@@ -15,8 +15,7 @@
     运行，也可被 run_tests.py 聚合。
   - 纯规则用例默认运行（快、确定性）；集成/端到端用例用 @e2e 标注。
 
-运行解释器：项目依赖 torch 等库只装在 .venv 里，请用
-  .venv\\Scripts\\python.exe run_tests.py [--e2e]
+运行解释器：torch 等依赖只装在 .venv 里，统一用 .venv\\Scripts\\python.exe 执行。
 """
 
 import os

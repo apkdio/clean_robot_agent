@@ -1,14 +1,8 @@
-"""Cross-Encoder 精排（Reranker）：在 RRF 融合之后、截断之前对候选做语义重排。
+"""Cross-Encoder 精排：在 RRF 融合之后、截断之前，用 bge-reranker-v2-m3 对
+(query, chunk) 逐对打分，把「排名融合」升级为「语义相关性排序」。
 
-双路召回 + RRF 只解决「排名融合」——把多路结果按位置加权，并不判断候选与 query
-的语义相关性；长尾噪声仍可能挤进 final_top_k 进入 Prompt。本模块用
-`bge-reranker-v2-m3`（与 bge-m3 embedding 同家族）对 (query, chunk) 逐对打分，
-把排序从「排名融合」升级为「语义相关性」。
-
-模型走本地 transformers 推理（Ollama 没有 rerank 端点），首次调用时懒加载；
-依赖缺失或加载失败时降级为「不精排」（保持 RRF 顺序），并记录 WARNING——
-降级是显式可观测的，不是静默跳过。
-
+模型走本地 transformers 推理（Ollama 无 rerank 端点），首次调用懒加载；依赖缺失或
+加载失败时降级为保持 RRF 顺序，并记 WARNING——降级是显式可观测的，不是静默跳过。
 配置见 config/rag.yaml 的 rerank 段。
 """
 
@@ -51,8 +45,8 @@ def _ensure_model() -> bool:
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
         logger.info("[Rerank] loading model=%s", model_name)
-        # 优先只用本地缓存：避免每次启动都发起 HF 网络校验（国内环境容易长时间挂起）。
-        # 缓存未命中时才回退到联网加载（首次使用会自动下载）。
+        # 优先只用本地缓存，避免每次启动都发起 HF 网络校验（国内环境容易挂起）；
+        # 缓存未命中才回退到联网加载。
         tokenizer = model = None
         for local_only in (True, False):
             try:
@@ -102,16 +96,9 @@ def rerank(
     candidates: List[Tuple[Document, float, Dict]],
     top_k: int | None = None,
 ) -> List[Tuple[Document, float, Dict]] | None:
-    """按语义相关性重排候选。
+    """按语义相关性重排候选，返回 meta 内补了 rerank_score 的降序列表。
 
-    参数：
-        query:      用户问题。
-        candidates: [(doc, rrf_score, meta), ...]（reciprocal_rank_fusion 的输出）。
-        top_k:      截断数量（None = 不截断，交由调用方按 final_top_k 处理）。
-
-    返回：
-        按精排分降序的 [(doc, rerank_score, meta), ...]，meta 内补 `rerank_score`；
-        模型不可用时返回 None，调用方据此退回 RRF 顺序。
+    模型不可用时返回 None，调用方据此退回 RRF 顺序。
     """
     if not candidates:
         return candidates

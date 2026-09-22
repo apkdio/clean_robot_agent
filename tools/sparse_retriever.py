@@ -1,14 +1,6 @@
-"""稀疏检索器：基于 BM25 的关键词检索。
+"""稀疏检索器：基于 rank_bm25.BM25Okapi 的关键词检索。
 
-BM25（Best Matching 25）是一种概率排序函数，是改进版的 TF-IDF。
-它根据词频、逆文档频率以及文档长度归一化来衡量文档与查询的匹配程度。
-
-中英文混合文本的分词策略：
-- 拉丁字母 / 数字 → 作为完整 token 保留（转小写）
-- 中文字符 → 每个字符作为一个独立 token
-- 标点符号 → 丢弃
-
-内部使用 rank_bm25.BM25Okapi。
+分词策略：拉丁字母/数字保留为完整 token（转小写），中文字符逐字切分，标点丢弃。
 """
 
 from __future__ import annotations
@@ -39,10 +31,9 @@ _BM25_CACHE_FILE = "data/pkl/bm25_index.pkl"
 
 
 def _matches_filter(doc: Document, f: dict) -> bool:
-    """检查 Document 的 metadata 是否满足 Chroma 风格的 where 过滤器。
+    """判断 metadata 是否满足 Chroma 风格 where 过滤器（仅覆盖本项目用到的子集）。
 
-    支持我们生成的那些子集：{"min_price": {"$lte": N}}、{"$and": [...]}、
-    "$gte" / "$lte" / "$eq" 比较。未知运算符直接放行。
+    支持 {"$and": [...]} 与 $gte/$lte/$eq；未知运算符放行。
     """
     if not f:
         return True
@@ -81,12 +72,7 @@ class SparseRetriever:
 
     @staticmethod
     def _tokenize(text: str) -> List[str]:
-        """对中英文混合文本进行分词。
-
-        示例：
-            "Python 在机器学习中的应用"
-            → ["python", "在", "机", "器", "学", "习", "中", "的", "应", "用"]
-        """
+        """按模块 docstring 的分词策略切分文本。"""
         tokens: List[str] = []
         for part in re.split(r"([a-zA-Z0-9]+)", text):
             if re.match(r"[a-zA-Z0-9]+", part):
@@ -104,11 +90,7 @@ class SparseRetriever:
     # ------------------------------------------------------------------
 
     def index_documents(self, documents: List[Document]) -> None:
-        """从 Document chunk 列表构建 BM25 索引。
-
-        1. 对每个 chunk 进行分词
-        2. BM25Okapi 计算 DF/IDF 并构建评分模型
-        """
+        """从 chunk 列表构建 BM25 索引。"""
         if not documents:
             logger.warning("[Sparse] No documents to index.")
             return
@@ -128,15 +110,10 @@ class SparseRetriever:
     def search(
         self, query: str, top_k: int | None = None, filter: dict | None = None
     ) -> List[Tuple[Document, float]]:
-        """执行 BM25 检索。
+        """BM25 检索，返回按分数降序的 [(doc, score), ...]。
 
-        参数：
-            query: 用户查询字符串。
-            top_k: 返回结果数量（默认来自 rag.yaml）。
-            filter: 可选的 Chroma 风格 `where` 字典，应用于候选结果。
-
-        返回：
-            [(doc, bm25_score), ...]，按分数降序排列。
+        本侧不设相关性阈值（BM25 分数无上界、不可跨 query 比较），只按 top_k 截断；
+        噪声交由下游的稠密阈值与精排阈值收敛。
         """
         if self.bm25_model is None:
             logger.error("[Sparse] Index not built yet.")

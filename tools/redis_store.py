@@ -1,9 +1,6 @@
-"""Redis 连接与操作封装（降级可回退）。
+"""Redis 连接与操作封装（懒加载单例；连接失败降级为不可用，业务方回退本地内存/文件）。
 
-统一管理 Redis 连接：懒加载单例 + 连接失败降级为不可用。业务方在
-``get_redis()`` 返回 None 时回退到本地内存/文件，保证无 Redis 也能正常运行。
-
-key 约定（统一前缀）：
+key 约定：
   - SOP 会话状态：sop:session:{session_id}    (JSON string + TTL)
   - 会话并发锁：  lock:session:{session_id}   (SETNX + EXPIRE)
   - 摄入锁：      lock:ingest                 (SETNX + EXPIRE)

@@ -9,11 +9,7 @@
   - ensure_session_id（UUID 双端校验）
   - list_sessions（会话列表）
   - 文件命名：新会话带创建时间戳、历史命名兼容
-  - generate_session_title（LLM 失败时的 fallback，monkeypatch 强制异常）
-
-运行：
-  .venv\\Scripts\\python.exe test_context.py
-"""
+  - generate_session_title（LLM 失败时的 fallback，monkeypatch 强制异常）"""
 import sys
 import uuid
 from _runner import *

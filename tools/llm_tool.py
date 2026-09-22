@@ -1,17 +1,8 @@
-"""基于本地 Ollama 的 LLM / embedding 工厂。
+"""基于本地 Ollama 的 LLM / embedding 工厂（复用 langchain_openai，base_url 指向 Ollama）。
 
-Ollama 暴露了 OpenAI 兼容端点 http://localhost:11434/v1，因此直接复用已安装的
-`langchain_openai` 包（ChatOpenAI / OpenAIEmbeddings），把 base_url 指向 Ollama。
-
-**chat 模型与端点的单一真源是 config/agent.yaml 的 llm 段**：
-
-  - 主生成模型   → `llm.model`（默认 qwen2.5:7b）
-  - 轻量兜底模型 → `llm.small_model`（默认 qwen2.5:3b，用于预算/症状/标题）
-  - 端点与鉴权   → `llm.base_url` / `llm.api_key`
-
-入参留空时按上述配置解析；配置缺该键时回退到环境变量
-（LLM_BASE_URL / LLM_API_KEY / LLM_CHAT_MODEL / LLM_SMALL_MODEL）与内置默认。
-embedding 的端点由 config/chroma.yaml 的 embedding 段提供（调用方显式传入）。
+chat 模型与端点的单一真源是 config/agent.yaml 的 llm 段（model / small_model /
+base_url / api_key）；入参留空时按此解析，配置缺键则回退环境变量与内置默认。
+embedding 端点由 config/chroma.yaml 的 embedding 段提供（调用方显式传入）。
 """
 
 import os
@@ -53,8 +44,7 @@ def get_chat_model_name() -> str:
 def get_small_model_name() -> str:
     """轻量提取/兜底模型名（agent.yaml llm.small_model → 环境变量 → 内置默认）。
 
-    用于预算/故障分类的 function calling 兜底与会话标题生成：这些场景对速度
-    敏感、对精度要求有限，故单独一档（见 ADR-4 与 4.10/4.11）。
+    用于预算/故障分类的 function calling 兜底与会话标题生成：重速度、轻精度。
     """
     return _chat_cfg().get("small_model") or _DEFAULT_SMALL_MODEL
 
@@ -67,10 +57,9 @@ def get_chat_model(
     max_tokens: int | None = None,
     **kwargs,
 ) -> ChatOpenAI:
-    """返回一个连接到本地 Ollama（或其他 OpenAI 兼容服务）的 ChatOpenAI 实例。
+    """返回连接到 OpenAI 兼容服务（默认本地 Ollama）的 ChatOpenAI 实例。
 
-    model / base_url / api_key / max_tokens 留空时按 agent.yaml 的 llm 段解析，
-    配置缺该键时回退到环境变量与内置默认。
+    model / base_url / api_key / max_tokens 留空时按 agent.yaml 的 llm 段解析。
     """
     cfg = _chat_cfg()
     model = model or cfg.get("model") or _DEFAULT_CHAT_MODEL
@@ -96,10 +85,10 @@ def get_embedding_model(
     api_key: str = _DEFAULT_API_KEY,
     **kwargs,
 ) -> OpenAIEmbeddings:
-    """返回一个连接到本地 Ollama 的 OpenAIEmbeddings 实例。
+    """返回连接到 Ollama 的 OpenAIEmbeddings 实例。
 
-    参数可通过构造函数入参或环境变量（LLM_BASE_URL / LLM_API_KEY / LLM_EMBED_MODEL）覆盖；
-    生产路径由调用方（vector_store）显式传入 config/chroma.yaml 的 embedding 段。
+    生产路径由调用方（vector_store）显式传入 chroma.yaml 的 embedding 段；
+    入参可用环境变量（LLM_BASE_URL / LLM_API_KEY / LLM_EMBED_MODEL）覆盖。
     """
     logger.info(f"[Embed] init model={model}")
     return OpenAIEmbeddings(
@@ -114,11 +103,10 @@ def get_embedding_model(
 
 
 def stream_chat(messages: list, model: str = "", temperature: float = 0.3) -> any:
-    """流式对话：生成器，随生成过程逐段产出文本块。
+    """流式对话生成器，每次 yield 一个纯字符串文本块。
 
-    每次 yield 一个纯字符串块（部分回答文本）。
-    对支持思考过程的模型（qwen3、deepseek-r1），可设 model_kwargs
-    为 `extra_body={"reasoning": True}` 来包含推理 token。
+    对支持思考过程的模型（qwen3、deepseek-r1），可设 model_kwargs 为
+    `extra_body={"reasoning": True}` 来包含推理 token。
     """
     m = model or get_chat_model_name()
     llm = get_chat_model(model=m, temperature=temperature, streaming=True)
@@ -133,11 +121,7 @@ def stream_chat(messages: list, model: str = "", temperature: float = 0.3) -> an
 
 
 def chat_with_tools(messages: list, tools: list, model: str = "", temperature: float = 0.1):
-    """带工具定义的 LLM 调用（function calling）。
-
-    返回 AIMessage；通过 `.tool_calls` 查看模型决定调用的工具。
-    `tools` 是一组 OpenAI 风格的 function schema（{"type": "function", "function": {...}}）。
-    """
+    """带工具定义的 LLM 调用（function calling），返回 AIMessage（`.tool_calls` 查看决定）。"""
 
     m = model or get_chat_model_name()
     llm = get_chat_model(model=m, temperature=temperature)

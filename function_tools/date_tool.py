@@ -1,16 +1,7 @@
-"""LLM function calling 的日期计算工具。
+"""日期计算工具：把绝对/相对日期表达换算成 ISO 日期范围（"YYYY-MM-DD"）。
 
-把日期表达换算成具体的 ISO 日期范围。同时支持：
-  - 绝对日期（"2025年三月"、"2025年3月"、"2025年"、"三月"）
-  - 相对日期（"最近半年"、"近三个月"、"今年"、"去年"）
-
-对外提供：
-  - DATE_TOOL_SCHEMA : 供 LLM 使用的 OpenAI function-calling schema
-  - calc_date_range  : 工具执行器（LLM 发出 tool_call 后调用）
-  - parse_date       : 确定性规则解析器（先绝对后相对）
-
-日期字符串用 ISO 格式 "YYYY-MM-DD"；Chroma metadata 过滤会把它转成
-int（YYYYMMDD），以便 $gte/$lte 做数值比较。
+绝对表达（"2025年三月"、"2025年"）优先于相对表达（"最近半年"、"今年"）；
+`build_date_filter` 会把 ISO 日期转成 int（YYYYMMDD），供 Chroma 的 $gte/$lte 做数值比较。
 """
 
 from __future__ import annotations
@@ -26,7 +17,7 @@ def _today() -> date:
 
 
 def _cn_to_int(s: str) -> int | None:
-    """把简单中文数字（'三'、'十二'）转成数字。"""
+    """把简单中文数字转成 int。"""
     num_map = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
                "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
     if s.isdigit():
@@ -46,7 +37,7 @@ _MONTH_CN = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
 
 
 def _cn_month_to_int(s: str) -> int | None:
-    """把月份 token（'3'、'三月'、'十一'）转成 1..12 的 int。"""
+    """把月份 token 转成 1..12 的 int。"""
     s = s.strip()
     if s.isdigit():
         n = int(s)
@@ -73,11 +64,7 @@ def _subtract_months(d: date, months: int) -> date:
 
 
 def parse_absolute_date(expression: str) -> tuple[str, str] | None:
-    """把绝对日期解析成 (start_date, end_date) ISO 字符串。
-
-    支持 "2025年三月"、"2025年3月"、"2025年"、"2025-03"、"三月"。
-    未识别到绝对日期时返回 None。
-    """
+    """绝对日期表达 → (start_date, end_date) ISO 字符串；未识别返回 None。"""
     expr = expression.strip()
 
     # YYYY年M月 → 该月
@@ -114,10 +101,7 @@ def parse_absolute_date(expression: str) -> tuple[str, str] | None:
 
 
 def parse_relative_date(expression: str) -> tuple[str, str] | None:
-    """把相对日期表达解析成 (start_date, end_date) ISO 字符串。
-
-    表达不是可识别的相对日期时返回 None。
-    """
+    """相对日期表达 → (start_date, end_date) ISO 字符串；未识别返回 None。"""
     expr = expression.strip()
     today = _today()
     t = today.isoformat()
@@ -199,11 +183,7 @@ def parse_date(expression: str) -> tuple[str, str] | None:
 
 
 def calc_date_range(expression: str) -> dict:
-    """工具执行器：把绝对/相对日期表达换算成日期范围。
-
-    成功返回 {"start_date", "end_date", "expression"}，
-    无法解析时返回 {"error": ...}。
-    """
+    """工具执行器：成功返回 {"start_date", "end_date", "expression"}，失败返回 {"error"}。"""
     r = parse_date(expression)
     if r is None:
         return {"error": f"无法识别的日期表达：{expression}"}
@@ -235,19 +215,14 @@ DATE_TOOL_SCHEMA = {
 
 
 def _iso_to_int(iso: str) -> int:
-    """把 ISO 日期字符串 'YYYY-MM-DD' 转成 int YYYYMMDD。
-
-    Chroma 的 $gte/$lte 只接受 int/float 操作数，所以 publish_date
-    存成整数（如 20260310）以便数值排序。
-    """
+    """ISO 日期 → int YYYYMMDD（Chroma 的 $gte/$lte 只接受数值操作数）。"""
     return int(iso.replace("-", ""))
 
 
 def build_date_filter(start_date: str, end_date: str | None = None) -> dict:
-    """从 ISO 日期范围构建 publish_date 的 Chroma `where` 过滤条件。
+    """构建 publish_date 的 Chroma `where` 过滤条件。
 
-    Chroma 要求每个表达式只能有一个操作符，且操作数为 int/float，
-    因此闭区间用 $and 组合两个单操作符 int 条件表示。
+    闭区间用 $and 组合两个单操作符条件——Chroma 每个表达式只允许一个操作符。
     """
     if end_date:
         return {

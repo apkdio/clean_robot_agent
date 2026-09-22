@@ -1,17 +1,11 @@
-"""LLM function calling 的预算提取工具（规则未命中时的兜底）。
+"""预算提取工具（规则未命中时的 LLM 兜底）。
 
-把用户话里的购机预算换算成结构化上限。规则（metadata_extractor.build_filter）
-能识别的常见表达（"1000以内""1000-2000"）不走这里；这里只兜底规则 miss 的
-口语/模糊表达（"一千来块""1500上下""两千出头"等）。
+规则能识别的常见表达（"1000以内""1000-2000"）不走这里，只兜底口语/模糊表达
+（"一千来块""1500上下""两千出头"）。
 
-注意：qwen2.5:3b 的 function calling 只能稳定处理「单一 integer 参数」，
-多参数（min/max）会被它误填成 user_input。因此这里只提取单一上限 budget_max，
-区间下限仍由规则（extract_price_range 的阿拉伯数字区间）覆盖，中文数字区间
-（"一千五到两千"）退化为只取上限，属可接受的边缘损失。
-
-对外提供：
-  - BUDGET_TOOL_SCHEMA : 供 LLM 使用的 OpenAI function-calling schema
-  - budget_args_to_filter : 把 LLM 返回的 args 转成 Chroma `where` 过滤条件
+注意：qwen2.5:3b 的 function calling 只能稳定处理「单一 integer 参数」，多参数
+（min/max）会被误填。因此只提取单一上限 budget_max，区间下限仍由规则覆盖，
+中文数字区间（"一千五到两千"）退化为只取上限，属可接受的边缘损失。
 """
 
 from __future__ import annotations

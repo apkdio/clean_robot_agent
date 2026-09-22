@@ -59,14 +59,9 @@ def get_vector_store() -> Chroma:
 
 
 def ingest_file(file_path: str, source_tag: str = "") -> dict:
-    """解析、分块并把单个文件向量化入库。
+    """解析、分块并把单个文件向量化入库，返回 {status, file, chunks, md5, elapsed}。
 
-    参数：
-        file_path: 待入库文件的绝对路径。
-        source_tag: 可选标签，作为 metadata 的 'source'（默认用文件名）。
-
-    返回：
-        含 status、file、chunks、md5、elapsed 的 dict。
+    不做「先删后插」——同一文件重复调用会叠加重复 chunk，去重由调用方负责。
     """
     import time
 
@@ -147,14 +142,7 @@ def ingest_directory(dir_path: str) -> list[dict]:
 
 
 def ingest_data_dir(data_dir: str = None) -> list[dict]:
-    """把知识库目录下所有支持的文件入库。
-
-    参数：
-        data_dir: 知识库目录路径，默认取 rag.yaml 的 data_dir（默认 data/knowledge）。
-
-    返回：
-        入库结果列表，每个文件一个 dict。
-    """
+    """把知识库目录下所有支持的文件入库，返回每个文件一条结果 dict。"""
     if data_dir is None:
         from config_tool import get_data_dir
         data_dir = get_data_dir()
@@ -170,11 +158,7 @@ def ingest_data_dir(data_dir: str = None) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 class DenseRetriever:
-    """基于项目 Chroma 向量库的稠密检索器。
-
-    提供简洁的 search() 接口，返回 (Document, score) 元组，
-    与 rrf_fusion 和双路召回编排层期望的接口一致。
-    """
+    """基于项目 Chroma 向量库的稠密检索器，返回 (Document, score) 元组。"""
 
     def search(
         self, query: str, top_k: int | None = None, filter: dict | None = None
@@ -183,9 +167,8 @@ class DenseRetriever:
         store = get_vector_store()
         results = store.similarity_search_with_relevance_scores(query, k=k, filter=filter)
 
-        # 相关性阈值过滤：低于 score_threshold 的 chunk 不进入后续融合与 Prompt。
-        # 0 或未配置 = 不过滤。bge-m3 + cosine 下实测：领域内 query 通常 0.36+，
-        # 明显领域外（天气/闲聊/乱码）落在 0.16~0.24，0.25 正好压在噪声底噪之上。
+        # 相关性阈值过滤（0 或未配置 = 不过滤）。bge-m3 + cosine 实测：领域内 query 通常
+        # 0.36+，领域外（天气/闲聊/乱码）落在 0.16~0.24，0.25 压在噪声底噪之上。
         threshold = _rag_cfg.get("retrieval", {}).get("score_threshold", 0) or 0
         kept = results
         if threshold > 0:
@@ -203,16 +186,9 @@ class DenseRetriever:
 
 
 def search_by_filter(filter: dict) -> list[Document]:
-    """返回所有匹配 metadata 过滤条件的 chunk（不做向量排序）。
+    """返回所有匹配 metadata 过滤条件的 chunk（不做向量排序，顺序不保证）。
 
-    用于结构化查询（如预算），需要完整枚举每一个预算内条目，
-    而非按相似度排序取 top-k。
-
-    参数：
-        filter: Chroma `where` 过滤字典，如 {"min_price": {"$lte": 1000}}。
-
-    返回：
-        匹配过滤条件的 Document 列表（顺序不保证）。
+    结构化查询（如预算）需要完整枚举每一条，不能按相似度取 top-k。
     """
     store = get_vector_store()
     data = store._collection.get(where=filter, include=["metadatas", "documents"])
@@ -225,15 +201,9 @@ def search_by_filter(filter: dict) -> list[Document]:
 
 
 def build_hybrid_index(sparse_retriever=None) -> int:
-    """读取 Chroma 里所有 chunk，构建 BM25（稀疏）索引。
+    """从 Chroma 全量 chunk 构建（或从 pickle 恢复）BM25 索引，返回 chunk 数。
 
-    在稠密入库完成后调用，保证稀疏检索器拥有同一份 chunk 集合。
-
-    参数：
-        sparse_retriever: SparseRetriever 实例。懒加载导入以避免循环依赖。
-
-    返回：
-        稀疏检索器索引的 chunk 数量。
+    需在稠密入库完成后调用，保证两路拥有同一份 chunk 集合。
     """
     if sparse_retriever is None:
         from sparse_retriever import SparseRetriever

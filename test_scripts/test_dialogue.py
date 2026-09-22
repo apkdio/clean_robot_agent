@@ -15,11 +15,7 @@
     - 纯符号 / 乱码 / 全拼音 / 超长输入（不崩溃、有回应）
 
 说明：正常回答只做宽松断言（非空、含关键信息），不做严格字符串匹配；
-      注入/危险/纯符号等安全分支是确定性话术，做精确断言。
-
-运行：
-  .venv\\Scripts\\python.exe test_dialogue.py --e2e
-"""
+      注入/危险/纯符号等安全分支是确定性话术，做精确断言。"""
 import sys
 import uuid
 from _runner import *

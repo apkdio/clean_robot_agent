@@ -1,15 +1,10 @@
-"""LLM function calling 的故障现象分类工具（规则未命中时的兜底）。
+"""故障现象分类工具（repair SOP 关键词规则未命中时的 LLM 兜底）。
 
-repair SOP 的 `_SYMPTOM_MAP` 用关键词把口语故障改写成标准检索 query，
-但"不动弹""扫不干净""拖地留水印""吸力大不如前"这类口语描述会 miss。
-这里用 3b 把故障描述归类到标准故障类型，再映射回标准 query。
+`_SYMPTOM_MAP` 的关键词匹配会漏掉"不动弹""拖地留水印"这类口语描述，
+这里用 3b 把故障描述归类到标准类型，再映射回标准检索 query。
 
-与 budget_tool 同理：qwen2.5:3b 只能稳定处理「单一 integer 参数」，
-因此用编号 symptom_id（0-10）而非多字段，编号含义写进 description。
-
-对外提供：
-  - SYMPTOM_TOOL_SCHEMA : 供 LLM 使用的 OpenAI function-calling schema
-  - symptom_id_to_query : 把 LLM 返回的 {symptom_id} 映射成标准检索 query
+与 budget_tool 同理：qwen2.5:3b 只能稳定处理「单一 integer 参数」，故用编号
+symptom_id（0-10）而非多字段，编号含义写进 description。
 """
 
 from __future__ import annotations

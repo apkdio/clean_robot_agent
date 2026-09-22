@@ -1,14 +1,9 @@
 """SOP（标准操作流程）基础设施：会话状态 + 执行器。
 
-一个 SOP 是一组「有状态」的步骤，通过槽位（slot）记忆上下文，
-逐步引导用户完成一个业务场景（选购推荐、故障排查等）。
+一个 SOP 是一组有状态的步骤，通过槽位（slot）记忆上下文，逐步引导用户完成一个业务场景。
+步骤类型：ask（提问收集槽位）、action（执行动作，如按预算检索）、reply（输出结果并结束）。
 
-步骤类型：
-  - ask     ：向用户提问，收集一个槽位
-  - action  ：调用 skill 执行动作（如按预算检索）
-  - reply   ：输出最终结果并结束 SOP
-
-会话状态为内存存储，按 session_id 隔离（支持多会话；服务重启后清空）。
+会话状态按 session_id 隔离；Redis 可用时存 Redis（带 TTL），否则降级到进程内 `_sessions`。
 """
 import re
 from tools.log_tool import get_logger

@@ -10,11 +10,7 @@
   - extract_series（系列名，含映射）
   - _match_model_filter（内存 where 过滤）
   - _cn_to_int（中文数字）
-  - enumerate_models_by_series（数据依赖，自动跳过）
-
-运行：
-  .venv\\Scripts\\python.exe test_metadata.py
-"""
+  - enumerate_models_by_series（数据依赖，自动跳过）"""
 import sys
 from _runner import *
 

@@ -7,11 +7,7 @@
   - _match_exit_intent（SOP 退出意图判断）
   - 角色扮演 / 指令注入拦截（ask_stream 最先判断，直接拒绝，不调 LLM）
   - 危险现象安全拦截（ask_stream 第二判断，立即停机话术，不调 LLM）
-  - 注入正则负例（正常问题不误伤）
-
-运行：
-  .venv\\Scripts\\python.exe test_agent_guards.py
-"""
+  - 注入正则负例（正常问题不误伤）"""
 import sys
 from _runner import *
 from tools import agent as agent_mod

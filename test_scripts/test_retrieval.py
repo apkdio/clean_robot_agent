@@ -10,11 +10,7 @@
   - entry_splitter.split_numbered_entries（编号条目 + 章节前缀）
   - HybridRetriever._drop_without_dense_support（融合侧兜底）
   - reranker.rerank 的降级契约（模型不可用 → None）
-  - [--e2e] HybridRetriever 端到端：域过滤 / 阈值过滤 / 精排打分（需 Ollama + Chroma + reranker 模型）
-
-运行：
-  .venv\\Scripts\\python.exe test_retrieval.py [--e2e]
-"""
+  - [--e2e] HybridRetriever 端到端：域过滤 / 阈值过滤 / 精排打分（需 Ollama + Chroma + reranker 模型）"""
 import sys
 from _runner import *
 from langchain_core.documents import Document
