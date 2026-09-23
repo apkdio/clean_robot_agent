@@ -221,12 +221,22 @@ _SAFETY_CARRY = (
 )
 
 
-def _last_reply_is_safety_carry(session_id: str) -> bool:
-    """上一条客服回复是否已经是安全承接？避免同一句连着刷。"""
+def _recent_carry_count(session_id: str) -> int:
+    """最近**连续**几条客服回复是安全承接（同一告警最多承接 `context.safety_carry_max` 次）。
+
+    不用「上一条是不是承接」当闸门：告警后用户往往连着追问好几句
+    （「啊，但是他之前没有这种情况哎」→「会不会有危险这种情况」），只按上一条判会把
+    第二句追问挡回普通检索（实测：回放时会掉进 0 命中兑底），反而丢掉承接。
+    """
+    n = 0
     for m in reversed(_window_messages(session_id)):
-        if m.get("role") == "assistant":
-            return (m.get("content") or "").startswith(_SAFETY_CARRY_PREFIX)
-    return False
+        if m.get("role") != "assistant":
+            continue
+        if (m.get("content") or "").startswith(_SAFETY_CARRY_PREFIX):
+            n += 1
+        else:
+            break
+    return n
 
 
 def _cosine(a, b) -> float:
@@ -688,18 +698,19 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     from intent_router import route_intent_with_margin, get_guess_hint
     intent, margin = route_intent_with_margin(query)
 
-    # S2-a：判不出意图（或闲聊）+ 近期发生过安全告警 → 直接承接（零检索、零 LLM）。
-    # 知识库里没有“漏电影响大不大”这类条目，检索必然空手；这里要的是承接，不是知识。
-    # 触发面用 other ∪ unknown ∪ casual：
-    #   · other / unknown 表示“靠这一句判不出意图”。实测追问句常被判成**高置信的 unknown**
-    #     （“那这个影响大吗” → unknown 0.954），只看 low_conf 会漏掉；
-    #   · casual 是实测漏网（BC-20260921-01）：告警后的追问「啊，但是他之前没有这种情况哎」
-    #     被判 casual(0.243) → 走闲聊分支给了常规排查建议，安全话题当场断掉。
-    # 不连刷由 _last_reply_is_safety_carry 兜住：最多承接一次就回到正常流程。
+    # S2-a：近期发生过安全告警 → 直接承接（零检索、零 LLM）。
+    # 刻意不按四分类标签放行：2026-09-23 实测（单向/双向/几何三种平滑）显示，任何意图侧的
+    # 变化都可能把这类追问挤成一个低置信的 robot，承接只要挂在意图分支上就会被绕开。
+    # 改由两个与标签正交的信号决定：
+    #   ① 告警仍在 topic_window 内（danger 标记）
+    #   ② 本轮自身没有足够确信的 robot 判断（只有 robot + 高 margin 才放行去正常回答）
+    # 同一告警最多承接 safety_carry_max 次（连刷兜底；0 = 不承接）。
     low_conf_margin = float((_ctx_cfg().get("intent") or {}).get("low_conf_margin", 0) or 0)
     low_conf = low_conf_margin > 0 and margin < low_conf_margin
-    if (_ctx_enabled() and intent in ("other", "unknown", "casual")
-            and not _last_reply_is_safety_carry(session_id)):
+    high_conf_margin = float((_ctx_cfg().get("intent") or {}).get("high_conf_margin", 0) or 0)
+    confident_robot = intent == "robot" and high_conf_margin > 0 and margin >= high_conf_margin
+    max_carry = int((_ctx_cfg().get("context") or {}).get("safety_carry_max", 2) or 0)
+    if _ctx_enabled() and not confident_robot and _recent_carry_count(session_id) < max_carry:
         danger_word = _window_danger_word(session_id)
         if danger_word is not None:
             logger.info(
@@ -834,12 +845,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
 
     domain = _route_domain(effective_query)
     # 域定向检索：filter 是**软约束**（hybrid_retriever 内部据此走两遍召回）。
-    # 域内精排 top1 低于阈值时，它会撤掉 filter 再做一次全库召回并**合并**两池，
-    # 覆盖两类实测情形：
-    #   ① 域路由选错文件：「边刷多久换一次」被判进维修域，答案在选购指南里 ——
-    #      域内 top1=0.0141，全库 top1=0.9091；
-    #   ② 精排对短/口语 query 整体压分：「那你们的品牌呢」的相关条目就在池里、
-    #      RRF 排第 2，却被打到 0.0124。
+    # 域内精排 top1 低于阈值时，它会撤掉 filter 再做一次全库召回并**合并**两池。
     # 域路由不中（domain 为空）时没有 filter，只跑一遍，硬阈值照旧挡领域外。
     chunks = hr.search(effective_query, filter={"file_name": domain} if domain else None)
 

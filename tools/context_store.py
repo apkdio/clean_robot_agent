@@ -3,11 +3,13 @@
 每轮追加一条消息，文件保留全量（持久化、重启可恢复），内存缓存与读取保留最近
 6 轮（12 条消息）供指代消解与 LLM 拼接。
 
-文件布局（文件名带会话创建时间，便于在磁盘上辨认）：
-  data/context/<session_id>_<YYYYMMDD_HHMM>.jsonl          每行一条 JSON 消息
-  data/context_meta/<session_id>_<YYYYMMDD_HHMM>.meta.json 标题 / 上一轮推荐
+文件布局（按会话**创建日期**分目录，便于归档与清理）：
+  data/context/<YYYYMMDD>/<session_id>_<YYYYMMDD_HHMM>.jsonl          每行一条 JSON 消息
+  data/context_meta/<YYYYMMDD>/<session_id>_<YYYYMMDD_HHMM>.meta.json 标题 / 上一轮推荐
 
-兼容历史命名：早期为 <session_id>.jsonl（无时间戳），仍可读写；新会话一律带时间戳。
+日期取**会话创建时间**（文件名后缀），跨零点续聊仍留在创建当天的目录里。
+兼容历史布局：早期平铺在 data/context/ 下的文件（含无时间戳的 <session_id>.jsonl）仍可读写，
+新会话一律写入日期子目录。
 """
 
 import json
@@ -57,21 +59,37 @@ def _created_iso(created: str | None) -> str:
 
 
 def _scan_existing(session_id: str) -> tuple[str, str] | None:
-    """查找该会话已存在的文件（带时间戳的新命名与不带时间戳的历史命名都认）。"""
-    if not os.path.isdir(_CONTEXT_DIR):
-        return None
-    for fn in os.listdir(_CONTEXT_DIR):
-        if not fn.endswith(".jsonl"):
-            continue
-        stem = fn[:-6]
+    """查找该会话已存在的文件（日期子目录、历史扁平命名、无时间戳命名都认）。"""
+    for fp, stem, day in _iter_data_files():
         sid, _created = _split_created(stem)
         if sid != session_id:
             continue
-        return (
-            os.path.join(_CONTEXT_DIR, fn),
-            os.path.join(_CONTEXT_META_DATA_DIR, f"{stem}.meta.json"),
-        )
+        meta_dir = os.path.join(_CONTEXT_META_DATA_DIR, day) if day else _CONTEXT_META_DATA_DIR
+        return fp, os.path.join(meta_dir, f"{stem}.meta.json")
     return None
+
+
+def _date_dir_of(stem: str) -> str | None:
+    """会话文件名对应的日期子目录名（YYYYMMDD）；无时间戳后缀则为 None。"""
+    _sid, created = _split_created(stem)
+    return created[:8] if created else None
+
+
+def _iter_data_files():
+    """遍历所有会话 jsonl，yield (完整路径, 文件名主干, 日期子目录名或 "")。
+
+    两种布局都扫：新的 `data/context/<YYYYMMDD>/<stem>.jsonl`，与历史的 `data/context/<stem>.jsonl`。
+    """
+    if not os.path.isdir(_CONTEXT_DIR):
+        return
+    for entry in sorted(os.listdir(_CONTEXT_DIR)):
+        full = os.path.join(_CONTEXT_DIR, entry)
+        if os.path.isdir(full):
+            for fn in sorted(os.listdir(full)):
+                if fn.endswith(".jsonl"):
+                    yield os.path.join(full, fn), fn[:-6], entry
+        elif entry.endswith(".jsonl"):
+            yield full, entry[:-6], ""
 
 
 def _paths(session_id: str) -> tuple[str, str]:
@@ -82,10 +100,12 @@ def _paths(session_id: str) -> tuple[str, str]:
 
     found = _scan_existing(session_id)
     if found is None:
-        stem = f"{session_id}_{datetime.now().strftime(_TS_FORMAT)}"
+        created = datetime.now().strftime(_TS_FORMAT)
+        stem = f"{session_id}_{created}"
+        day = created[:8]                      # 日期子目录 = 创建日（跨零点续聊不搬家）
         found = (
-            os.path.join(_CONTEXT_DIR, f"{stem}.jsonl"),
-            os.path.join(_CONTEXT_META_DATA_DIR, f"{stem}.meta.json"),
+            os.path.join(_CONTEXT_DIR, day, f"{stem}.jsonl"),
+            os.path.join(_CONTEXT_META_DATA_DIR, day, f"{stem}.meta.json"),
         )
     _path_cache[session_id] = found
     return found
@@ -118,9 +138,8 @@ def get_session_title(session_id: str) -> str | None:
 
 def _update_meta(session_id: str, **fields) -> dict:
     """读-改-写会话 meta 文件（保留已有字段，如 title / last_models）。"""
-    os.makedirs(_CONTEXT_DIR, exist_ok=True)
-    os.makedirs(_CONTEXT_META_DATA_DIR, exist_ok=True)
     file_path = _meta_path(session_id)
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
     data = {}
     if os.path.exists(file_path):
         try:
@@ -194,6 +213,14 @@ def delete_session(session_id: str) -> bool:
             os.remove(meta_fp)
         except OSError:
             pass
+    # 日期目录空了就顺手收掉（历史扁平布局没有子目录，不会被误删）
+    for p in (fp, meta_fp):
+        parent = os.path.dirname(p)
+        if parent not in (_CONTEXT_DIR, _CONTEXT_META_DATA_DIR):
+            try:
+                os.rmdir(parent)
+            except OSError:
+                pass
     return deleted
 
 
@@ -202,8 +229,8 @@ def append_message(session_id: str, role: str, content: str, **meta):
 
     meta 可携带 intent / models（上一轮推荐的结构化型号，供自由指代）等。
     """
-    os.makedirs(_CONTEXT_DIR, exist_ok=True)
-    os.makedirs(_CONTEXT_META_DATA_DIR, exist_ok=True)
+    file_path = _file_path(session_id)
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
     msg = {"role": role, "content": content, "ts": datetime.now().isoformat(timespec="seconds")}
     msg.update(meta)
 
@@ -321,11 +348,8 @@ def list_sessions() -> list:
     os.makedirs(_CONTEXT_DIR, exist_ok=True)
     os.makedirs(_CONTEXT_META_DATA_DIR, exist_ok=True)
     sessions = []
-    for fn in os.listdir(_CONTEXT_DIR):
-        if not fn.endswith(".jsonl"):
-            continue
-        sid, created = _split_created(fn[:-6])
-        fp = os.path.join(_CONTEXT_DIR, fn)
+    for fp, stem, _day in _iter_data_files():
+        sid, created = _split_created(stem)
         msgs = []
         with open(fp, encoding="utf-8") as f:
             for line in f:

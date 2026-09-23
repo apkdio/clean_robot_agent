@@ -1,11 +1,11 @@
 """在 bge-m3 embedding 之上训练一个 4 分类的意图分类头。
 
 流程：
-  1. 加载 data/datasets/intent_dataset.jsonl
+  1. 加载 data/datasets/intent_dataset.jsonl（字段口径见 data/datasets/README.md）
   2. 使用本地 Ollama bge-m3（1024 维）对每个样本进行 embedding
-  3. 划分训练集/测试集（80/20）
-  4. 使用 torch 训练一个 Linear(1024 → 4) 分类头
-  5. 评估准确率 + 每个类别的 F1
+  3. 划分训练集/测试集：按类别分层抽 20%；`multiturn_real`（真实会话追问）全部进测试集
+  4. 训练 Linear(1024 → 4)，用训练集里再切出的 15% 验证集选最佳权重
+  5. 评估准确率 + 每个类别的 F1 + **按来源分组的准确率**
   6. 将分类头权重与标签映射保存到 data/bgm_model/
 """
 
@@ -56,6 +56,7 @@ def main():
     rows = load_dataset()
     texts = [r["text"] for r in rows]
     labels = [_LABELS.index(r["label"]) for r in rows]
+    sources = [r.get("source", "base") for r in rows]
     print(f"数据集: {len(rows)} 条")
 
     # 通过 Ollama bge-m3 对所有样本进行 embedding（分批处理以避免分词崩溃）
@@ -71,17 +72,22 @@ def main():
     y = np.array(labels, dtype=np.int64)
     print(f"embedding 形状: {X.shape}")
 
-    # 分层划分训练/测试集：确保每个类别都同时出现在两个集合中
+    # 分层划分训练/测试集：确保每个类别都同时出现在两个集合中。
+    # 例外：source=multiturn_real 的样本（真实会话里的追问）**全部划入测试集**——
+    # 它们是最贴近线上多轮场景的一小撮，混进训练集就等于拿同一批样本自证。
     n = len(rows)
     train_idx, test_idx = [], []
     for label in range(len(_LABELS)):
         label_idx = [i for i in range(n) if y[i] == label]
-        random.shuffle(label_idx)
-        n_test_label = max(1, int(len(label_idx) * _TEST_RATIO))
-        test_idx.extend(label_idx[:n_test_label])
-        train_idx.extend(label_idx[n_test_label:])
+        forced = [i for i in label_idx if sources[i] == "multiturn_real"]
+        pool = [i for i in label_idx if sources[i] != "multiturn_real"]
+        random.shuffle(pool)
+        n_test_label = max(0, max(1, int(len(label_idx) * _TEST_RATIO)) - len(forced))
+        test_idx.extend(forced + pool[:n_test_label])
+        train_idx.extend(pool[n_test_label:])
     X_train, y_train = X[train_idx], y[train_idx]
     X_test, y_test = X[test_idx], y[test_idx]
+    src_test = [sources[i] for i in test_idx]
     print(f"train={len(train_idx)} test={len(test_idx)}")
 
     # 模型：Linear(1024 -> 4)
@@ -94,10 +100,20 @@ def main():
     loss_fn = nn.CrossEntropyLoss(weight=torch.tensor(class_weights))
     opt = torch.optim.Adam(model.parameters(), lr=_LR)
 
-    Xt = torch.tensor(X_train)
-    yt = torch.tensor(y_train)
+    # 从训练集里再留 15% 做验证集，用它选最佳权重。
+    # 数据集只有几百条、头又是单层线性，跑满 500 轮 loss 降得很低（≈0.07）实际上是在背样本，
+    # 边界会随数据小幅增删来回摆；选验证损失最低的那一版能明显压住这种抖动。
+    order = np.random.permutation(len(y_train))
+    n_val = max(1, int(len(y_train) * 0.15))
+    val_idx, tr_idx = order[:n_val], order[n_val:]
+    Xt = torch.tensor(X_train[tr_idx])
+    yt = torch.tensor(y_train[tr_idx])
+    Xv = torch.tensor(X_train[val_idx])
+    yv = torch.tensor(y_train[val_idx])
+    print(f"train={len(tr_idx)} val={len(val_idx)}")
 
     print("训练中...")
+    best_loss, best_state = float("inf"), None
     for epoch in range(_EPOCHS):
         model.train()
         perm = torch.randperm(len(Xt))
@@ -110,8 +126,17 @@ def main():
             loss.backward()
             opt.step()
             total_loss += loss.item() * len(xb)
+        model.eval()
+        with torch.no_grad():
+            vloss = float(loss_fn(model(Xv), yv))
+        if vloss < best_loss:
+            best_loss = vloss
+            best_state = {k: v.clone() for k, v in model.state_dict().items()}
         if (epoch + 1) % 10 == 0:
-            print(f"  epoch {epoch+1}/{_EPOCHS}  loss={total_loss/len(Xt):.4f}")
+            print(f"  epoch {epoch+1}/{_EPOCHS}  loss={total_loss/len(Xt):.4f}  val={vloss:.4f}")
+
+    model.load_state_dict(best_state)
+    print(f"选用验证损失最低的权重: val={best_loss:.4f}")
 
     # 评估
     model.eval()
@@ -139,6 +164,15 @@ def main():
         rec = tp[i] / (tp[i] + fn[i]) if (tp[i] + fn[i]) else 0.0
         f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
         print(f"  {name:8s}  F1={f1:.4f}  (tp={tp[i]}, fp={fp[i]}, fn={fn[i]})")
+
+    # 按来源分组：multiturn_real 是唯一没有被训练过的真实多轮追问，最值得看
+    print("按来源分组的测试集准确率:")
+    for s in sorted(set(src_test)):
+        hit = [k for k in range(len(y_test)) if src_test[k] == s]
+        if not hit:
+            continue
+        acc_s = sum(1 for k in hit if pred[k] == y_test[k]) / len(hit)
+        print(f"  {s:16s} n={len(hit):3d}  acc={acc_s:.4f}")
 
     # 保存模型 + 标签映射
     os.makedirs(_abs(_MODEL_DIR), exist_ok=True)

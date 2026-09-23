@@ -13,7 +13,7 @@
 - **售后网点定位**：识别"最近的售后网点"等查询，通过 geonamescache 离线解析城市经纬度 + Haversine 距离排序返回最近网点，重名城市（如"洛阳"）多轮消歧
 - **Redis 可选接入**：SOP 会话状态、会话并发锁、热更新摄入锁迁移到 Redis（分布式锁/跨实例共享），未配置 Redis 时自动降级到本地内存，功能不受影响
 - **知识库分域**：按场景（品牌/选购/型号/故障/售后/维护 6 域）定向检索对应知识域，避免跨域词带偏召回
-- **品牌化**：全面转型"不染一尘"品牌专属客服；品牌咨询、售后咨询走 RAG 直答，安全危险现象前置拦截（除书面词外，也包含火星、焦味、噼啪等**口语同义表达**），且告警后的追问会被拉回安全话题（包括被判成闲聊的追问）；公司 / 招聘类问题一律礼貌回避、不编造信息
+- **品牌化**：全面转型"不染一尘"品牌专属客服；品牌咨询、售后咨询走 RAG 直答，安全危险现象前置拦截（除书面词外，也包含火星、焦味、噼啪等**口语同义表达**），且告警后的追问会被拉回安全话题（**不看意图分类结果**，只有高置信的域内问题才放行）；公司 / 招聘类问题一律礼貌回避、不编造信息
 - **情绪安抚**：识别负面情绪（投诉/烦躁等）前置安抚，只安抚不拦截
 - **流式输出**：SSE 流式返回答案，前端逐字渲染
 - **知识库热更新**：每 30 分钟自动扫描 `data/knowledge/`，检测文件增删改并增量入库
@@ -48,13 +48,13 @@ clean_robot_agent/
 │   ├── knowledge/               # 知识库源文件（txt/pdf，热更新监控目录）
 │   ├── knowledge_example/       # 知识库格式模板示例
 │   ├── datasets/                # 意图分类训练数据集（JSONL）
-│   ├── context/                 # 对话上下文持久化（jsonl，文件名 = session_id + 创建时间）
+│   ├── context/                 # 对话上下文持久化（jsonl，按会话创建日期分子目录：<YYYYMMDD>/）
 │   ├── service_point/           # 售后网点数据（网点清单，城市坐标由 geonamescache 提供）
 │   ├── bgm_model/               # 训练好的分类头模型
 │   ├── pkl/                     # BM25 pickle 缓存
 │   ├── state/                   # 热更新指纹快照
 │   ├── vector_store/            # Chroma 持久化向量库
-│   └── eval/                    # 检索评测集与基线（本地数据，已 gitignore）
+│   └── eval/                    # 评测集与基线：retrieval/ 单轮检索 · context/ 多轮行为（本地数据，已 gitignore）
 ├── prompts/                     # Prompt 模板（system/摘要/报告）
 ├── tools/                       # 核心工具模块（详见下节）
 ├── function_tools/              # LLM 工具调用（function calling）工具
@@ -79,7 +79,9 @@ clean_robot_agent/
 │   ├── test_retrieval.py        # 检索链路（域路由/分词/过滤/RRF/阈值/精排/条目切分）
 │   ├── test_agent_guards.py     # Agent 前置防护（情绪/注入/危险/退出意图）
 │   ├── test_dialogue.py         # 多轮实战对话（正常 + 非人类，需 --e2e）
-│   └── test_retrieval_eval.py   # 检索质量评测（hit@k/MRR，需 --e2e；评测集在 data/eval）
+│   ├── test_retrieval_eval.py   # 检索质量评测（hit@k/MRR，需 --e2e；评测集在 data/eval/retrieval）
+│   ├── test_context_eval.py     # 多轮上下文评测（出口行为断言，需 --e2e；评测集在 data/eval/context）
+│   └── test_intent_eval.py      # 意图分类评测（留出集，需 --e2e；口径见 data/datasets/README.md）
 ├── intent_classifier_training/  # 意图分类模型训练工具
 │   ├── build_intent_dataset.py  # 数据集构建（从知识库抽取 + 规则改写）
 │   └── train_intent_classifier.py # 分类头训练脚本
@@ -280,6 +282,8 @@ python intent_classifier_training/train_intent_classifier.py
 | `test_agent_guards.py` | Agent 前置防护（情绪 / 注入 / 危险 / 退出意图） | |
 | `test_dialogue.py` | 多轮实战对话（正常对话 + 非人类对话） | ✓ |
 | `test_retrieval_eval.py` | 检索质量评测（hit@k / MRR / 无召回率 / 结构化直出命中率） | ✓ |
+| `test_context_eval.py` | 多轮上下文评测（出口行为断言 + 回归门禁） | ✓ |
+| `test_intent_eval.py` | 意图分类评测（逐条标签 / 各类 F1 / 混淆矩阵 / 高置信错判） | ✓ |
 
 集成用例用 `@e2e` 装饰器标注，未加 `--e2e` 时自动跳过；意图分类是统计模型，用准确率阈值（常规 ≥90%、极端 ≥75%）断言，误判只打印、不计失败。
 
@@ -287,18 +291,33 @@ python intent_classifier_training/train_intent_classifier.py
 
 `test_retrieval_eval.py` 基于 golden 评测集度量检索质量，用于改动前后的回归对比。
 
-- **评测集**：`data/eval/retrieval_golden.jsonl`（**本地数据，已 gitignore**，不随仓库发布），覆盖域路由 / 型号精准 / 预算过滤 / 时间过滤 / 领域外五类；
+- **评测集**：`data/eval/retrieval/golden.jsonl`（**本地数据，已 gitignore**，不随仓库发布），覆盖域路由 / 型号精准 / 预算过滤 / 时间过滤 / 领域外五类；每条带 `id`（`R001`…，只增不删 → **id 区间即批次**）；
 - **指标**：域路由准确率、hit@1/@3/@5、MRR、无召回率、结构化直出命中率；
-- **构建准则与扩充方法**：见同目录 `data/eval/README.md`；评测集缺失时该模块自动跳过，不影响其它测试。
+- **构建准则与扩充方法**：见 `data/eval/retrieval/README.md`；三条评测轨的总览见 `data/eval/README.md`；评测集缺失时该模块自动跳过，不影响其它测试。
+- **基线记录环境**：`baseline.json` 同时记下采集时的代码提交（含未提交改动清单）、知识库指纹、配置指纹与关键阈值；`--compare` 会先核对这几项，知识库 / 配置变了会明确提示「指标变化可能来自它们」。
 
 ```bash
 # 跑评测
 .venv/Scripts/python.exe test_scripts/test_retrieval_eval.py --e2e
-# 与基线对比（data/eval/retrieval_baseline.json）
+# 与基线对比（data/eval/retrieval/baseline.json）
 .venv/Scripts/python.exe test_scripts/test_retrieval_eval.py --e2e --compare
+# 只跑某一批（id 区间）：加新条目时先做旧批回归
+.venv/Scripts/python.exe test_scripts/test_retrieval_eval.py --e2e --only R001-R070 --compare
 # 刷新基线
 .venv/Scripts/python.exe test_scripts/test_retrieval_eval.py --e2e --save-baseline
 ```
+
+### 意图分类评测
+
+`test_intent_eval.py` 度量分类头（`robot` / `other` / `casual` / `unknown`）的准确率、各类 F1 与混淆矩阵，
+并单独列出**高置信错判**（判错但 margin 很高——下游的承接 / 降级补偿只看低置信，这类错误没有机制能救）。
+标注口径以 `data/datasets/README.md` 为准，本轨不另立标准。
+
+```bash
+.venv/Scripts/python.exe test_scripts/test_intent_eval.py --e2e --compare
+```
+
+留出集**与训练集零重叠**（harness 硬断言，避免拿训练样本自证）；评测集缺失或分类头未训练时该模块自动跳过。
 
 ## 配置说明
 
@@ -307,7 +326,7 @@ python intent_classifier_training/train_intent_classifier.py
 | `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关）、`behavior.verbose_log`（文件日志是否降到 DEBUG） |
 | `rag.yaml` | `chunk.chunk_size`、`retrieval.dense_top_k/sparse_top_k/final_top_k/score_threshold`、`rrf.*`、`rerank.*`（精排开关/模型/候选宽度/阈值）、`data_dir`（知识库源目录） |
 | `chroma.yaml` | `persist_dir`、`collection_name`、`embedding.model` |
-| `context.yaml` | `intent.low_conf_margin`（低置信降级阈值，0 关闭）、`context.topic_window`（回看多少条会话记录判定话题与安全告警）、`context.rewrite.*`（改写开关/模式/选轮相似度阈值） |
+| `context.yaml` | `intent.low_conf_margin`（低置信降级阈值，0 关闭）、`intent.high_conf_margin`（安全告警窗口内的放行阀，0 关闭）、`context.topic_window`（回看多少条会话记录判定话题与安全告警）、`context.safety_carry_max`（同一告警最多承接几次，0 关闭）、`context.rewrite.*`（改写开关/模式/选轮相似度阈值） |
 | `redis.yaml` | `host`/`port`/`password`（Redis 连接）、`sop_ttl`（SOP 会话过期）、`lock_ttl`（锁过期） |
 
 ## 问答流程
@@ -323,6 +342,8 @@ flowchart TD
     IR -->|casual| O2["自然回应"]
     IR -->|unknown| O3["软引导"]
     IR -->|robot| G4["⑦ 场景分支（按序判定，命中即返回）"]
+    IR -.->|"窗口内有过安全告警且未承接"| S2A["安全承接（不看意图标签，高置信 robot 除外）"]
+    S2A --> OUT
     O3 --> G4
     G4 --> C1["追问检测 → 基于上一轮推荐筛选"]
     G4 --> C2["型号查询 → 型号详情 / 对比"]
@@ -347,6 +368,6 @@ flowchart TD
 - 所有模型本地运行，无云端依赖；其中精排模型 `bge-reranker-v2-m3`（约 2.2GB）首次运行需联网下载（见「快速开始 §3」），加载失败会自动降级为“不精排”，也可在 `rag.yaml` 设 `rerank.enabled: false` 主动关闭
 - Redis 为可选依赖：未配置 `config/redis.yaml` 时，SOP 会话状态/并发锁/摄入锁自动降级到本地内存，功能不受影响
 - `data/vector_store/`、`data/pkl/`、`data/state/`、`data/bgm_model/`、`data/context/`、`data/context_meta/` 为运行时产物，已加入 `.gitignore`
-- `data/eval/`（检索质量评测集与基线）为本地数据，同样已加入 `.gitignore`；缺失时 `test_retrieval_eval.py` 自动跳过
+- `data/eval/`（评测集与基线：`retrieval/` 单轮检索、`context/` 多轮行为）为本地数据，同样已加入 `.gitignore`；缺失时对应评测模块自动跳过
 - `data/test_context/`、`data/test_context_metadata/`（测试产生的会话文件）同样已加入 `.gitignore`
 - 配置文件 `config/*.yaml`（非 template）含本地环境信息，已加入 `.gitignore`

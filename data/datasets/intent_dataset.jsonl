@@ -1,491 +1,666 @@
-{"text": "不染一尘净白 S1怎么样？", "label": "robot"}
-{"text": "不染一尘净白 S2怎么样？", "label": "robot"}
-{"text": "不染一尘净白 S3怎么样？", "label": "robot"}
-{"text": "不染一尘净界 P1怎么样？", "label": "robot"}
-{"text": "不染一尘净界 P2 Lite怎么样？", "label": "robot"}
-{"text": "不染一尘净界 P2怎么样？", "label": "robot"}
-{"text": "不染一尘净界 P2 Pro怎么样？", "label": "robot"}
-{"text": "不染一尘净界 P3怎么样？", "label": "robot"}
-{"text": "不染一尘天工 T1怎么样？", "label": "robot"}
-{"text": "不染一尘天工 T1 Pro怎么样？", "label": "robot"}
-{"text": "不染一尘天工 T2 Lite怎么样？", "label": "robot"}
-{"text": "不染一尘天工 T2怎么样？", "label": "robot"}
-{"text": "不染一尘天工 T2 Ultra怎么样？", "label": "robot"}
-{"text": "不染一尘云顶 X1 Pro怎么样？", "label": "robot"}
-{"text": "不染一尘云顶 X1 Pro Max怎么样？", "label": "robot"}
-{"text": "不染一尘云顶 X2怎么样？", "label": "robot"}
-{"text": "不染一尘是什么品牌？", "label": "robot"}
-{"text": "不染一尘的品牌理念是什么？", "label": "robot"}
-{"text": "不染一尘是什么时候成立的？", "label": "robot"}
-{"text": "不染一尘和云境智能是什么关系？", "label": "robot"}
-{"text": "品牌的优势是什么？", "label": "robot"}
-{"text": "品牌的核心技术是什么？", "label": "robot"}
-{"text": "不染一尘的无尘风道系统是什么？", "label": "robot"}
-{"text": "不染一尘的云净双水路是什么？", "label": "robot"}
-{"text": "不染一尘的零缠绕浮动主刷有什么特点？", "label": "robot"}
-{"text": "不染一尘的静音技术怎么样？", "label": "robot"}
-{"text": "不染一尘的算法有什么优势？", "label": "robot"}
-{"text": "不染一尘有哪些产品系列？", "label": "robot"}
-{"text": "不染一尘的售后服务网络如何？", "label": "robot"}
-{"text": "不染一尘的研发实力怎么样？", "label": "robot"}
-{"text": "不染一尘获得过哪些认证和荣誉？", "label": "robot"}
-{"text": "不染一尘在环保方面做了什么？", "label": "robot"}
-{"text": "不染一尘适合什么样的家庭？", "label": "robot"}
-{"text": "不染一尘的保修期是多久？", "label": "robot"}
-{"text": "保修怎么激活？", "label": "robot"}
-{"text": "哪些情况不在保修范围内？", "label": "robot"}
-{"text": "保修期内维修要钱吗？", "label": "robot"}
-{"text": "有延保服务吗？", "label": "robot"}
-{"text": "延保怎么使用？", "label": "robot"}
-{"text": "保修信息怎么查询？", "label": "robot"}
-{"text": "支持七天无理由退货吗？", "label": "robot"}
-{"text": "十五天换货政策是什么？", "label": "robot"}
-{"text": "质量问题退换货怎么操作？", "label": "robot"}
-{"text": "退换货有赠品怎么办？", "label": "robot"}
-{"text": "价格保护政策是什么？", "label": "robot"}
-{"text": "维修方式有哪几种？", "label": "robot"}
-{"text": "上门服务怎么预约？", "label": "robot"}
-{"text": "寄修流程是什么？", "label": "robot"}
-{"text": "维修需要多久？", "label": "robot"}
-{"text": "维修期间有备用机吗？", "label": "robot"}
-{"text": "维修后保修怎么算？", "label": "robot"}
-{"text": "怎么查询维修进度？", "label": "robot"}
-{"text": "服务网点怎么查询？", "label": "robot"}
-{"text": "节假日服务怎么安排？", "label": "robot"}
-{"text": "对企业/批量采购用户有专属售后吗？", "label": "robot"}
-{"text": "耗材配件怎么买？", "label": "robot"}
-{"text": "配件有保修吗？", "label": "robot"}
-{"text": "怎么确认买的是原装配件？", "label": "robot"}
-{"text": "发票怎么开具？", "label": "robot"}
-{"text": "以旧换新怎么参加？", "label": "robot"}
-{"text": "旧机回收流程是什么？", "label": "robot"}
-{"text": "服务监督和投诉渠道有哪些？", "label": "robot"}
-{"text": "客服电话是多少？", "label": "robot"}
-{"text": "保修凭证丢了怎么办？", "label": "robot"}
-{"text": "不染一尘机器人开不了机怎么办？", "label": "robot"}
-{"text": "不染一尘机器人连不上 WiFi 怎么办？", "label": "robot"}
-{"text": "不染一尘 APP 无法控制机器人怎么办？", "label": "robot"}
-{"text": "不染一尘机器人频繁断连怎么处理？", "label": "robot"}
-{"text": "不染一尘语音唤醒失效怎么办？", "label": "robot"}
-{"text": "不染一尘机器人不走了怎么办？", "label": "robot"}
-{"text": "不染一尘机器人吸力变小了怎么办？", "label": "robot"}
-{"text": "不染一尘主刷不转了怎么办？", "label": "robot"}
-{"text": "不染一尘边刷不转了怎么办？", "label": "robot"}
-{"text": "不染一尘清扫路线乱、漏扫怎么办？", "label": "robot"}
-{"text": "不染一尘机器人频繁碰撞家具怎么办？", "label": "robot"}
-{"text": "不染一尘机器人扫完还有死角怎么办？", "label": "robot"}
-{"text": "不染一尘集尘时噪音很大怎么办？", "label": "robot"}
-{"text": "不染一尘定时任务不执行怎么办？", "label": "robot"}
-{"text": "不染一尘拖地不出水怎么办？", "label": "robot"}
-{"text": "不染一尘拖地漏水怎么办？", "label": "robot"}
-{"text": "不染一尘旋转拖布不转怎么办？", "label": "robot"}
-{"text": "不染一尘拖完地有白色水痕怎么办？", "label": "robot"}
-{"text": "不染一尘自动洗拖布失效怎么办？", "label": "robot"}
-{"text": "不染一尘拖布烘干不热怎么办？", "label": "robot"}
-{"text": "不染一尘基站不排水/污水满报警怎么办？", "label": "robot"}
-{"text": "不染一尘机器人找不到充电座怎么办？", "label": "robot"}
-{"text": "不染一尘充不进电怎么办？", "label": "robot"}
-{"text": "不染一尘续航衰减严重怎么办？", "label": "robot"}
-{"text": "不染一尘回充失败、反复撞底座怎么办？", "label": "robot"}
-{"text": "不染一尘「滴滴滴」报警怎么办？", "label": "robot"}
-{"text": "不染一尘提示滤网堵塞怎么办？", "label": "robot"}
-{"text": "不染一尘提示尘盒未安装怎么办？", "label": "robot"}
-{"text": "不染一尘机身发烫有异味怎么办？", "label": "robot"}
-{"text": "不染一尘清扫时噪音变大怎么办？", "label": "robot"}
-{"text": "不染一尘防跌落误触发怎么办？", "label": "robot"}
-{"text": "不染一尘固件升级失败怎么办？", "label": "robot"}
-{"text": "不染一尘机器人如何恢复出厂设置？", "label": "robot"}
-{"text": "排查后还是修不好怎么办？", "label": "robot"}
-{"text": "不染一尘怎么选合适的型号？", "label": "robot"}
-{"text": "吸力参数怎么看？", "label": "robot"}
-{"text": "导航技术怎么选？", "label": "robot"}
-{"text": "避障能力重要吗？", "label": "robot"}
-{"text": "自动集尘值得选吗？", "label": "robot"}
-{"text": "拖布自清洁怎么选？", "label": "robot"}
-{"text": "热风烘干重要吗？", "label": "robot"}
-{"text": "家有宠物选哪款？", "label": "robot"}
-{"text": "家里是复式/多楼层怎么选？", "label": "robot"}
-{"text": "静音表现怎么样？", "label": "robot"}
-{"text": "木地板家庭怎么选？", "label": "robot"}
-{"text": "越障和防跌落表现？", "label": "robot"}
-{"text": "机身高度影响清扫吗？", "label": "robot"}
-{"text": "尘盒/集尘袋容量怎么选？", "label": "robot"}
-{"text": "自动上下水适合什么家庭？", "label": "robot"}
-{"text": "基站怎么选？", "label": "robot"}
-{"text": "地毯增压功能有必要吗？", "label": "robot"}
-{"text": "童锁和防误触重要吗？", "label": "robot"}
-{"text": "语音控制支持哪些？", "label": "robot"}
-{"text": "OTA 固件升级重要吗？", "label": "robot"}
-{"text": "断点续扫是标配吗？", "label": "robot"}
-{"text": "浅色家居环境有影响吗？", "label": "robot"}
-{"text": "隐私安全怎么样？", "label": "robot"}
-{"text": "在哪里可以试用体验？", "label": "robot"}
-{"text": "净白 S 系列和净界 P 系列差在哪？", "label": "robot"}
-{"text": "天工 T 系列和云顶 X 系列差在哪？", "label": "robot"}
-{"text": "预算 1500 以内推荐哪款？", "label": "robot"}
-{"text": "预算 2000 左右推荐哪款？", "label": "robot"}
-{"text": "预算 4000 以上推荐哪款？", "label": "robot"}
-{"text": "送长辈选哪款？", "label": "robot"}
-{"text": "新婚/新房装修选哪款？", "label": "robot"}
-{"text": "不染一尘的耗材更换周期是多久？", "label": "robot"}
-{"text": "配件在哪里购买？", "label": "robot"}
-{"text": "耗材贵不贵？", "label": "robot"}
-{"text": "怎么辨别原装配件？", "label": "robot"}
-{"text": "耗材可以通用吗？", "label": "robot"}
-{"text": "有耗材订阅服务吗？", "label": "robot"}
-{"text": "预算1000以内扫地机器人推荐", "label": "robot"}
-{"text": "预算1500以内有什么扫地机器人推荐", "label": "robot"}
-{"text": "预算2000以内有什么机器人", "label": "robot"}
-{"text": "1000元以下扫地机器人推荐", "label": "robot"}
-{"text": "1500以内扫地机器人推荐", "label": "robot"}
-{"text": "2000以内机器人推荐", "label": "robot"}
-{"text": "一千以内有什么扫地机器人", "label": "robot"}
-{"text": "三千以内扫拖一体机器人推荐", "label": "robot"}
-{"text": "5000元左右扫地机器人推荐", "label": "robot"}
-{"text": "预算3000以内扫地机器人", "label": "robot"}
-{"text": "2000以下扫地机器人推荐", "label": "robot"}
-{"text": "1000块以内的机器人", "label": "robot"}
-{"text": "3000以内的扫地机器人", "label": "robot"}
-{"text": "万元以下的扫地机器人推荐", "label": "robot"}
-{"text": "预算5000以内有什么扫地机器人", "label": "robot"}
-{"text": "1500元以内的扫拖一体机器人", "label": "robot"}
-{"text": "两千以内推荐什么机器人", "label": "robot"}
-{"text": "3000元以下机器人推荐", "label": "robot"}
-{"text": "5000以内的扫拖机器人", "label": "robot"}
-{"text": "10000以内扫地机器人推荐", "label": "robot"}
-{"text": "预算2000以内推荐", "label": "robot"}
-{"text": "预算1000以内推荐机器人", "label": "robot"}
-{"text": "2000元以内推荐", "label": "robot"}
-{"text": "1000以内有什么机器人推荐", "label": "robot"}
-{"text": "3000以内推荐扫地机器人", "label": "robot"}
-{"text": "1500以内买什么机器人", "label": "robot"}
-{"text": "2000块以内机器人", "label": "robot"}
-{"text": "5000以内推荐", "label": "robot"}
-{"text": "HEPA滤网多久更换一次", "label": "robot"}
-{"text": "HEPA滤网可以清洗吗", "label": "robot"}
-{"text": "HEPA滤网怎么清洗", "label": "robot"}
-{"text": "LDS激光导航和视觉导航哪个好", "label": "robot"}
-{"text": "LDS激光导航有什么优势", "label": "robot"}
-{"text": "dToF导航技术是什么", "label": "robot"}
-{"text": "dToF导航和LDS有什么区别", "label": "robot"}
-{"text": "VSLAM和LDS的区别", "label": "robot"}
-{"text": "VSLAM视觉导航怎么样", "label": "robot"}
-{"text": "激光导航的机器人有什么优势", "label": "robot"}
-{"text": "3D结构光避障是什么", "label": "robot"}
-{"text": "扫地机器人吸力多少Pa合适", "label": "robot"}
-{"text": "滤网多久换一次", "label": "robot"}
-{"text": "边刷和主刷有什么区别", "label": "robot"}
-{"text": "滚刷和胶刷哪个好", "label": "robot"}
-{"text": "机器人导航用激光还是视觉", "label": "robot"}
-{"text": "dToF测距是什么", "label": "robot"}
-{"text": "HEPA滤网等级怎么看", "label": "robot"}
-{"text": "扫地机器人的导航方式有哪些", "label": "robot"}
-{"text": "激光雷达导航的机器人推荐", "label": "robot"}
-{"text": "水箱漏水怎么办", "label": "robot"}
-{"text": "水箱怎么清洗", "label": "robot"}
-{"text": "水箱多久加一次水", "label": "robot"}
-{"text": "水箱容量一般多大", "label": "robot"}
-{"text": "水箱漏水怎么处理", "label": "robot"}
-{"text": "拖地水箱不出水怎么办", "label": "robot"}
-{"text": "水箱有异味怎么办", "label": "robot"}
-{"text": "水箱怎么拆下来", "label": "robot"}
-{"text": "水箱没水了怎么办", "label": "robot"}
-{"text": "水箱加满水能拖多久", "label": "robot"}
-{"text": "电池续航下降怎么办", "label": "robot"}
-{"text": "电池续航时间变短", "label": "robot"}
-{"text": "电池多久需要更换", "label": "robot"}
-{"text": "电池老化怎么办", "label": "robot"}
-{"text": "电池充不进电怎么办", "label": "robot"}
-{"text": "电池续航多久", "label": "robot"}
-{"text": "机器人电池能用几年", "label": "robot"}
-{"text": "电池鼓包了怎么办", "label": "robot"}
-{"text": "扫地机器人电池续航下降", "label": "robot"}
-{"text": "机器人电池续航变短", "label": "robot"}
-{"text": "扫地机电池不耐用怎么办", "label": "robot"}
-{"text": "扫地机器人电池老化", "label": "robot"}
-{"text": "机器人电池充不进电", "label": "robot"}
-{"text": "HEPA滤网多久清洗一次", "label": "robot"}
-{"text": "HEPA滤网需要更换吗", "label": "robot"}
-{"text": "HEPA滤网怎么拆", "label": "robot"}
-{"text": "滤网清洗频率", "label": "robot"}
-{"text": "高效滤网多久换", "label": "robot"}
-{"text": "HEPA过滤网在哪里", "label": "robot"}
-{"text": "滤网脏了怎么清理", "label": "robot"}
-{"text": "滤网水洗还是更换", "label": "robot"}
-{"text": "扫地机器人能修吗", "label": "robot"}
-{"text": "扫地机器人怎么设置定时清扫", "label": "robot"}
-{"text": "最近半年发布的产品有哪些", "label": "robot"}
-{"text": "最近半年发布的扫地机器人推荐", "label": "robot"}
-{"text": "最近半年发布的产品里有什么1000以内的扫地机器人", "label": "robot"}
-{"text": "近三个月发布的机器人有哪些", "label": "robot"}
-{"text": "今年发布的扫地机器人推荐", "label": "robot"}
-{"text": "最近半年有什么新机器人", "label": "robot"}
-{"text": "近半年上市的扫地机器人", "label": "robot"}
-{"text": "今年新出的扫地机器人推荐", "label": "robot"}
-{"text": "最近半年发布的产品里有什么2000以内的机器人", "label": "robot"}
-{"text": "近一个月发布的扫地机器人", "label": "robot"}
-{"text": "去年发布的扫地机器人有哪些", "label": "robot"}
-{"text": "最近三个月出的新机型", "label": "robot"}
-{"text": "今年有哪些新发布的扫地机器人", "label": "robot"}
-{"text": "最近半年发布的新品扫地机器人", "label": "robot"}
-{"text": "近一年上市的扫地机器人推荐", "label": "robot"}
-{"text": "最近半年出了哪些新款", "label": "robot"}
-{"text": "不染一尘是什么品牌", "label": "robot"}
-{"text": "不染一尘品牌介绍", "label": "robot"}
-{"text": "介绍一下不染一尘", "label": "robot"}
-{"text": "不染一尘怎么样", "label": "robot"}
-{"text": "不染一尘有什么优势", "label": "robot"}
-{"text": "为什么要买不染一尘", "label": "robot"}
-{"text": "不染一尘好在哪里", "label": "robot"}
-{"text": "不染一尘的口碑怎么样", "label": "robot"}
-{"text": "不染一尘靠谱吗", "label": "robot"}
-{"text": "不染一尘是哪个公司的", "label": "robot"}
-{"text": "不染一尘和云境智能什么关系", "label": "robot"}
-{"text": "零件掉了可以报修吗", "label": "robot"}
-{"text": "机器人怎么报修", "label": "robot"}
-{"text": "可以售后更换零件吗", "label": "robot"}
-{"text": "怎么申请售后维修", "label": "robot"}
-{"text": "报修流程是什么", "label": "robot"}
-{"text": "售后怎么联系", "label": "robot"}
-{"text": "保修期内维修要钱吗", "label": "robot"}
-{"text": "怎么查询保修期", "label": "robot"}
-{"text": "可以退货吗", "label": "robot"}
-{"text": "维修", "label": "robot"}
-{"text": "怎么维修", "label": "robot"}
-{"text": "需要维修", "label": "robot"}
-{"text": "维修一下", "label": "robot"}
-{"text": "帮我修一下", "label": "robot"}
-{"text": "能维修吗", "label": "robot"}
-{"text": "可以维修吗", "label": "robot"}
-{"text": "机器维修", "label": "robot"}
-{"text": "机器人维修", "label": "robot"}
-{"text": "扫地机维修", "label": "robot"}
-{"text": "有没有飞机卖", "label": "other"}
-{"text": "电动车多少钱", "label": "other"}
-{"text": "电动车怎么选", "label": "other"}
-{"text": "电瓶车充电安全吗", "label": "other"}
-{"text": "汽车推荐", "label": "other"}
-{"text": "汽车保养多久一次", "label": "other"}
-{"text": "汽车保养项目有哪些", "label": "other"}
-{"text": "汽车多久保养一次", "label": "other"}
-{"text": "汽车维修要多少钱", "label": "other"}
-{"text": "汽车轮胎多久换一次", "label": "other"}
-{"text": "自行车推荐", "label": "other"}
-{"text": "摩托车怎么选", "label": "other"}
-{"text": "火车票怎么买", "label": "other"}
-{"text": "电动车电池多久换一次", "label": "other"}
-{"text": "电动车续航多少公里", "label": "other"}
-{"text": "手机哪个牌子好", "label": "other"}
-{"text": "手机推荐", "label": "other"}
-{"text": "手机屏幕碎了怎么修", "label": "other"}
-{"text": "手机卡顿怎么办", "label": "other"}
-{"text": "手机电池不耐用", "label": "other"}
-{"text": "手机充电慢怎么办", "label": "other"}
-{"text": "电脑怎么选", "label": "other"}
-{"text": "笔记本推荐", "label": "other"}
-{"text": "电脑卡顿怎么办", "label": "other"}
-{"text": "电脑蓝屏怎么解决", "label": "other"}
-{"text": "平板推荐", "label": "other"}
-{"text": "平板电脑哪款好", "label": "other"}
-{"text": "耳机推荐", "label": "other"}
-{"text": "耳机有杂音怎么办", "label": "other"}
-{"text": "蓝牙耳机连不上", "label": "other"}
-{"text": "相机推荐", "label": "other"}
-{"text": "单反怎么选", "label": "other"}
-{"text": "智能手表推荐", "label": "other"}
-{"text": "手表怎么调时间", "label": "other"}
-{"text": "空调不制冷了", "label": "other"}
-{"text": "空调加氟多少钱", "label": "other"}
-{"text": "冰箱有异味怎么办", "label": "other"}
-{"text": "冰箱除霜方法", "label": "other"}
-{"text": "洗衣机漏水", "label": "other"}
-{"text": "洗衣机怎么用", "label": "other"}
-{"text": "洗衣机不脱水", "label": "other"}
-{"text": "热水器不出热水", "label": "other"}
-{"text": "热水器漏水怎么办", "label": "other"}
-{"text": "电视怎么联网", "label": "other"}
-{"text": "电视黑屏了", "label": "other"}
-{"text": "微波炉怎么选", "label": "other"}
-{"text": "油烟机怎么清洗", "label": "other"}
-{"text": "洗碗机推荐", "label": "other"}
-{"text": "消毒柜怎么选", "label": "other"}
-{"text": "水管漏水怎么处理", "label": "other"}
-{"text": "电饭煲推荐", "label": "other"}
-{"text": "电磁炉不加热", "label": "other"}
-{"text": "烤箱怎么用", "label": "other"}
-{"text": "空气炸锅推荐", "label": "other"}
-{"text": "咖啡机推荐", "label": "other"}
-{"text": "豆浆机怎么清洗", "label": "other"}
-{"text": "破壁机推荐", "label": "other"}
-{"text": "加湿器推荐", "label": "other"}
-{"text": "空气净化器有用吗", "label": "other"}
-{"text": "取暖器推荐", "label": "other"}
-{"text": "电风扇不转", "label": "other"}
-{"text": "吸尘器推荐", "label": "other"}
-{"text": "除湿机怎么选", "label": "other"}
-{"text": "净水器推荐", "label": "other"}
-{"text": "投影仪推荐", "label": "other"}
-{"text": "音响怎么选", "label": "other"}
-{"text": "台灯推荐", "label": "other"}
-{"text": "充电宝推荐", "label": "other"}
-{"text": "汽车电池多久换一次", "label": "other"}
-{"text": "笔记本电脑电池续航", "label": "other"}
-{"text": "路由器总是断网怎么办", "label": "other"}
-{"text": "路由器WiFi信号弱怎么办", "label": "other"}
-{"text": "路由器怎么重启", "label": "other"}
-{"text": "路由器连不上网", "label": "other"}
-{"text": "打印机无法打印怎么处理", "label": "other"}
-{"text": "打印机卡纸怎么办", "label": "other"}
-{"text": "打印机连不上电脑", "label": "other"}
-{"text": "打印机怎么加墨", "label": "other"}
-{"text": "相机镜头怎么清洁", "label": "other"}
-{"text": "相机拍出来模糊怎么办", "label": "other"}
-{"text": "相机内存卡读不出来", "label": "other"}
-{"text": "投影仪画面模糊怎么办", "label": "other"}
-{"text": "投影仪连不上手机", "label": "other"}
-{"text": "投影仪亮度不够", "label": "other"}
-{"text": "燃气灶火苗很小怎么办", "label": "other"}
-{"text": "燃气灶打不着火", "label": "other"}
-{"text": "燃气灶怎么清洁", "label": "other"}
-{"text": "新能源汽车冬天续航下降正常吗", "label": "other"}
-{"text": "电动车充电慢怎么办", "label": "other"}
-{"text": "汽车冬天启动困难", "label": "other"}
-{"text": "汽车维修", "label": "other"}
-{"text": "手机维修", "label": "other"}
-{"text": "电脑维修", "label": "other"}
-{"text": "汽车怎么维修", "label": "other"}
-{"text": "手机屏幕维修", "label": "other"}
-{"text": "空调不制冷咋回事", "label": "other"}
-{"text": "空调不凉快了", "label": "other"}
-{"text": "手机充不进电怎么办", "label": "other"}
-{"text": "帮我查一下天气", "label": "other"}
-{"text": "帮我写一份简历", "label": "other"}
-{"text": "帮我翻译一段话", "label": "other"}
-{"text": "帮我订一张票", "label": "other"}
-{"text": "推荐一家餐厅", "label": "other"}
-{"text": "附近有什么好玩的", "label": "other"}
-{"text": "帮我算个数", "label": "other"}
-{"text": "帮我找个攻略", "label": "other"}
-{"text": "空调能修吗", "label": "other"}
-{"text": "手机怎么设置密码", "label": "other"}
-{"text": "你好", "label": "casual"}
-{"text": "您好", "label": "casual"}
-{"text": "你好啊", "label": "casual"}
-{"text": "你好呀", "label": "casual"}
-{"text": "嗨", "label": "casual"}
-{"text": "哈喽", "label": "casual"}
-{"text": "哈喽哈喽", "label": "casual"}
-{"text": "hello", "label": "casual"}
-{"text": "hi", "label": "casual"}
-{"text": "hey", "label": "casual"}
-{"text": "在吗", "label": "casual"}
-{"text": "在不在", "label": "casual"}
-{"text": "在不在线", "label": "casual"}
-{"text": "有人吗", "label": "casual"}
-{"text": "在吗在吗", "label": "casual"}
-{"text": "嗨你好", "label": "casual"}
-{"text": "谢谢", "label": "casual"}
-{"text": "感谢", "label": "casual"}
-{"text": "多谢", "label": "casual"}
-{"text": "谢谢啦", "label": "casual"}
-{"text": "辛苦了", "label": "casual"}
-{"text": "太感谢了", "label": "casual"}
-{"text": "再见", "label": "casual"}
-{"text": "拜拜", "label": "casual"}
-{"text": "拜", "label": "casual"}
-{"text": "晚安", "label": "casual"}
-{"text": "早安", "label": "casual"}
-{"text": "午安", "label": "casual"}
-{"text": "早上好", "label": "casual"}
-{"text": "中午好", "label": "casual"}
-{"text": "晚上好", "label": "casual"}
-{"text": "晚上好呀", "label": "casual"}
-{"text": "你是谁", "label": "casual"}
-{"text": "你叫什么", "label": "casual"}
-{"text": "你叫什么名字", "label": "casual"}
-{"text": "你能做什么", "label": "casual"}
-{"text": "你会什么", "label": "casual"}
-{"text": "你能干嘛", "label": "casual"}
-{"text": "介绍一下你自己", "label": "casual"}
-{"text": "介绍一下", "label": "casual"}
-{"text": "你擅长什么", "label": "casual"}
-{"text": "你会哪些", "label": "casual"}
-{"text": "你都会点什么", "label": "casual"}
-{"text": "我只是来看看", "label": "casual"}
-{"text": "好的", "label": "casual"}
-{"text": "嗯", "label": "casual"}
-{"text": "哦", "label": "casual"}
-{"text": "没事了", "label": "casual"}
-{"text": "随便看看", "label": "casual"}
-{"text": "路过", "label": "casual"}
-{"text": "收到", "label": "casual"}
-{"text": "好嘞", "label": "casual"}
-{"text": "好滴", "label": "casual"}
-{"text": "行", "label": "casual"}
-{"text": "可以", "label": "casual"}
-{"text": "你可以帮我解决什么问题", "label": "casual"}
-{"text": "你能帮我解决啥", "label": "casual"}
-{"text": "讲个笑话", "label": "casual"}
-{"text": "说个段子", "label": "casual"}
-{"text": "讲个故事", "label": "casual"}
-{"text": "这个怎么样", "label": "unknown"}
-{"text": "这个好用吗", "label": "unknown"}
-{"text": "好用吗", "label": "unknown"}
-{"text": "好用不", "label": "unknown"}
-{"text": "推荐一下", "label": "unknown"}
-{"text": "给我推荐一个", "label": "unknown"}
-{"text": "哪个好", "label": "unknown"}
-{"text": "哪个更好", "label": "unknown"}
-{"text": "怎么样", "label": "unknown"}
-{"text": "买哪个", "label": "unknown"}
-{"text": "有没有便宜的", "label": "unknown"}
-{"text": "性价比高的", "label": "unknown"}
-{"text": "多少钱", "label": "unknown"}
-{"text": "贵不贵", "label": "unknown"}
-{"text": "靠谱吗", "label": "unknown"}
-{"text": "这个靠谱吗", "label": "unknown"}
-{"text": "值得买吗", "label": "unknown"}
-{"text": "值不值得", "label": "unknown"}
-{"text": "行不行", "label": "unknown"}
-{"text": "好使吗", "label": "unknown"}
-{"text": "能用吗", "label": "unknown"}
-{"text": "能用不", "label": "unknown"}
-{"text": "效果如何", "label": "unknown"}
-{"text": "效果怎么样", "label": "unknown"}
-{"text": "给点建议", "label": "unknown"}
-{"text": "帮我看下", "label": "unknown"}
-{"text": "帮我看一下", "label": "unknown"}
-{"text": "这个可以吗", "label": "unknown"}
-{"text": "有没有好点的", "label": "unknown"}
-{"text": "有没有更好的", "label": "unknown"}
-{"text": "好不好用", "label": "unknown"}
-{"text": "好用不好用", "label": "unknown"}
-{"text": "好不好", "label": "unknown"}
-{"text": "质量怎么样", "label": "unknown"}
-{"text": "划算吗", "label": "unknown"}
-{"text": "性价比怎么样", "label": "unknown"}
-{"text": "选哪个", "label": "unknown"}
-{"text": "买哪个好", "label": "unknown"}
-{"text": "哪个牌子好", "label": "unknown"}
-{"text": "推荐个", "label": "unknown"}
-{"text": "来个推荐", "label": "unknown"}
-{"text": "给我说说", "label": "unknown"}
-{"text": "讲讲", "label": "unknown"}
-{"text": "说说看", "label": "unknown"}
-{"text": "了解下", "label": "unknown"}
-{"text": "这个咋样", "label": "unknown"}
-{"text": "咋样", "label": "unknown"}
-{"text": "怎么样啊", "label": "unknown"}
-{"text": "好用么", "label": "unknown"}
-{"text": "贵么", "label": "unknown"}
-{"text": "值得么", "label": "unknown"}
-{"text": "行么", "label": "unknown"}
-{"text": "中不中", "label": "unknown"}
-{"text": "这个怎么样啊", "label": "unknown"}
-{"text": "那这个呢", "label": "unknown"}
-{"text": "它好用吗", "label": "unknown"}
-{"text": "能修吗", "label": "unknown"}
-{"text": "怎么设置", "label": "unknown"}
-{"text": "能退吗", "label": "unknown"}
-{"text": "有货吗", "label": "unknown"}
-{"text": "需要换吗", "label": "unknown"}
+{"text": "不染一尘净白 S1怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘净白 S2怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘净白 S3怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘净界 P1怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘净界 P2 Lite怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘净界 P2怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘净界 P2 Pro怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘净界 P3怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘天工 T1怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘天工 T1 Pro怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘天工 T2 Lite怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘天工 T2怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘天工 T2 Ultra怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘云顶 X1 Pro怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘云顶 X1 Pro Max怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘云顶 X2怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘是什么品牌？", "label": "robot", "source": "base"}
+{"text": "不染一尘的品牌理念是什么？", "label": "robot", "source": "base"}
+{"text": "不染一尘是什么时候成立的？", "label": "robot", "source": "base"}
+{"text": "不染一尘和云境智能是什么关系？", "label": "robot", "source": "base"}
+{"text": "品牌的优势是什么？", "label": "robot", "source": "base"}
+{"text": "品牌的核心技术是什么？", "label": "robot", "source": "base"}
+{"text": "不染一尘的无尘风道系统是什么？", "label": "robot", "source": "base"}
+{"text": "不染一尘的云净双水路是什么？", "label": "robot", "source": "base"}
+{"text": "不染一尘的零缠绕浮动主刷有什么特点？", "label": "robot", "source": "base"}
+{"text": "不染一尘的静音技术怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘的算法有什么优势？", "label": "robot", "source": "base"}
+{"text": "不染一尘有哪些产品系列？", "label": "robot", "source": "base"}
+{"text": "不染一尘的售后服务网络如何？", "label": "robot", "source": "base"}
+{"text": "不染一尘的研发实力怎么样？", "label": "robot", "source": "base"}
+{"text": "不染一尘获得过哪些认证和荣誉？", "label": "robot", "source": "base"}
+{"text": "不染一尘在环保方面做了什么？", "label": "robot", "source": "base"}
+{"text": "不染一尘适合什么样的家庭？", "label": "robot", "source": "base"}
+{"text": "不染一尘的保修期是多久？", "label": "robot", "source": "base"}
+{"text": "保修怎么激活？", "label": "robot", "source": "base"}
+{"text": "哪些情况不在保修范围内？", "label": "robot", "source": "base"}
+{"text": "保修期内维修要钱吗？", "label": "robot", "source": "base"}
+{"text": "有延保服务吗？", "label": "robot", "source": "base"}
+{"text": "延保怎么使用？", "label": "robot", "source": "base"}
+{"text": "保修信息怎么查询？", "label": "robot", "source": "base"}
+{"text": "支持七天无理由退货吗？", "label": "robot", "source": "base"}
+{"text": "十五天换货政策是什么？", "label": "robot", "source": "base"}
+{"text": "质量问题退换货怎么操作？", "label": "robot", "source": "base"}
+{"text": "退换货有赠品怎么办？", "label": "robot", "source": "base"}
+{"text": "价格保护政策是什么？", "label": "robot", "source": "base"}
+{"text": "维修方式有哪几种？", "label": "robot", "source": "base"}
+{"text": "上门服务怎么预约？", "label": "robot", "source": "base"}
+{"text": "寄修流程是什么？", "label": "robot", "source": "base"}
+{"text": "维修需要多久？", "label": "robot", "source": "base"}
+{"text": "维修期间有备用机吗？", "label": "robot", "source": "base"}
+{"text": "维修后保修怎么算？", "label": "robot", "source": "base"}
+{"text": "怎么查询维修进度？", "label": "robot", "source": "base"}
+{"text": "服务网点怎么查询？", "label": "robot", "source": "base"}
+{"text": "节假日服务怎么安排？", "label": "robot", "source": "base"}
+{"text": "对企业/批量采购用户有专属售后吗？", "label": "robot", "source": "base"}
+{"text": "耗材配件怎么买？", "label": "robot", "source": "base"}
+{"text": "配件有保修吗？", "label": "robot", "source": "base"}
+{"text": "怎么确认买的是原装配件？", "label": "robot", "source": "base"}
+{"text": "发票怎么开具？", "label": "robot", "source": "base"}
+{"text": "以旧换新怎么参加？", "label": "robot", "source": "base"}
+{"text": "旧机回收流程是什么？", "label": "robot", "source": "base"}
+{"text": "服务监督和投诉渠道有哪些？", "label": "robot", "source": "base"}
+{"text": "客服电话是多少？", "label": "robot", "source": "base"}
+{"text": "保修凭证丢了怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘机器人开不了机怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘机器人连不上 WiFi 怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘 APP 无法控制机器人怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘机器人频繁断连怎么处理？", "label": "robot", "source": "base"}
+{"text": "不染一尘语音唤醒失效怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘机器人不走了怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘机器人吸力变小了怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘主刷不转了怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘边刷不转了怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘清扫路线乱、漏扫怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘机器人频繁碰撞家具怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘机器人扫完还有死角怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘集尘时噪音很大怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘定时任务不执行怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘拖地不出水怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘拖地漏水怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘旋转拖布不转怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘拖完地有白色水痕怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘自动洗拖布失效怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘拖布烘干不热怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘基站不排水/污水满报警怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘机器人找不到充电座怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘充不进电怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘续航衰减严重怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘回充失败、反复撞底座怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘「滴滴滴」报警怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘提示滤网堵塞怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘提示尘盒未安装怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘机身发烫有异味怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘清扫时噪音变大怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘防跌落误触发怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘固件升级失败怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘机器人如何恢复出厂设置？", "label": "robot", "source": "base"}
+{"text": "排查后还是修不好怎么办？", "label": "robot", "source": "base"}
+{"text": "不染一尘怎么选合适的型号？", "label": "robot", "source": "base"}
+{"text": "吸力参数怎么看？", "label": "robot", "source": "base"}
+{"text": "导航技术怎么选？", "label": "robot", "source": "base"}
+{"text": "避障能力重要吗？", "label": "robot", "source": "base"}
+{"text": "自动集尘值得选吗？", "label": "robot", "source": "base"}
+{"text": "拖布自清洁怎么选？", "label": "robot", "source": "base"}
+{"text": "热风烘干重要吗？", "label": "robot", "source": "base"}
+{"text": "家有宠物选哪款？", "label": "robot", "source": "base"}
+{"text": "家里是复式/多楼层怎么选？", "label": "robot", "source": "base"}
+{"text": "静音表现怎么样？", "label": "robot", "source": "base"}
+{"text": "木地板家庭怎么选？", "label": "robot", "source": "base"}
+{"text": "越障和防跌落表现？", "label": "robot", "source": "base"}
+{"text": "机身高度影响清扫吗？", "label": "robot", "source": "base"}
+{"text": "尘盒/集尘袋容量怎么选？", "label": "robot", "source": "base"}
+{"text": "自动上下水适合什么家庭？", "label": "robot", "source": "base"}
+{"text": "基站怎么选？", "label": "robot", "source": "base"}
+{"text": "地毯增压功能有必要吗？", "label": "robot", "source": "base"}
+{"text": "童锁和防误触重要吗？", "label": "robot", "source": "base"}
+{"text": "语音控制支持哪些？", "label": "robot", "source": "base"}
+{"text": "OTA 固件升级重要吗？", "label": "robot", "source": "base"}
+{"text": "断点续扫是标配吗？", "label": "robot", "source": "base"}
+{"text": "浅色家居环境有影响吗？", "label": "robot", "source": "base"}
+{"text": "隐私安全怎么样？", "label": "robot", "source": "base"}
+{"text": "在哪里可以试用体验？", "label": "robot", "source": "base"}
+{"text": "净白 S 系列和净界 P 系列差在哪？", "label": "robot", "source": "base"}
+{"text": "天工 T 系列和云顶 X 系列差在哪？", "label": "robot", "source": "base"}
+{"text": "预算 1500 以内推荐哪款？", "label": "robot", "source": "base"}
+{"text": "预算 2000 左右推荐哪款？", "label": "robot", "source": "base"}
+{"text": "预算 4000 以上推荐哪款？", "label": "robot", "source": "base"}
+{"text": "送长辈选哪款？", "label": "robot", "source": "base"}
+{"text": "新婚/新房装修选哪款？", "label": "robot", "source": "base"}
+{"text": "不染一尘的耗材更换周期是多久？", "label": "robot", "source": "base"}
+{"text": "配件在哪里购买？", "label": "robot", "source": "base"}
+{"text": "耗材贵不贵？", "label": "robot", "source": "base"}
+{"text": "怎么辨别原装配件？", "label": "robot", "source": "base"}
+{"text": "耗材可以通用吗？", "label": "robot", "source": "base"}
+{"text": "有耗材订阅服务吗？", "label": "robot", "source": "base"}
+{"text": "预算1000以内扫地机器人推荐", "label": "robot", "source": "base"}
+{"text": "预算1500以内有什么扫地机器人推荐", "label": "robot", "source": "base"}
+{"text": "预算2000以内有什么机器人", "label": "robot", "source": "base"}
+{"text": "1000元以下扫地机器人推荐", "label": "robot", "source": "base"}
+{"text": "1500以内扫地机器人推荐", "label": "robot", "source": "base"}
+{"text": "2000以内机器人推荐", "label": "robot", "source": "base"}
+{"text": "一千以内有什么扫地机器人", "label": "robot", "source": "base"}
+{"text": "三千以内扫拖一体机器人推荐", "label": "robot", "source": "base"}
+{"text": "5000元左右扫地机器人推荐", "label": "robot", "source": "base"}
+{"text": "预算3000以内扫地机器人", "label": "robot", "source": "base"}
+{"text": "2000以下扫地机器人推荐", "label": "robot", "source": "base"}
+{"text": "1000块以内的机器人", "label": "robot", "source": "base"}
+{"text": "3000以内的扫地机器人", "label": "robot", "source": "base"}
+{"text": "万元以下的扫地机器人推荐", "label": "robot", "source": "base"}
+{"text": "预算5000以内有什么扫地机器人", "label": "robot", "source": "base"}
+{"text": "1500元以内的扫拖一体机器人", "label": "robot", "source": "base"}
+{"text": "两千以内推荐什么机器人", "label": "robot", "source": "base"}
+{"text": "3000元以下机器人推荐", "label": "robot", "source": "base"}
+{"text": "5000以内的扫拖机器人", "label": "robot", "source": "base"}
+{"text": "10000以内扫地机器人推荐", "label": "robot", "source": "base"}
+{"text": "预算2000以内推荐", "label": "robot", "source": "base"}
+{"text": "预算1000以内推荐机器人", "label": "robot", "source": "base"}
+{"text": "2000元以内推荐", "label": "robot", "source": "base"}
+{"text": "1000以内有什么机器人推荐", "label": "robot", "source": "base"}
+{"text": "3000以内推荐扫地机器人", "label": "robot", "source": "base"}
+{"text": "1500以内买什么机器人", "label": "robot", "source": "base"}
+{"text": "2000块以内机器人", "label": "robot", "source": "base"}
+{"text": "5000以内推荐", "label": "robot", "source": "base"}
+{"text": "HEPA滤网多久更换一次", "label": "robot", "source": "base"}
+{"text": "HEPA滤网可以清洗吗", "label": "robot", "source": "base"}
+{"text": "HEPA滤网怎么清洗", "label": "robot", "source": "base"}
+{"text": "LDS激光导航和视觉导航哪个好", "label": "robot", "source": "base"}
+{"text": "LDS激光导航有什么优势", "label": "robot", "source": "base"}
+{"text": "dToF导航技术是什么", "label": "robot", "source": "base"}
+{"text": "dToF导航和LDS有什么区别", "label": "robot", "source": "base"}
+{"text": "VSLAM和LDS的区别", "label": "robot", "source": "base"}
+{"text": "VSLAM视觉导航怎么样", "label": "robot", "source": "base"}
+{"text": "激光导航的机器人有什么优势", "label": "robot", "source": "base"}
+{"text": "3D结构光避障是什么", "label": "robot", "source": "base"}
+{"text": "扫地机器人吸力多少Pa合适", "label": "robot", "source": "base"}
+{"text": "滤网多久换一次", "label": "robot", "source": "base"}
+{"text": "边刷和主刷有什么区别", "label": "robot", "source": "base"}
+{"text": "滚刷和胶刷哪个好", "label": "robot", "source": "base"}
+{"text": "机器人导航用激光还是视觉", "label": "robot", "source": "base"}
+{"text": "dToF测距是什么", "label": "robot", "source": "base"}
+{"text": "HEPA滤网等级怎么看", "label": "robot", "source": "base"}
+{"text": "扫地机器人的导航方式有哪些", "label": "robot", "source": "base"}
+{"text": "激光雷达导航的机器人推荐", "label": "robot", "source": "base"}
+{"text": "水箱漏水怎么办", "label": "robot", "source": "base"}
+{"text": "水箱怎么清洗", "label": "robot", "source": "base"}
+{"text": "水箱多久加一次水", "label": "robot", "source": "base"}
+{"text": "水箱容量一般多大", "label": "robot", "source": "base"}
+{"text": "水箱漏水怎么处理", "label": "robot", "source": "base"}
+{"text": "拖地水箱不出水怎么办", "label": "robot", "source": "base"}
+{"text": "水箱有异味怎么办", "label": "robot", "source": "base"}
+{"text": "水箱怎么拆下来", "label": "robot", "source": "base"}
+{"text": "水箱没水了怎么办", "label": "robot", "source": "base"}
+{"text": "水箱加满水能拖多久", "label": "robot", "source": "base"}
+{"text": "电池续航下降怎么办", "label": "robot", "source": "base"}
+{"text": "电池续航时间变短", "label": "robot", "source": "base"}
+{"text": "电池多久需要更换", "label": "robot", "source": "base"}
+{"text": "电池老化怎么办", "label": "robot", "source": "base"}
+{"text": "电池充不进电怎么办", "label": "robot", "source": "base"}
+{"text": "电池续航多久", "label": "robot", "source": "base"}
+{"text": "机器人电池能用几年", "label": "robot", "source": "base"}
+{"text": "电池鼓包了怎么办", "label": "robot", "source": "base"}
+{"text": "扫地机器人电池续航下降", "label": "robot", "source": "base"}
+{"text": "机器人电池续航变短", "label": "robot", "source": "base"}
+{"text": "扫地机电池不耐用怎么办", "label": "robot", "source": "base"}
+{"text": "扫地机器人电池老化", "label": "robot", "source": "base"}
+{"text": "机器人电池充不进电", "label": "robot", "source": "base"}
+{"text": "HEPA滤网多久清洗一次", "label": "robot", "source": "base"}
+{"text": "HEPA滤网需要更换吗", "label": "robot", "source": "base"}
+{"text": "HEPA滤网怎么拆", "label": "robot", "source": "base"}
+{"text": "滤网清洗频率", "label": "robot", "source": "base"}
+{"text": "高效滤网多久换", "label": "robot", "source": "base"}
+{"text": "HEPA过滤网在哪里", "label": "robot", "source": "base"}
+{"text": "滤网脏了怎么清理", "label": "robot", "source": "base"}
+{"text": "滤网水洗还是更换", "label": "robot", "source": "base"}
+{"text": "扫地机器人能修吗", "label": "robot", "source": "base"}
+{"text": "扫地机器人怎么设置定时清扫", "label": "robot", "source": "base"}
+{"text": "最近半年发布的产品有哪些", "label": "robot", "source": "base"}
+{"text": "最近半年发布的扫地机器人推荐", "label": "robot", "source": "base"}
+{"text": "最近半年发布的产品里有什么1000以内的扫地机器人", "label": "robot", "source": "base"}
+{"text": "近三个月发布的机器人有哪些", "label": "robot", "source": "base"}
+{"text": "今年发布的扫地机器人推荐", "label": "robot", "source": "base"}
+{"text": "最近半年有什么新机器人", "label": "robot", "source": "base"}
+{"text": "近半年上市的扫地机器人", "label": "robot", "source": "base"}
+{"text": "今年新出的扫地机器人推荐", "label": "robot", "source": "base"}
+{"text": "最近半年发布的产品里有什么2000以内的机器人", "label": "robot", "source": "base"}
+{"text": "近一个月发布的扫地机器人", "label": "robot", "source": "base"}
+{"text": "去年发布的扫地机器人有哪些", "label": "robot", "source": "base"}
+{"text": "最近三个月出的新机型", "label": "robot", "source": "base"}
+{"text": "今年有哪些新发布的扫地机器人", "label": "robot", "source": "base"}
+{"text": "最近半年发布的新品扫地机器人", "label": "robot", "source": "base"}
+{"text": "近一年上市的扫地机器人推荐", "label": "robot", "source": "base"}
+{"text": "最近半年出了哪些新款", "label": "robot", "source": "base"}
+{"text": "不染一尘是什么品牌", "label": "robot", "source": "base"}
+{"text": "不染一尘品牌介绍", "label": "robot", "source": "base"}
+{"text": "介绍一下不染一尘", "label": "robot", "source": "base"}
+{"text": "不染一尘怎么样", "label": "robot", "source": "base"}
+{"text": "不染一尘有什么优势", "label": "robot", "source": "base"}
+{"text": "为什么要买不染一尘", "label": "robot", "source": "base"}
+{"text": "不染一尘好在哪里", "label": "robot", "source": "base"}
+{"text": "不染一尘的口碑怎么样", "label": "robot", "source": "base"}
+{"text": "不染一尘靠谱吗", "label": "robot", "source": "base"}
+{"text": "不染一尘是哪个公司的", "label": "robot", "source": "base"}
+{"text": "不染一尘和云境智能什么关系", "label": "robot", "source": "base"}
+{"text": "零件掉了可以报修吗", "label": "robot", "source": "base"}
+{"text": "机器人怎么报修", "label": "robot", "source": "base"}
+{"text": "可以售后更换零件吗", "label": "robot", "source": "base"}
+{"text": "怎么申请售后维修", "label": "robot", "source": "base"}
+{"text": "报修流程是什么", "label": "robot", "source": "base"}
+{"text": "售后怎么联系", "label": "robot", "source": "base"}
+{"text": "保修期内维修要钱吗", "label": "robot", "source": "base"}
+{"text": "怎么查询保修期", "label": "robot", "source": "base"}
+{"text": "可以退货吗", "label": "robot", "source": "base"}
+{"text": "维修", "label": "robot", "source": "base"}
+{"text": "怎么维修", "label": "robot", "source": "base"}
+{"text": "需要维修", "label": "robot", "source": "base"}
+{"text": "维修一下", "label": "robot", "source": "base"}
+{"text": "帮我修一下", "label": "robot", "source": "base"}
+{"text": "能维修吗", "label": "robot", "source": "base"}
+{"text": "可以维修吗", "label": "robot", "source": "base"}
+{"text": "机器维修", "label": "robot", "source": "base"}
+{"text": "机器人维修", "label": "robot", "source": "base"}
+{"text": "扫地机维修", "label": "robot", "source": "base"}
+{"text": "有没有飞机卖", "label": "other", "source": "base"}
+{"text": "电动车多少钱", "label": "other", "source": "base"}
+{"text": "电动车怎么选", "label": "other", "source": "base"}
+{"text": "电瓶车充电安全吗", "label": "other", "source": "base"}
+{"text": "汽车推荐", "label": "other", "source": "base"}
+{"text": "汽车保养多久一次", "label": "other", "source": "base"}
+{"text": "汽车保养项目有哪些", "label": "other", "source": "base"}
+{"text": "汽车多久保养一次", "label": "other", "source": "base"}
+{"text": "汽车维修要多少钱", "label": "other", "source": "base"}
+{"text": "汽车轮胎多久换一次", "label": "other", "source": "base"}
+{"text": "自行车推荐", "label": "other", "source": "base"}
+{"text": "摩托车怎么选", "label": "other", "source": "base"}
+{"text": "火车票怎么买", "label": "other", "source": "base"}
+{"text": "电动车电池多久换一次", "label": "other", "source": "base"}
+{"text": "电动车续航多少公里", "label": "other", "source": "base"}
+{"text": "手机哪个牌子好", "label": "other", "source": "base"}
+{"text": "手机推荐", "label": "other", "source": "base"}
+{"text": "手机屏幕碎了怎么修", "label": "other", "source": "base"}
+{"text": "手机卡顿怎么办", "label": "other", "source": "base"}
+{"text": "手机电池不耐用", "label": "other", "source": "base"}
+{"text": "手机充电慢怎么办", "label": "other", "source": "base"}
+{"text": "电脑怎么选", "label": "other", "source": "base"}
+{"text": "笔记本推荐", "label": "other", "source": "base"}
+{"text": "电脑卡顿怎么办", "label": "other", "source": "base"}
+{"text": "电脑蓝屏怎么解决", "label": "other", "source": "base"}
+{"text": "平板推荐", "label": "other", "source": "base"}
+{"text": "平板电脑哪款好", "label": "other", "source": "base"}
+{"text": "耳机推荐", "label": "other", "source": "base"}
+{"text": "耳机有杂音怎么办", "label": "other", "source": "base"}
+{"text": "蓝牙耳机连不上", "label": "other", "source": "base"}
+{"text": "相机推荐", "label": "other", "source": "base"}
+{"text": "单反怎么选", "label": "other", "source": "base"}
+{"text": "智能手表推荐", "label": "other", "source": "base"}
+{"text": "手表怎么调时间", "label": "other", "source": "base"}
+{"text": "空调不制冷了", "label": "other", "source": "base"}
+{"text": "空调加氟多少钱", "label": "other", "source": "base"}
+{"text": "冰箱有异味怎么办", "label": "other", "source": "base"}
+{"text": "冰箱除霜方法", "label": "other", "source": "base"}
+{"text": "洗衣机漏水", "label": "other", "source": "base"}
+{"text": "洗衣机怎么用", "label": "other", "source": "base"}
+{"text": "洗衣机不脱水", "label": "other", "source": "base"}
+{"text": "热水器不出热水", "label": "other", "source": "base"}
+{"text": "热水器漏水怎么办", "label": "other", "source": "base"}
+{"text": "电视怎么联网", "label": "other", "source": "base"}
+{"text": "电视黑屏了", "label": "other", "source": "base"}
+{"text": "微波炉怎么选", "label": "other", "source": "base"}
+{"text": "油烟机怎么清洗", "label": "other", "source": "base"}
+{"text": "洗碗机推荐", "label": "other", "source": "base"}
+{"text": "消毒柜怎么选", "label": "other", "source": "base"}
+{"text": "水管漏水怎么处理", "label": "other", "source": "base"}
+{"text": "电饭煲推荐", "label": "other", "source": "base"}
+{"text": "电磁炉不加热", "label": "other", "source": "base"}
+{"text": "烤箱怎么用", "label": "other", "source": "base"}
+{"text": "空气炸锅推荐", "label": "other", "source": "base"}
+{"text": "咖啡机推荐", "label": "other", "source": "base"}
+{"text": "豆浆机怎么清洗", "label": "other", "source": "base"}
+{"text": "破壁机推荐", "label": "other", "source": "base"}
+{"text": "加湿器推荐", "label": "other", "source": "base"}
+{"text": "空气净化器有用吗", "label": "other", "source": "base"}
+{"text": "取暖器推荐", "label": "other", "source": "base"}
+{"text": "电风扇不转", "label": "other", "source": "base"}
+{"text": "吸尘器推荐", "label": "other", "source": "base"}
+{"text": "除湿机怎么选", "label": "other", "source": "base"}
+{"text": "净水器推荐", "label": "other", "source": "base"}
+{"text": "投影仪推荐", "label": "other", "source": "base"}
+{"text": "音响怎么选", "label": "other", "source": "base"}
+{"text": "台灯推荐", "label": "other", "source": "base"}
+{"text": "充电宝推荐", "label": "other", "source": "base"}
+{"text": "汽车电池多久换一次", "label": "other", "source": "base"}
+{"text": "笔记本电脑电池续航", "label": "other", "source": "base"}
+{"text": "路由器总是断网怎么办", "label": "other", "source": "base"}
+{"text": "路由器WiFi信号弱怎么办", "label": "other", "source": "base"}
+{"text": "路由器怎么重启", "label": "other", "source": "base"}
+{"text": "路由器连不上网", "label": "other", "source": "base"}
+{"text": "打印机无法打印怎么处理", "label": "other", "source": "base"}
+{"text": "打印机卡纸怎么办", "label": "other", "source": "base"}
+{"text": "打印机连不上电脑", "label": "other", "source": "base"}
+{"text": "打印机怎么加墨", "label": "other", "source": "base"}
+{"text": "相机镜头怎么清洁", "label": "other", "source": "base"}
+{"text": "相机拍出来模糊怎么办", "label": "other", "source": "base"}
+{"text": "相机内存卡读不出来", "label": "other", "source": "base"}
+{"text": "投影仪画面模糊怎么办", "label": "other", "source": "base"}
+{"text": "投影仪连不上手机", "label": "other", "source": "base"}
+{"text": "投影仪亮度不够", "label": "other", "source": "base"}
+{"text": "燃气灶火苗很小怎么办", "label": "other", "source": "base"}
+{"text": "燃气灶打不着火", "label": "other", "source": "base"}
+{"text": "燃气灶怎么清洁", "label": "other", "source": "base"}
+{"text": "新能源汽车冬天续航下降正常吗", "label": "other", "source": "base"}
+{"text": "电动车充电慢怎么办", "label": "other", "source": "base"}
+{"text": "汽车冬天启动困难", "label": "other", "source": "base"}
+{"text": "汽车维修", "label": "other", "source": "base"}
+{"text": "手机维修", "label": "other", "source": "base"}
+{"text": "电脑维修", "label": "other", "source": "base"}
+{"text": "汽车怎么维修", "label": "other", "source": "base"}
+{"text": "手机屏幕维修", "label": "other", "source": "base"}
+{"text": "空调不制冷咋回事", "label": "other", "source": "base"}
+{"text": "空调不凉快了", "label": "other", "source": "base"}
+{"text": "手机充不进电怎么办", "label": "other", "source": "base"}
+{"text": "帮我查一下天气", "label": "other", "source": "base"}
+{"text": "帮我写一份简历", "label": "other", "source": "base"}
+{"text": "帮我翻译一段话", "label": "other", "source": "base"}
+{"text": "帮我订一张票", "label": "other", "source": "base"}
+{"text": "推荐一家餐厅", "label": "other", "source": "base"}
+{"text": "附近有什么好玩的", "label": "other", "source": "base"}
+{"text": "帮我算个数", "label": "other", "source": "base"}
+{"text": "帮我找个攻略", "label": "other", "source": "base"}
+{"text": "空调能修吗", "label": "other", "source": "base"}
+{"text": "手机怎么设置密码", "label": "other", "source": "base"}
+{"text": "你好", "label": "casual", "source": "base"}
+{"text": "您好", "label": "casual", "source": "base"}
+{"text": "你好啊", "label": "casual", "source": "base"}
+{"text": "你好呀", "label": "casual", "source": "base"}
+{"text": "嗨", "label": "casual", "source": "base"}
+{"text": "哈喽", "label": "casual", "source": "base"}
+{"text": "哈喽哈喽", "label": "casual", "source": "base"}
+{"text": "hello", "label": "casual", "source": "base"}
+{"text": "hi", "label": "casual", "source": "base"}
+{"text": "hey", "label": "casual", "source": "base"}
+{"text": "在吗", "label": "casual", "source": "base"}
+{"text": "在不在", "label": "casual", "source": "base"}
+{"text": "在不在线", "label": "casual", "source": "base"}
+{"text": "有人吗", "label": "casual", "source": "base"}
+{"text": "在吗在吗", "label": "casual", "source": "base"}
+{"text": "嗨你好", "label": "casual", "source": "base"}
+{"text": "谢谢", "label": "casual", "source": "base"}
+{"text": "感谢", "label": "casual", "source": "base"}
+{"text": "多谢", "label": "casual", "source": "base"}
+{"text": "谢谢啦", "label": "casual", "source": "base"}
+{"text": "辛苦了", "label": "casual", "source": "base"}
+{"text": "太感谢了", "label": "casual", "source": "base"}
+{"text": "再见", "label": "casual", "source": "base"}
+{"text": "拜拜", "label": "casual", "source": "base"}
+{"text": "拜", "label": "casual", "source": "base"}
+{"text": "晚安", "label": "casual", "source": "base"}
+{"text": "早安", "label": "casual", "source": "base"}
+{"text": "午安", "label": "casual", "source": "base"}
+{"text": "早上好", "label": "casual", "source": "base"}
+{"text": "中午好", "label": "casual", "source": "base"}
+{"text": "晚上好", "label": "casual", "source": "base"}
+{"text": "晚上好呀", "label": "casual", "source": "base"}
+{"text": "你是谁", "label": "casual", "source": "base"}
+{"text": "你叫什么", "label": "casual", "source": "base"}
+{"text": "你叫什么名字", "label": "casual", "source": "base"}
+{"text": "你能做什么", "label": "casual", "source": "base"}
+{"text": "你会什么", "label": "casual", "source": "base"}
+{"text": "你能干嘛", "label": "casual", "source": "base"}
+{"text": "介绍一下你自己", "label": "casual", "source": "base"}
+{"text": "介绍一下", "label": "casual", "source": "base"}
+{"text": "你擅长什么", "label": "casual", "source": "base"}
+{"text": "你会哪些", "label": "casual", "source": "base"}
+{"text": "你都会点什么", "label": "casual", "source": "base"}
+{"text": "我只是来看看", "label": "casual", "source": "base"}
+{"text": "好的", "label": "casual", "source": "base"}
+{"text": "嗯", "label": "casual", "source": "base"}
+{"text": "哦", "label": "casual", "source": "base"}
+{"text": "没事了", "label": "casual", "source": "base"}
+{"text": "随便看看", "label": "casual", "source": "base"}
+{"text": "路过", "label": "casual", "source": "base"}
+{"text": "收到", "label": "casual", "source": "base"}
+{"text": "好嘞", "label": "casual", "source": "base"}
+{"text": "好滴", "label": "casual", "source": "base"}
+{"text": "行", "label": "casual", "source": "base"}
+{"text": "可以", "label": "casual", "source": "base"}
+{"text": "你可以帮我解决什么问题", "label": "casual", "source": "base"}
+{"text": "你能帮我解决啥", "label": "casual", "source": "base"}
+{"text": "讲个笑话", "label": "casual", "source": "base"}
+{"text": "说个段子", "label": "casual", "source": "base"}
+{"text": "讲个故事", "label": "casual", "source": "base"}
+{"text": "这个怎么样", "label": "unknown", "source": "base"}
+{"text": "这个好用吗", "label": "unknown", "source": "base"}
+{"text": "好用吗", "label": "unknown", "source": "base"}
+{"text": "好用不", "label": "unknown", "source": "base"}
+{"text": "推荐一下", "label": "unknown", "source": "base"}
+{"text": "给我推荐一个", "label": "unknown", "source": "base"}
+{"text": "哪个好", "label": "unknown", "source": "base"}
+{"text": "哪个更好", "label": "unknown", "source": "base"}
+{"text": "怎么样", "label": "unknown", "source": "base"}
+{"text": "买哪个", "label": "unknown", "source": "base"}
+{"text": "有没有便宜的", "label": "unknown", "source": "base"}
+{"text": "性价比高的", "label": "unknown", "source": "base"}
+{"text": "多少钱", "label": "unknown", "source": "base"}
+{"text": "贵不贵", "label": "unknown", "source": "base"}
+{"text": "靠谱吗", "label": "unknown", "source": "base"}
+{"text": "这个靠谱吗", "label": "unknown", "source": "base"}
+{"text": "值得买吗", "label": "unknown", "source": "base"}
+{"text": "值不值得", "label": "unknown", "source": "base"}
+{"text": "行不行", "label": "unknown", "source": "base"}
+{"text": "好使吗", "label": "unknown", "source": "base"}
+{"text": "能用吗", "label": "unknown", "source": "base"}
+{"text": "能用不", "label": "unknown", "source": "base"}
+{"text": "效果如何", "label": "unknown", "source": "base"}
+{"text": "效果怎么样", "label": "unknown", "source": "base"}
+{"text": "给点建议", "label": "unknown", "source": "base"}
+{"text": "帮我看下", "label": "unknown", "source": "base"}
+{"text": "帮我看一下", "label": "unknown", "source": "base"}
+{"text": "这个可以吗", "label": "unknown", "source": "base"}
+{"text": "有没有好点的", "label": "unknown", "source": "base"}
+{"text": "有没有更好的", "label": "unknown", "source": "base"}
+{"text": "好不好用", "label": "unknown", "source": "base"}
+{"text": "好用不好用", "label": "unknown", "source": "base"}
+{"text": "好不好", "label": "unknown", "source": "base"}
+{"text": "质量怎么样", "label": "unknown", "source": "base"}
+{"text": "划算吗", "label": "unknown", "source": "base"}
+{"text": "性价比怎么样", "label": "unknown", "source": "base"}
+{"text": "选哪个", "label": "unknown", "source": "base"}
+{"text": "买哪个好", "label": "unknown", "source": "base"}
+{"text": "哪个牌子好", "label": "unknown", "source": "base"}
+{"text": "推荐个", "label": "unknown", "source": "base"}
+{"text": "来个推荐", "label": "unknown", "source": "base"}
+{"text": "给我说说", "label": "unknown", "source": "base"}
+{"text": "讲讲", "label": "unknown", "source": "base"}
+{"text": "说说看", "label": "unknown", "source": "base"}
+{"text": "了解下", "label": "unknown", "source": "base"}
+{"text": "这个咋样", "label": "unknown", "source": "base"}
+{"text": "咋样", "label": "unknown", "source": "base"}
+{"text": "怎么样啊", "label": "unknown", "source": "base"}
+{"text": "好用么", "label": "unknown", "source": "base"}
+{"text": "贵么", "label": "unknown", "source": "base"}
+{"text": "值得么", "label": "unknown", "source": "base"}
+{"text": "行么", "label": "unknown", "source": "base"}
+{"text": "中不中", "label": "unknown", "source": "base"}
+{"text": "这个怎么样啊", "label": "unknown", "source": "base"}
+{"text": "那这个呢", "label": "unknown", "source": "base"}
+{"text": "它好用吗", "label": "unknown", "source": "base"}
+{"text": "能修吗", "label": "unknown", "source": "base"}
+{"text": "怎么设置", "label": "unknown", "source": "base"}
+{"text": "能退吗", "label": "unknown", "source": "base"}
+{"text": "有货吗", "label": "unknown", "source": "base"}
+{"text": "需要换吗", "label": "unknown", "source": "base"}
+{"text": "那这个电流现象影响大吗", "label": "unknown", "source": "multiturn_real"}
+{"text": "那你们的品牌呢", "label": "unknown", "source": "multiturn_real"}
+{"text": "整体的价格分布情况呢？", "label": "unknown", "source": "multiturn_real"}
+{"text": "会搞优惠活动吗", "label": "unknown", "source": "multiturn_real"}
+{"text": "那质保售后期多长", "label": "unknown", "source": "multiturn_real"}
+{"text": "会不会有危险这种情况", "label": "unknown", "source": "multiturn_real"}
+{"text": "那这个怎么清洗", "label": "unknown", "source": "multiturn_real"}
+{"text": "这个链接为什么打不开", "label": "unknown", "source": "multiturn_real"}
+{"text": "那你们商城的官网是什么", "label": "unknown", "source": "multiturn_real"}
+{"text": "那这个怎么用", "label": "unknown", "source": "curated"}
+{"text": "那这个怎么安装", "label": "unknown", "source": "curated"}
+{"text": "那这个要换吗", "label": "unknown", "source": "curated"}
+{"text": "那这个能用多久", "label": "unknown", "source": "curated"}
+{"text": "那这个要紧吗", "label": "unknown", "source": "curated"}
+{"text": "它多久换一次", "label": "unknown", "source": "curated"}
+{"text": "它怎么保养", "label": "unknown", "source": "curated"}
+{"text": "它吵不吵", "label": "unknown", "source": "curated"}
+{"text": "它重吗", "label": "unknown", "source": "curated"}
+{"text": "它费电吗", "label": "unknown", "source": "curated"}
+{"text": "它好使吗", "label": "unknown", "source": "curated"}
+{"text": "它值得买吗", "label": "unknown", "source": "curated"}
+{"text": "这两个有什么区别", "label": "unknown", "source": "curated"}
+{"text": "这两款哪个好", "label": "unknown", "source": "curated"}
+{"text": "这两款哪个更合适", "label": "unknown", "source": "curated"}
+{"text": "这个耗材贵吗", "label": "unknown", "source": "curated"}
+{"text": "这个配件哪里买", "label": "unknown", "source": "curated"}
+{"text": "那个多少钱", "label": "unknown", "source": "curated"}
+{"text": "这个能退货吗", "label": "unknown", "source": "curated"}
+{"text": "它保修吗", "label": "unknown", "source": "curated"}
+{"text": "它跟别的牌子比怎么样", "label": "unknown", "source": "curated"}
+{"text": "这种情况正常吗", "label": "unknown", "source": "curated"}
+{"text": "这种情况常见吗", "label": "unknown", "source": "curated"}
+{"text": "这个问题严重吗", "label": "unknown", "source": "curated"}
+{"text": "它一般能用几年", "label": "unknown", "source": "curated"}
+{"text": "那我该选哪个", "label": "unknown", "source": "curated"}
+{"text": "那我要怎么弄", "label": "unknown", "source": "curated"}
+{"text": "那我还需要做什么", "label": "unknown", "source": "curated"}
+{"text": "现在我该做什么", "label": "unknown", "source": "curated"}
+{"text": "那到底怎么选", "label": "unknown", "source": "curated"}
+{"text": "这个和那个一样吗", "label": "unknown", "source": "curated"}
+{"text": "它跟这个比呢", "label": "unknown", "source": "curated"}
+{"text": "那我买的这个呢", "label": "unknown", "source": "curated"}
+{"text": "大概要花多少钱", "label": "unknown", "source": "curated"}
+{"text": "这个一般多少钱", "label": "unknown", "source": "curated"}
+{"text": "多久能弄好", "label": "unknown", "source": "curated"}
+{"text": "要提前准备什么", "label": "unknown", "source": "curated"}
+{"text": "还有别的办法吗", "label": "unknown", "source": "curated"}
+{"text": "那还有更划算的吗", "label": "unknown", "source": "curated"}
+{"text": "这样用可以吗", "label": "unknown", "source": "curated"}
+{"text": "能一直开着吗", "label": "unknown", "source": "curated"}
+{"text": "保修期多久", "label": "robot", "source": "hard_negative"}
+{"text": "维修要多久", "label": "robot", "source": "hard_negative"}
+{"text": "有现货吗", "label": "unknown", "source": "hard_negative"}
+{"text": "能开发票吗", "label": "unknown", "source": "hard_negative"}
+{"text": "支持分期吗", "label": "unknown", "source": "hard_negative"}
+{"text": "能便宜点吗", "label": "unknown", "source": "hard_negative"}
+{"text": "多久能发货", "label": "unknown", "source": "hard_negative"}
+{"text": "你们的客服电话是多少", "label": "robot", "source": "hard_negative"}
+{"text": "在保修期内维修要钱吗", "label": "robot", "source": "hard_negative"}
+{"text": "耗材在哪里买", "label": "robot", "source": "hard_negative"}
+{"text": "尘盒怎么清理", "label": "robot", "source": "hard_negative"}
+{"text": "水箱加多少水", "label": "robot", "source": "hard_negative"}
+{"text": "滤网怎么拆", "label": "robot", "source": "hard_negative"}
+{"text": "电池能换吗", "label": "robot", "source": "hard_negative"}
+{"text": "充电要多久", "label": "robot", "source": "hard_negative"}
+{"text": "线下哪里可以维修", "label": "robot", "source": "hard_negative"}
+{"text": "上门维修怎么预约", "label": "robot", "source": "hard_negative"}
+{"text": "怎么查看保修信息", "label": "robot", "source": "hard_negative"}
+{"text": "包装里都有什么", "label": "robot", "source": "hard_negative"}
+{"text": "能连几个手机", "label": "robot", "source": "hard_negative"}
+{"text": "支持语音控制吗", "label": "robot", "source": "hard_negative"}
+{"text": "噪音大不大", "label": "robot", "source": "hard_negative"}
+{"text": "扫拖能一起吗", "label": "robot", "source": "hard_negative"}
+{"text": "那你们有飞机卖吗", "label": "other", "source": "hard_negative"}
+{"text": "那你们的洗衣机保修多久", "label": "other", "source": "hard_negative"}
+{"text": "这个空气炸锅怎么清洗", "label": "other", "source": "hard_negative"}
+{"text": "那你们家的冰箱有现货吗", "label": "other", "source": "hard_negative"}
+{"text": "你们的空调安装要钱吗", "label": "other", "source": "hard_negative"}
+{"text": "这个微波炉能退吗", "label": "other", "source": "hard_negative"}
+{"text": "今天天气怎么样", "label": "other", "source": "curated"}
+{"text": "帮我写个周报", "label": "other", "source": "curated"}
+{"text": "推荐个电影", "label": "other", "source": "curated"}
+{"text": "股票怎么开户", "label": "other", "source": "curated"}
+{"text": "明天限号吗", "label": "other", "source": "curated"}
+{"text": "快递单号帮我查一下", "label": "other", "source": "curated"}
+{"text": "怎么报考驾照", "label": "other", "source": "curated"}
+{"text": "好吧", "label": "casual", "source": "curated"}
+{"text": "嗯嗯", "label": "casual", "source": "curated"}
+{"text": "行吧", "label": "casual", "source": "curated"}
+{"text": "也行", "label": "casual", "source": "curated"}
+{"text": "那就这款了", "label": "casual", "source": "curated"}
+{"text": "好吧谢谢", "label": "casual", "source": "curated"}
+{"text": "好的谢谢", "label": "casual", "source": "curated"}
+{"text": "麻烦你了", "label": "casual", "source": "curated"}
+{"text": "我知道了", "label": "casual", "source": "curated"}
+{"text": "知道了", "label": "casual", "source": "curated"}
+{"text": "ok", "label": "casual", "source": "curated"}
+{"text": "OK", "label": "casual", "source": "curated"}
+{"text": "不用了谢谢", "label": "casual", "source": "curated"}
+{"text": "我再看看", "label": "casual", "source": "curated"}
+{"text": "先这样吧", "label": "casual", "source": "curated"}
+{"text": "就这样吧", "label": "casual", "source": "curated"}
+{"text": "晚点再说", "label": "casual", "source": "curated"}
+{"text": "那算了", "label": "casual", "source": "curated"}
+{"text": "那也行", "label": "casual", "source": "curated"}
+{"text": "嗯嗯好的", "label": "casual", "source": "curated"}
+{"text": "你说得对", "label": "casual", "source": "curated"}
+{"text": "真好", "label": "casual", "source": "curated"}
+{"text": "哈哈哈", "label": "casual", "source": "curated"}
+{"text": "好，谢谢", "label": "casual", "source": "curated"}
+{"text": "你们的官网是什么", "label": "unknown", "source": "curated"}
+{"text": "商城在哪", "label": "unknown", "source": "curated"}
+{"text": "在哪可以买到", "label": "unknown", "source": "curated"}
+{"text": "官方商城怎么进", "label": "unknown", "source": "curated"}
+{"text": "怎么在官网下单", "label": "unknown", "source": "curated"}
+{"text": "线上在哪里买", "label": "unknown", "source": "curated"}
+{"text": "有没有官方旗舰店", "label": "unknown", "source": "curated"}
+{"text": "小程序能买吗", "label": "unknown", "source": "curated"}
+{"text": "门店有卖吗", "label": "unknown", "source": "curated"}
+{"text": "你们的商城叫什么", "label": "unknown", "source": "curated"}
+{"text": "呃，也行吧，那就这款了", "label": "casual", "source": "curated"}
+{"text": "嗯，那就这样吧", "label": "casual", "source": "curated"}
+{"text": "好吧，那我再看看", "label": "casual", "source": "curated"}
+{"text": "行，就它了", "label": "casual", "source": "curated"}
+{"text": "那也行吧", "label": "casual", "source": "curated"}
+{"text": "嗯嗯，可以", "label": "casual", "source": "curated"}
+{"text": "哦哦好", "label": "casual", "source": "curated"}
+{"text": "嗯…好吧", "label": "casual", "source": "curated"}
+{"text": "算了不用了", "label": "casual", "source": "curated"}
+{"text": "嗯行吧那就这个", "label": "casual", "source": "curated"}
+{"text": "多久能到货", "label": "unknown", "source": "hard_negative"}
+{"text": "能退货吗", "label": "unknown", "source": "hard_negative"}
+{"text": "怎么开机", "label": "robot", "source": "hard_negative"}
+{"text": "多少钱一台", "label": "unknown", "source": "hard_negative"}
+{"text": "有优惠券吗", "label": "unknown", "source": "hard_negative"}
+{"text": "能上门安装吗", "label": "robot", "source": "hard_negative"}
+{"text": "怎么换滤网", "label": "robot", "source": "hard_negative"}
+{"text": "滤芯多少钱", "label": "robot", "source": "hard_negative"}
+{"text": "充电充多久", "label": "robot", "source": "hard_negative"}
+{"text": "充满能用多久", "label": "robot", "source": "hard_negative"}
+{"text": "配件怎么买", "label": "robot", "source": "hard_negative"}
+{"text": "包装里有啥", "label": "robot", "source": "hard_negative"}
+{"text": "怎么预约安装", "label": "robot", "source": "hard_negative"}
+{"text": "能定时吗", "label": "robot", "source": "hard_negative"}
+{"text": "保修几年", "label": "robot", "source": "hard_negative"}
+{"text": "换电池多少钱", "label": "robot", "source": "hard_negative"}
+{"text": "清洁剂在哪里买", "label": "robot", "source": "hard_negative"}
+{"text": "怎么重置", "label": "robot", "source": "hard_negative"}
+{"text": "怎么连wifi", "label": "robot", "source": "hard_negative"}
+{"text": "有几种颜色", "label": "robot", "source": "hard_negative"}
+{"text": "尺寸多大", "label": "robot", "source": "hard_negative"}
+{"text": "重量多少", "label": "robot", "source": "hard_negative"}
+{"text": "能上台阶吗", "label": "robot", "source": "hard_negative"}
+{"text": "拖地要加水吗", "label": "robot", "source": "hard_negative"}
+{"text": "多久换一次滤芯", "label": "robot", "source": "hard_negative"}
+{"text": "怎么联系售后", "label": "robot", "source": "hard_negative"}
+{"text": "售后服务电话", "label": "robot", "source": "hard_negative"}
+{"text": "能返厂修吗", "label": "robot", "source": "hard_negative"}
+{"text": "上门费多少", "label": "unknown", "source": "hard_negative"}
+{"text": "耗材多久换一次", "label": "robot", "source": "hard_negative"}
+{"text": "边刷多久换一次", "label": "robot", "source": "hard_negative"}
+{"text": "滤网多久洗一次", "label": "robot", "source": "hard_negative"}
+{"text": "怎么清理滚刷", "label": "robot", "source": "hard_negative"}
+{"text": "洗衣机维修要钱吗", "label": "other", "source": "hard_negative"}
+{"text": "冰箱多少钱", "label": "other", "source": "hard_negative"}
+{"text": "空调清洗怎么收费", "label": "other", "source": "hard_negative"}
+{"text": "豆浆机保修多久", "label": "other", "source": "hard_negative"}
+{"text": "空气炸锅有现货吗", "label": "other", "source": "hard_negative"}
+{"text": "微波炉能开发票吗", "label": "other", "source": "hard_negative"}
+{"text": "电视维修要多久", "label": "other", "source": "hard_negative"}
+{"text": "净水器滤芯多久换", "label": "other", "source": "hard_negative"}
+{"text": "燃气灏打不着火怎么办", "label": "other", "source": "hard_negative"}
+{"text": "笔记本电脑怎么重装系统", "label": "other", "source": "hard_negative"}
+{"text": "手机换屏多少钱", "label": "other", "source": "hard_negative"}
+{"text": "电动车充电要多久", "label": "other", "source": "hard_negative"}

@@ -1,7 +1,7 @@
-"""多轮对话上下文评测：回放真实会话前缀 → 断言当前轮的出口行为（P0-3 / context_golden）。
+"""多轮对话上下文评测：回放真实会话前缀 → 断言当前轮的出口行为（P0-3；评测集 data/eval/context/golden.jsonl）。
 
-评测集 `data/eval/context_golden.jsonl`（**本地数据，已 gitignore**；由 dev-agent 从真实会话整理，
-结构与用法见同目录 `context_golden.README.md`）。一行 = 一个会话：`turns`（全部消息）+ `cases`（标注条目）。
+评测集 `data/eval/context/golden.jsonl`（**本地数据，已 gitignore**；由 dev-agent 从真实会话整理，
+结构与用法见同目录 `README.md`）。一行 = 一个会话：`turns`（全部消息）+ `cases`（标注条目）。
 
 harness 对每条 case：回放 `turns[:query_index]` 重建上下文与 SOP 状态，再发 `case.query`，
 按 `expect.behaviour`（出口行为）+ `must_contain_any` / `must_not_contain` 断言。
@@ -19,7 +19,7 @@ import sys
 from _runner import *
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_GOLDEN_FILE = os.path.join(_ROOT, "data", "eval", "context_golden.jsonl")
+_GOLDEN_FILE = os.path.join(_ROOT, "data", "eval", "context", "golden.jsonl")
 
 # 出口行为的文本标记（与 tools/agent.py 的话术一一对应）
 _DANGER_ALERT_MARK = "请立即停止使用"           # 危险拦截话术
@@ -89,7 +89,7 @@ def _check_case(reply: str, expect: dict) -> list:
         if got != beh:
             problems.append(f"出口行为应为 {beh}，实际判定为 {got}")
     # 软行为（chitchat / slot_filled / scope_guard / clarify）不做行为文本判定，
-    # 由 must / must_not 承担——见 context_golden.README.md「没有唯一正确答案」一节。
+    # 由 must / must_not 承担——见 data/eval/context/README.md「没有唯一正确答案」一节。
     return problems
 
 
