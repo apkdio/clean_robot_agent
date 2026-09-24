@@ -391,6 +391,10 @@ def _rewrite_query(session_id: str, query: str) -> tuple[str, str]:
 
     via ∈ {"none", "rule", "llm"}；none 表示不改写，调用方直接用原 query。
     只作用于检索（域路由 + 双路召回）：会话记录永远写原文，审计保真。
+
+    这里是**编排层之前**的改写（`tools.orchestration: off` / `shadow` 时全靠它）。
+    编排上线后，改写由模型在 `search_kb` 的 `query_summarization` 参数里顺手给出（搭检索那趟车），
+    不再单开一层——所以这里没有、也不该有“工具调用形态”的改写。
     """
     cfg = _rewrite_cfg()
     if not _ctx_enabled() or not cfg.get("enabled", True):

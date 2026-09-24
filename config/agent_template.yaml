@@ -14,3 +14,9 @@ llm:
 behavior:
   retrieval_only: true           # true=直接返回检索片段原文（小模型推荐）；false=走 LLM 生成
   verbose_log: false             # true=文件日志降到 DEBUG（召回详情/top-N 命中内容）；环境变量 LOG_LEVEL 优先级更高
+
+# 工具编排："off"=按既有规则链路走；"shadow"=模型选路只记日志不执行；"on"=模型选路生效（失败回退规则链路）
+# 取值必须带引号：YAML 会把裸 off / on 当成布尔（裸 off 读出来是 False）。
+# 说明：编排层尚未接入主链路，本开关当前不影响回答，为后续灰度预留。
+tools:
+  orchestration: "off"

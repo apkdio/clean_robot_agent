@@ -38,6 +38,8 @@ context:
     # rule      —— 只用规则改写（把余弦选中的历史轮拼到当前 query 前），零额外推理
     # rule+llm  —— 规则挑不出相关历史轮时，再用小模型（agent.yaml 的 small_model）改写
     # 两者在效果上的差异需要在多轮评测集上对比（见路线图 P0-3 §6），不预设结论。
+    # 注意：改写不单开「工具调用形态」——工具编排上线后，改写在 search_kb 的
+    #       query_summarization 参数里搭检索这趟车完成。
     mode: rule
     # 改写结果长度上限：超出即判为无效并回退原 query
     max_chars: 80

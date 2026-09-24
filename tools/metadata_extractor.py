@@ -294,6 +294,28 @@ def _enumerate_models_from_store(filter: dict, require_field: str) -> list[Dict]
     return models
 
 
+def get_all_model_records() -> list[Dict]:
+    """全量型号记录：`extract_model_info` 的字段 + 该 chunk 的全部 `param_*`（通用规格）。
+
+    与 `extract_model_info` 里写死的 suction/navigation/obstacle 不同，这里把**规格行解析出的全部参数**
+    原样带上，所以**新增规格键不用改这个函数**——工具侧按 `param_<键>` / `param_<键>_num` 过滤或排序即可。
+    每次现读 Chroma（型号量级只有十几~几十个，不必缓存）。
+    """
+    from vector_store import search_by_filter
+
+    out, seen = [], set()
+    for c in search_by_filter({"file_name": {"$ne": "__never__"}}):
+        info = extract_model_info(c)
+        if not info.get("name") or not info.get("price"):
+            continue
+        if info["name"] in seen:
+            continue
+        seen.add(info["name"])
+        info.update({k: v for k, v in (c.metadata or {}).items() if k.startswith("param_")})
+        out.append(info)
+    return out
+
+
 def get_all_models() -> list[Dict]:
     """全量型号 info 列表，走 data/pkl/models.pkl 缓存（fingerprint = chunk_count）。
 
