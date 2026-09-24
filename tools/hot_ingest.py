@@ -200,10 +200,19 @@ def hot_ingest_loop(data_dir: str = None, interval: int = _SCAN_INTERVAL) -> Non
 
 
 def start_hot_ingest(data_dir: str = None, interval: int = _SCAN_INTERVAL) -> threading.Thread:
-    """启动热更新守护线程。返回线程对象。"""
+    """启动热更新守护线程。返回线程对象（启动前先做一次域映射自检）。"""
+    data_dir = data_dir or _knowledge_path()
+    # 域映射自检：文件改名/新文件未被认领时，域过滤会静默失效（只能靠全库兜底），这里报出来
+    try:
+        from config.word_dict_config import validate_knowledge_domains
+
+        for problem in validate_knowledge_domains(data_dir):
+            logger.warning("[HotIngest] 域映射自检：%s", problem)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[HotIngest] 域映射自检失败：%s", e)
     t = threading.Thread(
         target=hot_ingest_loop,
-        args=(data_dir or _knowledge_path(), interval),
+        args=(data_dir, interval),
         daemon=True,
         name="hot-ingest",
     )

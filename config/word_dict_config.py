@@ -23,20 +23,70 @@ EXIT_WORDS = ["退出", "算了", "不用了", "取消", "换个问题", "换一
               "换话题", "问别的", "问个别的", "我问的是", "我说的是", "你理解错了",
               "别问了", "别问", "换一个"]
 
-# ── 知识域映射（场景 → 知识库文件名，即"轻量文档隔离"的域）──────────
-DOMAIN_MAP = {
-    "brand": "不染一尘品牌介绍.txt",       # 品牌咨询（走 RAG）
-    "consulting": "不染一尘选购指南.txt",   # 选购咨询（走 RAG 域过滤）
-    "model": "不染一尘具体型号.txt",        # 购买推荐（结构化直出）
-    "repair": "不染一尘常见维修问题.txt",   # 故障排查（走 SOP）
-    "aftersales": "不染一尘售后服务.txt",   # 售后咨询（走 RAG）
-    "maintain": "不染一尘常见维修问题.txt", # 维护保养（走 RAG，与维修同文件）
+# ── 知识域映射（场景 → 知识库文件，即"轻量文档隔离"的域）──────────
+# 一个域可以挂**多个文件**：新增知识文件时只需在对应域下加一行，代码不用动。
+# 取值是 data/knowledge/ 下的**文件名**，与 chunk 的 file_name 元数据一致。
+# exp: 在data/knowledge/下新增"不染一尘活动方案.txt"，属于活动域，则在下表中新加一行 "discount":["不染一尘活动方案.txt"]，同域下新增只需拓展列表即可。
+DOMAIN_FILES = {
+    "brand": ["不染一尘品牌介绍.txt"],        # 品牌咨询（走 RAG）
+    "consulting": ["不染一尘选购指南.txt"],    # 选购咨询（走 RAG 域过滤）
+    "model": ["不染一尘具体型号.txt"],         # 购买推荐（结构化直出）
+    "repair": ["不染一尘常见维修问题.txt"],    # 故障排查（走 SOP）
+    "aftersales": ["不染一尘售后服务.txt"],    # 售后咨询（走 RAG）
+    "maintain": ["不染一尘常见维修问题.txt"],  # 维护保养（与维修同文件）
 }
 
+# 兼容旧引用：域 → 主文件（列表里的第一个）
+DOMAIN_MAP = {k: v[0] for k, v in DOMAIN_FILES.items()}
+
+
+def domain_files_of(name: str) -> list:
+    """把「域的主文件名」或「域键」翻译成该域要检索的文件列表。
+
+    调用方（agent 的域过滤 / repair SOP）历史上拿到的是 DOMAIN_MAP 的文件名，
+    所以这里两种入参都认；未知名字原样返回单元素列表，不改调用方行为。
+    """
+    if name in DOMAIN_FILES:
+        return list(DOMAIN_FILES[name])
+    for files in DOMAIN_FILES.values():
+        if files and files[0] == name:
+            return list(files)
+    return [name]
+
+
+def domain_filter(name: str):
+    """域 → 检索 filter 的取值：单文件退化为字符串（与历史行为一致），多文件用 $in。"""
+    files = domain_files_of(name)
+    return files[0] if len(files) == 1 else {"$in": files}
+
+
+def validate_knowledge_domains(data_dir: str) -> list:
+    """启动自检：域指向的文件是否存在、目录里有没有文件没被任何域认领。返回问题列表。
+
+    历史上 DOMAIN_MAP 用文件名做键，文件改了名就会**静默失效**（域过滤永远取不到它，
+    只能靠全库兜底碰运气），所以这里显式报出来。
+    """
+    import os
+
+    if not os.path.isdir(data_dir):
+        return ["知识库目录不存在：%s" % data_dir]
+    on_disk = {f for f in os.listdir(data_dir) if os.path.isfile(os.path.join(data_dir, f))}
+    problems, claimed = [], set()
+    for domain, files in DOMAIN_FILES.items():
+        for f in files:
+            claimed.add(f)
+            if f not in on_disk:
+                problems.append("域 %s 指向的文件不存在：%s" % (domain, f))
+    for f in sorted(on_disk - claimed):
+        problems.append("目录里的文件没有被任何域认领（只会走全库兜底）：%s" % f)
+    return problems
+
 # ── 领域路由关键词 ───────────────────────────────────────────────
-# 故障关键词（路由到 repair 域）
-REPAIR_WORDS = ["故障", "坏了", "不动", "漏水", "异响", "不充电", "异常", "失灵",
-                "不好使", "出问题", "趴窝", "卡住", "噪音"]
+# 故障关键词（路由到 repair 域）。三张表是「基础 → 强词 → 触发」的叠加关系，
+# 用组合定义，避免同一批词抄三遍（2026-09-24 收敛；三张表的集合与收敛前逐一相等）。
+REPAIR_BASE_WORDS = ["故障", "坏了", "不动", "漏水", "异响", "不充电", "充不进电", "充不上电", "异常", "失灵",
+                     "不好使", "出问题", "趴窝", "卡住", "噪音", "维修"]
+REPAIR_WORDS = list(REPAIR_BASE_WORDS)
 
 # 维护关键词（路由到 maintain 域）
 MAINTAIN_WORDS = ["维护", "保养", "清洗", "清理", "更换", "耗材", "滤网", "边刷",
@@ -59,17 +109,19 @@ BUY_WORDS = ["选购", "购买", "买", "挑", "选", "入手", "购", "采购",
 CONSULT_WORDS = ["问题", "技巧", "知识", "要点", "建议", "事项", "讲究", "坑", "避雷",
                  "须知", "诀窍", "门道", "参数", "指标", "怎么选", "如何选", "注意什么",
                  "有什么讲究", "怎么看", "考虑什么", "留意", "注意哪些", "避坑", "挑选技巧",
-                 "指南", "攻略", "手册", "清单", "建议清单"]
+                 "指南", "攻略", "手册", "清单", "建议清单",
+                 # 「注意」类补全（2026-09-24）：「选购机器人有什么需要注意的地方」这种写法
+                 # 不匹配"注意什么/注意哪些"，会让 is_consulting 漏判、误触发选购 SOP。
+                 "注意", "注意事项", "注意点"]
 
 # ── SOP 触发词 ───────────────────────────────────────────────────
 PURCHASE_TRIGGER = ["推荐", "选购", "买", "预算", "想买", "性价比", "帮忙选", "挑"]
-REPAIR_TRIGGER = ["故障", "坏了", "不动", "漏水", "异响", "不充电", "异常", "失灵",
-                  "不好使", "出问题", "趴窝", "卡住", "噪音", "水痕", "水印","修理","维修","修"]
 
 # 维修强触发词（去掉"修"单字）：意图分类器对"维修""怎么维修"这类短口语可能判 other，
 # 靠强词兜底直接进 repair SOP，不依赖 intent；"修"单字太宽（装修/修车）仍依赖 intent。
-REPAIR_STRONG_WORDS = ["故障", "坏了", "不动", "漏水", "异响", "不充电", "异常", "失灵",
-                       "不好使", "出问题", "趴窝", "卡住", "噪音", "水痕", "水印", "修理", "维修"]
+# 与 REPAIR_BASE_WORDS 是叠加关系，见上方领域路由关键词。
+REPAIR_STRONG_WORDS = REPAIR_BASE_WORDS + ["水痕", "水印", "修理", "维修"]
+REPAIR_TRIGGER = REPAIR_STRONG_WORDS + ["修"]
 
 # ── 故障现象映射 ─────────────────────────────────────────────────
 # 现象关键词 → 标准检索 query（查询改写，与知识库条目标题对齐）

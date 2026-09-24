@@ -33,7 +33,7 @@ _BM25_CACHE_FILE = "data/pkl/bm25_index.pkl"
 def _matches_filter(doc: Document, f: dict) -> bool:
     """判断 metadata 是否满足 Chroma 风格 where 过滤器（仅覆盖本项目用到的子集）。
 
-    支持 {"$and": [...]} 与 $gte/$lte/$eq；未知运算符放行。
+    支持 {"$and": [...]} 与 $in / $gte / $lte / $eq；未知运算符放行。
     """
     if not f:
         return True
@@ -46,6 +46,8 @@ def _matches_filter(doc: Document, f: dict) -> bool:
         if val is None:
             return False
         if isinstance(cond, dict):
+            if "$in" in cond and val not in cond["$in"]:
+                return False
             if "$lte" in cond and not (val <= cond["$lte"]):
                 return False
             if "$gte" in cond and not (val >= cond["$gte"]):

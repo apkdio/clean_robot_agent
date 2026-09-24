@@ -21,6 +21,12 @@ retrieval:
   sparse_top_k: 10           # candidate count per BM25 search（before RRF）
   final_top_k: 5             # result count after RRF fusion
   score_threshold: 0.25     # minimum similarity score (cosine) to include a chunk
+  # 域路由的 margin 门控（2026-09-24）：top1 域与 top2 域的得分差低于本值时，
+  # 把两个域的文件一起搜（$in），避免"先命中的域把另一个域排掉"
+  # （如「保修期内维修要多少钱」= 售后 + 故障）。0 = 关闭（始终单域）。
+  # 标定：评测集 30 条 domain 用例里只有「拖布自清洁怎么选」（选购 4 / 维护 2）触发合并，
+  # 实测合并后期望条目 rank 不变（无稀释）；再大则会把无关域拉进来。
+  domain_margin: 3
 
 # Sparse retrieval (BM25 keyword matching)
 sparse:

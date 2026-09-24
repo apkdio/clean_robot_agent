@@ -61,6 +61,83 @@ def extract_publish_date(text: str) -> Dict:
     return {"publish_date": int(f"{y}{mo:02d}{d:02d}")}
 
 
+# 规格行（格式模板强制）：`- 吸力：5500Pa｜导航：LDS激光｜避障：结构光`
+# 只认含分隔符 ｜ 的行，或以 - 开头的行，避免命中正文里的冒号。
+_SPEC_PAIR_RE = re.compile(r"([^：:｜|\-\s][^：:｜|]{0,7})[：:]\s*([^｜|\n]{1,40})")
+# 数值 + 单位；单位允许中文（分钟 / 毫升），否则「续航：160分钟」抽不出数值。
+_SPEC_NUM_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*([\u4e00-\u9fffA-Za-z%]{0,4})$")
+_SPEC_SKIP_KEYS = {"参考价", "发布时间"}   # 已有专用抽取器（min_price/max_price/publish_date）
+
+
+def _spec_number(value: str):
+    """值 → 数值 + 单位中的数字；不是数值则 None。
+
+    额外拒绝"拉丁字母 + 中文"混排的单位：否则「3D结构光」会被当成数值 3（单位 D结构光），
+    在 metadata 里凭空多出一个无意义的 `param_避障_num`。
+    """
+    m = _SPEC_NUM_RE.match(value.replace(" ", ""))
+    if not m:
+        return None
+    unit = m.group(2)
+    has_latin = any(ch.isascii() and ch.isalpha() for ch in unit)
+    has_cjk = any("\u4e00" <= ch <= "\u9fff" for ch in unit)
+    if has_latin and has_cjk:
+        return None
+    return float(m.group(1))
+
+
+def extract_spec_metadata(text: str) -> Dict:
+    """从规格行提取**通用**参数 metadata：`param_<键>`（原文）+ `param_<键>_num`（可解析为数值时）。
+
+    不预设参数名——只要按格式模板写成 `键：值｜键：值` 就能被抽到，**新增型号 / 新增参数都不用改代码**。
+    这是为"有没有 LDS 导航的""吸力最大的几款"这类精准筛选准备的：文本走包含匹配，数值走比较/排序。
+    参考价 / 发布时间 跳过，由上面两个专用抽取器负责。
+    Chroma 的 metadata 只支持标量，所以展开为扁平键，不做嵌套。
+    """
+    out: Dict = {}
+    for line in text.split("\n"):
+        s = line.strip()
+        if not s or ("：" not in s and ":" not in s):
+            continue
+        if "｜" not in s and "|" not in s and not s.startswith("-"):
+            continue
+        for key, value in _SPEC_PAIR_RE.findall(s):
+            key, value = key.strip(), value.strip()
+            if not key or not value or key in _SPEC_SKIP_KEYS:
+                continue
+            out.setdefault(f"param_{key}", value)
+            num = _spec_number(value)
+            if num is not None:
+                out.setdefault(f"param_{key}_num", num)
+    return out
+
+
+def param_inventory() -> Dict:
+    """从**已入库的 metadata** 派生参数清单（键 → 值枚举 / 数值区间 / 覆盖条数）。
+
+    用途：给工具 schema 生成**数据驱动**的参数描述——新增型号、新增规格键都不用改代码，
+    也**不需要手写匹配词表**（枚举值就是抽取结果的去重）：
+        {键: {"values": {值: 覆盖数}, "num_min":…, "num_max":…, "coverage": n}}
+    文本值出现包含关系时（如「结构光」⊂「3D结构光」）交给调用方决定包含匹配，本函数不做归一化。
+    """
+    from vector_store import get_vector_store   # 函数内导入：vector_store 依赖本模块，避免循环导入
+
+    metas = get_vector_store()._collection.get(include=["metadatas"])["metadatas"]
+    inv: Dict = {}
+    for meta in metas:
+        for key, value in (meta or {}).items():
+            if not key.startswith("param_"):
+                continue
+            item = inv.setdefault(key, {"values": {}, "coverage": 0})
+            text = str(value)
+            item["values"][text] = item["values"].get(text, 0) + 1
+            item["coverage"] += 1
+            if key.endswith("_num"):
+                item["num_min"] = min(item.get("num_min", value), value)
+                item["num_max"] = max(item.get("num_max", value), value)
+    return inv
+
+
 def extract_model_info(doc) -> Dict:
     """从单型号 chunk 提取结构化型号信息（name/series/price/吸力/导航/避障/发布时间）。
 

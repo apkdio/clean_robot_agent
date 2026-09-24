@@ -1,7 +1,7 @@
 """检索链路测试：域路由 + 词表 + BM25 分词 + 过滤 + RRF 融合 + 阈值 + 精排 + 条目切分。
 
 覆盖（全部测真实代码，不再复制 mock 副本）：
-  - agent._route_domain（知识域 → file_name）
+  - agent._route_domain / _domain_filter（知识域 → file_name；两域接近时返回 $in）
   - sops.base.is_consulting / is_aftersales / is_brand
   - config.word_dict_config 词表完整性（DOMAIN_MAP / SYMPTOM_MAP / SYMPTOM_QUERY_MAP）
   - SparseRetriever._tokenize（中英混合分词）
@@ -41,6 +41,44 @@ def test_route_domain():
     _assert(_route_domain("扫地机器人对哪个牌子好") is None, "品牌对比→None")
     _assert(_route_domain("今天天气怎么样") is None, "领域外→None")
     _assert(_route_domain("你好") is None, "闲聊→None")
+
+
+def test_domain_scoring_and_filter():
+    """域路由新形态（2026-09-24 打分式）：打分排序 + 平局按优先级 + 可选双域 filter。
+
+    与 _route_domain 的分工：后者保留旧语义（只给 top1 主文件，供 _window_domain 与兼容
+    调用点用）；**实际检索走 _domain_filter**，两域咬得近时会返回 `$in` 两文件。
+    """
+    from tools.agent import _domain_filter, _domain_scores, _route_domain
+
+    # 打分 = 命中词的**长度之和**（词越长越具体）；同分按历史优先级
+    _assert_eq(_domain_scores("为什么买不染一尘")[0][0], "brand", "品牌优先于「买」误判的选购")
+    _assert_eq(_domain_scores("机器人不动了怎么办"), [("repair", 2.0)], "单域：不动→维修")
+    _assert_eq(_domain_scores("今天天气怎么样"), [], "无域命中")
+    # 售后与故障咬得近 → 两个域一起搜
+    value, via = _domain_filter("保修期内维修要多少钱")
+    files = set(value.get("$in") or []) if isinstance(value, dict) else {value}
+    _assert_eq(via, "top2", "两域接近 → 搜两个域")
+    _assert_eq(sorted(files), ["不染一尘售后服务.txt", "不染一尘常见维修问题.txt"], "$in 覆盖两个域")
+    # 单域 / 无域
+    _assert_eq(_domain_filter("扫地机器人保修多久")[0], "不染一尘售后服务.txt", "top1 单域")
+    _assert_eq(_domain_filter("今天天气怎么样"), (None, "no-domain"), "无域 → 全库兜底")
+    _assert_eq(_route_domain("保修期内维修要多少钱"), "不染一尘售后服务.txt", "_route_domain 仍是 top1 主文件")
+
+
+def test_domain_files_config():
+    """域 → 文件映射新形态：一个域可挂多文件，且文件必须真实存在（防改名后静默失效）。"""
+    from config.word_dict_config import DOMAIN_FILES, DOMAIN_MAP, domain_files_of
+    from config.word_dict_config import domain_filter, validate_knowledge_domains
+    from tools.config_tool import get_data_dir
+
+    _assert_eq(sorted(DOMAIN_MAP), sorted(DOMAIN_FILES), "DOMAIN_MAP 由 DOMAIN_FILES 派生")
+    _assert_eq(domain_files_of("aftersales"), ["不染一尘售后服务.txt"], "域键 → 文件列表")
+    _assert_eq(domain_files_of("不染一尘售后服务.txt"), ["不染一尘售后服务.txt"], "传文件名也认")
+    _assert_eq(domain_files_of("不存在"), ["不存在"], "未知名字原样返回（不改调用方行为）")
+    _assert_eq(domain_filter("aftersales"), "不染一尘售后服务.txt", "单文件退化为字符串")
+    problems = validate_knowledge_domains(get_data_dir())
+    _assert_eq(problems, [], f"域自检无问题（指向的文件都存在、无未认领文件）：{problems}")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -244,6 +282,8 @@ def test_rerank_scores_e2e():
 
 TESTS = [
     test_route_domain,
+    test_domain_scoring_and_filter,
+    test_domain_files_config,
     test_is_consulting,
     test_is_aftersales,
     test_is_brand,

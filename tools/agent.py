@@ -15,7 +15,8 @@ from config_tool import load_config
 from llm_tool import get_chat_model_name, stream_chat
 from log_tool import get_logger
 from prompts_tool import load_main_prompts
-from config.word_dict_config import EMOTION_STRONG, EMOTION_MILD, EXIT_WORDS, NO_ANSWER_REPLIES
+from config.word_dict_config import (DOMAIN_MAP, EMOTION_MILD, EMOTION_STRONG, EXIT_WORDS,
+                                     NO_ANSWER_REPLIES, domain_files_of)
 
 # 注意：本文件里的 context_store 刻意用 `tools.` 前缀导入，与 app.py / sops/ 保持一致。
 # 项目里同时存在 `tools.X` 与裸 `X` 两种写法，会加载出**两个模块实例**、各持一份内存缓存。
@@ -80,28 +81,85 @@ def _strip_emotion(query: str) -> str:
     return query
 
 
-def _route_domain(query: str):
-    """按 query 内容路由到对应知识域（返回 file_name）。识别不准返回 None（全库兜底）。
+# 域路由的历史优先级（打分平手时用它排序）。顺序本身承载了修正：
+# 品牌优先于选购——「为什么买」的"买"会被误判选购；售后优先于故障——"报修"含"修"会被误判维修。
+_DOMAIN_ORDER = ["brand", "aftersales", "consulting", "repair", "maintain"]
 
-    宁缺毋滥：只对高置信度的场景做域过滤，避免路由错域导致漏召回。
+_rag_retrieval_cfg_cache = None
+
+
+def _rag_retrieval_cfg() -> dict:
+    """rag.yaml 的 retrieval 段（读失败返回空 dict，走内置默认）。"""
+    global _rag_retrieval_cfg_cache
+    if _rag_retrieval_cfg_cache is None:
+        try:
+            _rag_retrieval_cfg_cache = (load_config("rag") or {}).get("retrieval", {}) or {}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[Domain] load rag config failed: %s", e)
+            _rag_retrieval_cfg_cache = {}
+    return _rag_retrieval_cfg_cache
+
+
+def _domain_margin() -> float:
+    """`retrieval.domain_margin`：低于它就把 top2 域一起搜；0 = 关闭（始终单域）。"""
+    return float(_rag_retrieval_cfg().get("domain_margin", 0) or 0)
+
+
+def _domain_scores(query: str) -> list:
+    """给每个知识域打分：命中词的**长度之和**（词越长越具体，权重越高）。
+
+    返回 [(域键, 分数)]，分数降序、同分按历史优先级排。
+    打分而不是"命中即返回"，是为了承认多个域可能同时相关
+    （「保修期内维修要多少钱」既是售后也是故障），再由调用方按 margin 决定搜一个还是两个域。
     """
-    from sops.base import (
-        AFTERSALES_WORDS, BRAND_WORDS, is_consulting,
-    )
-    from config.word_dict_config import DOMAIN_MAP,REPAIR_WORDS,MAINTAIN_WORDS
-    # 品牌咨询（"为什么买""优势"）→ 品牌介绍域，优先（"买"会被误判选购）
-    if any(w in query for w in BRAND_WORDS):
-        return DOMAIN_MAP["brand"]
-    # 售后咨询（保修/报修/更换）→ 售后域，优先于维修（"报修"含"修"会被误判维修）
-    if any(w in query for w in AFTERSALES_WORDS):
-        return DOMAIN_MAP["aftersales"]
-    if is_consulting(query):
-        return DOMAIN_MAP["consulting"]
-    if any(w in query for w in REPAIR_WORDS):
-        return DOMAIN_MAP["repair"]
-    if any(w in query for w in MAINTAIN_WORDS):
-        return DOMAIN_MAP["maintain"]
-    return None
+    from config.word_dict_config import BUY_WORDS, CONSULT_WORDS, MAINTAIN_WORDS, REPAIR_BASE_WORDS
+    from sops.base import AFTERSALES_WORDS, BRAND_WORDS
+
+    scores = {}
+    for name, words in (("brand", BRAND_WORDS), ("aftersales", AFTERSALES_WORDS),
+                        ("repair", REPAIR_BASE_WORDS), ("maintain", MAINTAIN_WORDS)):
+        hit = [w for w in words if w in query]
+        if hit:
+            scores[name] = float(sum(len(w) for w in hit))
+    # 选购咨询是**组合式**判定（选购动作词 + 咨询词都命中才算），语义沿用 is_consulting
+    buy = [w for w in BUY_WORDS if w in query]
+    consult = [w for w in CONSULT_WORDS if w in query]
+    if buy and consult:
+        scores["consulting"] = float(sum(len(w) for w in buy + consult))
+    return sorted(scores.items(), key=lambda kv: (-kv[1], _DOMAIN_ORDER.index(kv[0])))
+
+
+def _route_domain(query: str):
+    """按 query 内容路由到对应知识域的**主文件**（识别不准返回 None → 全库兜底）。
+
+    保留旧签名与返回形态（文件名）：_window_domain 与检索评测都依赖它。
+    """
+    ranked = _domain_scores(query)
+    return DOMAIN_MAP[ranked[0][0]] if ranked else None
+
+
+def _domain_filter(query: str):
+    """域路由 → 检索 filter 取值 + 路径说明。
+
+    top1 领先达到 `retrieval.domain_margin` → 只搜主域；
+    两域咬得很近（margin 低于阈值）→ 把两个域的文件一起搜（`$in`），
+    避免"先命中的域把另一个域排掉"。
+    """
+    ranked = _domain_scores(query)
+    if not ranked:
+        return None, "no-domain"
+    files = domain_files_of(ranked[0][0])
+    limit = _domain_margin()
+    if len(ranked) > 1 and limit > 0:
+        margin = ranked[0][1] - ranked[1][1]
+        if margin < limit:
+            for f in domain_files_of(ranked[1][0]):
+                if f not in files:
+                    files.append(f)
+            logger.info("[Domain] %s=%.1f vs %s=%.1f (margin=%.1f < %.1f) → 搜两个域",
+                        ranked[0][0], ranked[0][1], ranked[1][0], ranked[1][1], margin, limit)
+            return ({"$in": files} if len(files) > 1 else files[0]), "top2"
+    return (files[0] if len(files) == 1 else {"$in": files}), "top1"
 
 
 # SOP 退出确认状态：非 None 表示正在询问用户是否退出该 SOP
@@ -843,11 +901,12 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     else:
         effective_query, rewrite_via = query, "none"
 
-    domain = _route_domain(effective_query)
     # 域定向检索：filter 是**软约束**（hybrid_retriever 内部据此走两遍召回）。
     # 域内精排 top1 低于阈值时，它会撤掉 filter 再做一次全库召回并**合并**两池。
-    # 域路由不中（domain 为空）时没有 filter，只跑一遍，硬阈值照旧挡领域外。
-    chunks = hr.search(effective_query, filter={"file_name": domain} if domain else None)
+    # 两域咬得很近时 _domain_filter 会返回两个域（$in）——不再"先命中的域吃掉"。
+    # 域路由不中（返回空）时没有 filter，只跑一遍，硬阈值照旧挡领域外。
+    domain_value, domain_via = _domain_filter(effective_query)
+    chunks = hr.search(effective_query, filter={"file_name": domain_value} if domain_value else None)
 
     # 保底 ②：改写后 0 命中 → 用原 query 在全库再检一次（把误改的代价降到多一次检索）
     if not chunks and effective_query != query and _rewrite_cfg().get("retry_with_origin", True):

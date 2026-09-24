@@ -17,7 +17,8 @@ id 是版本锚点：评测集**只增不删**，因此 id 单调递增、一次
 评测集缺失时本模块自动跳过、不报错，不影响 `run_tests.py` 其它模块。
 
 指标：
-  - 域路由准确率      ：domain 类 query 的 _route_domain 命中 expect_file 比例
+  - 域路由准确率      ：domain 类 query 的 top1 域命中 expect_file 比例（口径同旧基线）
+  - 域覆盖命中率      ：实际搜索的文件（含双域 $in）包含 expect_file 的比例
   - hit@1 / @3 / @5  ：检索轨（domain + model）中正确 chunk 进入前 k 的比例
   - MRR               ：检索轨的平均倒数排名
   - 无召回率          ：out_of_domain 类中召回为 0 的比例（越高越好）
@@ -122,6 +123,15 @@ def _short_name(name):
     return (name or "").replace(_BRAND_PREFIX, "").strip()
 
 
+def _searched_files(domain_value):
+    """把 `_domain_filter` 的取值还原成被搜索的文件集合（字符串 / `$in` / None）。"""
+    if not domain_value:
+        return set()
+    if isinstance(domain_value, dict):
+        return set(domain_value.get("$in") or [])
+    return {domain_value}
+
+
 def _first_rank(docs, pred):
     """返回第一个满足 pred 的 doc 的 1-based 排名；未命中返回 None。"""
     for i, c in enumerate(docs, 1):
@@ -150,12 +160,14 @@ def _fmt(ratio):
 
 
 def _compute(entries, hr):
-    from tools.agent import _route_domain, _resolve_date_filter
+    from tools.agent import _domain_filter, _resolve_date_filter, _route_domain
     from tools.metadata_extractor import enumerate_models, resolve_budget_filter
 
     records = []
     ranks = []                 # 检索轨（domain + model）每条 rank
     route_correct = route_total = 0
+    route_covered = 0
+    via_count = defaultdict(int)
     struct_hits = struct_total = 0
     ood_zero = ood_total = 0
     strict_ood_fail = []       # 应零召回却召回了的严格领域外
@@ -166,17 +178,24 @@ def _compute(entries, hr):
 
         if t == "domain":
             route_total += 1
+            # 忠实于 agent 的**实际检索路径**：走 _domain_filter（top1 领先则单域；
+            # 两域咬得近则 $in 双域；无域则全库兜底），而不是旧的单文件 filter。
+            domain_value, via = _domain_filter(q)
             route = _route_domain(q)
-            route_ok = route == e["expect_file"]
+            route_ok = route == e["expect_file"]           # top1 命中（口径与旧基线一致）
+            covered = e["expect_file"] in _searched_files(domain_value)
             if route_ok:
                 route_correct += 1
-            # 忠实于 agent 实际行为：域路由命中则域过滤，识别不准则全库兜底
-            docs = hr.search(q, filter={"file_name": route} if route else None)
+            if covered:
+                route_covered += 1
+            via_count[via] += 1
+            docs = hr.search(q, filter={"file_name": domain_value} if domain_value else None)
             rank = _first_rank(docs, lambda c: e["expect_keyword"] in c.page_content)
             ranks.append(rank)
             rec["ok"] = rank is not None and rank <= 5
             rec["detail"] = (
-                f"路由{'OK' if route_ok else 'FAIL(' + str(route) + ')'}，"
+                f"路由{'OK' if route_ok else 'FAIL(' + str(route) + ')'}"
+                f"{'' if covered else '｜未覆盖期望文件'}({via})，"
                 f"期望关键词 rank={rank}，召回 {len(docs)} 条"
             )
 
@@ -222,6 +241,8 @@ def _compute(entries, hr):
 
     metrics = {
         "route_accuracy": (route_correct, route_total),
+        "route_recall": (route_covered, route_total),
+        "route_via": dict(via_count),
         "hit_at_k": _hit_at_k(ranks, (1, 3, 5)),
         "mrr": _mrr(ranks),
         "no_recall_rate": (ood_zero, ood_total),
@@ -243,10 +264,13 @@ def _print_metrics(metrics):
     print("检索质量评测汇总")
     print("=" * 72)
     rc, rt = metrics["route_accuracy"]
+    vc, _vt = metrics["route_recall"]
     hit = metrics["hit_at_k"]
     zr, zt = metrics["no_recall_rate"]
     sh, st = metrics["structured_hit_rate"]
-    print(f"  域路由准确率      : {rc}/{rt} = {_fmt(rc / rt) if rt else 'N/A'}")
+    print(f"  域路由准确率(top1): {rc}/{rt} = {_fmt(rc / rt) if rt else 'N/A'}")
+    print(f"  域覆盖命中率      : {vc}/{rt} = {_fmt(vc / rt) if rt else 'N/A'}"
+          f"（实际搜索文件含期望文件）  路径分布 {metrics['route_via']}")
     print(f"  hit@1 / @3 / @5   : {_fmt(hit[1])} / {_fmt(hit[3])} / {_fmt(hit[5])}")
     print(f"  MRR               : {metrics['mrr']:.4f}")
     print(f"  无召回率          : {zr}/{zt} = {_fmt(zr / zt) if zt else 'N/A'}")
@@ -318,6 +342,7 @@ def _config_meta():
     rag = load_config("rag")
     key = {"retrieval.score_threshold": rag["retrieval"]["score_threshold"],
            "retrieval.final_top_k": rag["retrieval"]["final_top_k"],
+           "retrieval.domain_margin": rag["retrieval"].get("domain_margin", 0),
            "rerank.enabled": rag["rerank"]["enabled"],
            "rerank.score_threshold": rag["rerank"]["score_threshold"],
            "rerank.candidate_top_k": rag["rerank"]["candidate_top_k"],
@@ -385,6 +410,8 @@ def _print_env_compare(env, base_env):
 def _baseline_payload(metrics, records):
     return {
         "route_accuracy": {"correct": metrics["route_accuracy"][0], "total": metrics["route_accuracy"][1]},
+        "route_recall": {"covered": metrics["route_recall"][0], "total": metrics["route_recall"][1]},
+        "route_via": metrics["route_via"],
         "hit_at_1": round(metrics["hit_at_k"][1], 4),
         "hit_at_3": round(metrics["hit_at_k"][3], 4),
         "hit_at_5": round(metrics["hit_at_k"][5], 4),
@@ -456,6 +483,10 @@ def _compare_baseline(metrics, records):
     print("\n[基线对比]（当前 - 基线，负值=回退）")
     if warn:
         print(warn)
+    ra, rb = cur["route_accuracy"], base.get("route_accuracy") or {}
+    print(f"  域路由top1: {ra['correct']}/{ra['total']}  vs  {rb.get('correct', '?')}/{rb.get('total', '?')}"
+          f"   覆盖率 {cur['route_recall']['covered']}/{cur['route_recall']['total']}"
+          f"  vs  {(base.get('route_recall') or {}).get('covered', '?')}/{(base.get('route_recall') or {}).get('total', '?')}")
     print(f"  hit@1   : {cur['hit_at_1']:.4f}  vs  {base['hit_at_1']:.4f}  ({cur['hit_at_1'] - base['hit_at_1']:+.4f})")
     print(f"  hit@3   : {cur['hit_at_3']:.4f}  vs  {base['hit_at_3']:.4f}  ({cur['hit_at_3'] - base['hit_at_3']:+.4f})")
     print(f"  hit@5   : {cur['hit_at_5']:.4f}  vs  {base['hit_at_5']:.4f}  ({cur['hit_at_5'] - base['hit_at_5']:+.4f})")
