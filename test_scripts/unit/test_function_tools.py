@@ -11,6 +11,13 @@
     format_service_points / geocode_city"""
 import sys
 from datetime import date
+import os
+import sys
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
+    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
+
 from _runner import *
 
 

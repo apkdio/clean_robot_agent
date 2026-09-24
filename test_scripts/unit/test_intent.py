@@ -7,6 +7,13 @@
 依赖：torch（本地分类头）+ Ollama bge-m3（embedding），加 ``--e2e`` 运行。"""
 import sys
 from collections import defaultdict
+import os
+import sys
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
+    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
+
 from _runner import *
 
 

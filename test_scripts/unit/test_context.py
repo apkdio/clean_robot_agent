@@ -12,6 +12,13 @@
   - generate_session_title（LLM 失败时的 fallback，monkeypatch 强制异常）"""
 import sys
 import uuid
+import os
+import sys
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
+    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
+
 from _runner import *
 import tools.context_store as ctx
 

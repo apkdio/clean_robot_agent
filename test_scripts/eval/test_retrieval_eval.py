@@ -25,9 +25,9 @@ id 是版本锚点：评测集**只增不删**，因此 id 单调递增、一次
   - 结构化直出命中率  ：budget + time 类中 enumerate_models 结果精确匹配期望型号集合的比例
 
 运行（需 Ollama + Chroma + 本地 reranker 模型）：
-  .venv\\Scripts\\python.exe test_retrieval_eval.py --e2e
-  .venv\\Scripts\\python.exe test_retrieval_eval.py --e2e --save-baseline   # 保存基线（旧版自动转 .prev.json）
-  .venv\\Scripts\\python.exe test_retrieval_eval.py --e2e --compare         # 对比基线（按 id 逐条）
+  .venv\\Scripts\\python.exe test_scripts/eval/test_retrieval_eval.py --e2e
+  .venv\\Scripts\\python.exe test_scripts/eval/test_retrieval_eval.py --e2e --save-baseline   # 保存基线（旧版自动转 .prev.json）
+  .venv\\Scripts\\python.exe test_scripts/eval/test_retrieval_eval.py --e2e --compare         # 对比基线（按 id 逐条）
 """
 import hashlib
 import json
@@ -38,9 +38,12 @@ import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
+    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
 from _runner import *
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.dirname(_SCRIPT_DIR))   # 上两级：test_scripts/eval/ → 项目根
 _GOLDEN_FILE = os.path.join(_ROOT, "data", "eval", "retrieval", "golden.jsonl")
 _BASELINE_FILE = os.path.join(_ROOT, "data", "eval", "retrieval", "baseline.json")
 _PREV_BASELINE_FILE = os.path.join(_ROOT, "data", "eval", "retrieval", "baseline.prev.json")

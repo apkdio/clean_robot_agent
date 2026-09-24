@@ -18,6 +18,13 @@
       注入/危险/纯符号等安全分支是确定性话术，做精确断言。"""
 import sys
 import uuid
+import os
+import sys
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
+    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
+
 from _runner import *
 from tools.agent import ask_stream
 from tools.context_store import append_message

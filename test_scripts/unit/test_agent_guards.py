@@ -9,6 +9,13 @@
   - 危险现象安全拦截（ask_stream 第二判断，立即停机话术，不调 LLM）
   - 注入正则负例（正常问题不误伤）"""
 import sys
+import os
+import sys
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
+    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
+
 from _runner import *
 from tools import agent as agent_mod
 from tools.agent import ask_stream

@@ -195,6 +195,25 @@ def _match_exit_intent(query: str) -> bool:
     return True
 
 
+_EXIT_RESIDUE_RE = re.compile(r"[\s，,。.、！!？?~～…·「」【】（）()\"'“”‘’:：;；-]+")
+
+
+def _has_residual_request(query: str) -> bool:
+    """退出/纠正句里是否还带着实际诉求。
+
+    「我说的是保养怎么做」「你理解错了，我要问滤网」→ True（摘掉退出词后还剩实义内容）；
+    「算了」「退出」「0」「不用了谢谢」→ False。
+
+    阈值取 4 个实义字符：礼貌尾音（「谢谢」2 字）不算诉求，否则会莫名其妙多答一句。
+    这是启发式，要在多轮评测集上核（边界类）。
+    """
+    rest = query.strip()
+    for w in EXIT_WORDS:
+        rest = rest.replace(w, "")
+    rest = _EXIT_RESIDUE_RE.sub("", rest)
+    return len(rest) >= 4 and not rest.isdigit()
+
+
 def _history_block(session_id: str) -> str:
     """拼最近对话历史，供 LLM 自主消解指代（如"它怎么样""那这个呢"）。
 
@@ -657,6 +676,45 @@ def _resolve_service_point_query(session_id, query, lng=None, lat=None):
     return None, True
 
 
+def _shadow_probe(query: str, session_id: str, chain_category: str, chain_detail: str = "") -> None:
+    """影子模式：让模型并行做一次决策，与链路**实际走的类目**对照，只落日志、不改行为。
+
+    `tools.orchestration: "off"`（默认）→ 一行都不跑；`"shadow"` → 在 fc_eligible 的类目里调用
+    `orchestrator.decide()`（**不执行任何工具**），并打印 `[Shadow]` 一行便于事后统计。
+
+    为什么必须走旁路线程：实测同一条 7b 决策调用要 5~52s（模型冷热差很大），同步跑等于给用户白加几十秒延迟。
+
+    硬要求：这个函数**不得影响用户看到的结果**。因此——
+      · 只在 `off` 以外的模式且命中采样时调用；
+      · 决策跑在 daemon 线程里，异常只记 warning；
+      · 调用点全部放在各分支“已决定要答什么”之后，不参与任何判断。
+    """
+    from function_tools.registry import orchestration_mode, shadow_sample
+    from tools.orchestrator import chain_fc_eligible, decide, shadow_line
+
+    if orchestration_mode() != "shadow" or not chain_fc_eligible(chain_category):
+        return
+    import random
+
+    if random.random() > shadow_sample():
+        return
+
+    def _work():
+        try:
+            from config.word_dict_config import DOMAIN_FILES
+
+            scores = _domain_scores(query)
+            domain_hint = scores[0][0] if scores and scores[0][0] in DOMAIN_FILES else None
+            decision = decide(query, history_block=_history_block(session_id), domain_hint=domain_hint)
+            logger.info(shadow_line(decision, query, chain_category, chain_detail))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[Shadow] probe failed: %s", e)
+
+    import threading
+
+    threading.Thread(target=_work, name="shadow-probe", daemon=True).start()
+
+
 def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     """流式问答入口 —— 经本地分类头做意图路由，支持多轮 SOP 引导。
 
@@ -705,6 +763,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
 
     # SOP 会话：有活跃 SOP 时继续该流程（不经过意图路由）
     from sops import has_active_sop, continue_sop, end_sop, start_sop, match_sop, get_active_sop_id
+    sop_exit_with_request = False  # 退出句里还带着诉求 → 本轮要继续往下走，重新理解这一句
     if has_active_sop(session_id):
         # 状态1：正在询问是否退出 → 匹配"是/不是"
         if session_id in _pending_exits:
@@ -737,7 +796,13 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             sop_name = _sop_name(sop_id)
             end_sop(session_id)
             yield f"好的，已退出「{sop_name}」环节～"
-            return
+            # 纯退出句（「算了」「退出」「0」）到此为止；**带着诉求的退出句**
+            # （「我说的是保养怎么做」）继续往下走、重新理解这一句——这是 v1.7.2 的原始意图，
+            # v2.2 加网点 SOP 时被 return 掉（那时是防退出句掉进网点的"待确认"分支），
+            # 现在用 sop_exit_with_request 精确跳过那一个分支，把重新理解的行为恢复回来。
+            sop_exit_with_request = _has_residual_request(query)
+            if not sop_exit_with_request:
+                return
 
         # 状态4：正常继续 SOP
         else:
@@ -749,7 +814,8 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
                 return
 
     # 网点查询的待确认回答（反问城市后答城市名 / 重名后选序号）
-    if session_id in _pending_service:
+    # 退出 SOP 且该句是普通请求时不走这里：它只处理"答城市/答序号"，不是那个待确认的回答。
+    if session_id in _pending_service and not sop_exit_with_request:
         state = _pending_service[session_id]
         reply = _resolve_service_pending(session_id, state, query)
         if reply:
@@ -803,6 +869,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     if intent in ("robot", "unknown"):
         model_reply = _resolve_model_query(session_id, query)
         if model_reply:
+            _shadow_probe(query, session_id, "model_query", "型号/对比兜底")
             yield model_reply
             return
 
@@ -810,6 +877,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     if intent in ("robot", "unknown"):
         series_reply = _resolve_series_query(query)
         if series_reply:
+            _shadow_probe(query, session_id, "model_query", "系列枚举")
             yield series_reply
             return
 
@@ -817,6 +885,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     # 不依赖 intent——"离我最近的维修点"可能被分类器误判 other，但网点词信号足够强
     service_reply, service_matched = _resolve_service_point_query(session_id, query, lng, lat)
     if service_matched:
+        _shadow_probe(query, session_id, "service_point", "网点查询")
         if service_reply is None:
             service_reply = "请问您所在的城市是？告诉我城市名，我帮您查最近的售后网点～"
         yield service_reply
@@ -864,6 +933,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         yield get_guess_hint() + "\n\n"
 
     hr = _get_retriever()
+    _shadow_probe(query, session_id, "kb_search", "RAG 检索")
     from metadata_extractor import resolve_budget_filter
     metadata_filter = resolve_budget_filter(query)
 

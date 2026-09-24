@@ -1,16 +1,19 @@
-"""聚合运行所有分模块测试（每个 test_*.py 也可独立运行，约定见 _runner.py）。
+"""聚合运行所有测试（`unit/` 功能测试 + `eval/` 评测轨；每个文件也可独立运行）。
 
 默认只跑纯规则用例（快、确定性）；加 --e2e 追加需要 Ollama / Chroma / torch 的
 集成用例（意图分类、多轮实战对话、检索质量评测、多轮上下文评测、意图分类评测）。
-模块清单见下方 import 与 TESTS 列表。解释器用 .venv\\Scripts\\python.exe。
+模块清单见下方 import 与 MODULES 列表。解释器用 .venv\\Scripts\\python.exe。
 """
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _sub in (_HERE, os.path.join(_HERE, "unit"), os.path.join(_HERE, "eval")):
+    sys.path.insert(0, _sub)
 
 from _runner import E2E  # noqa: E402
 
+# ── 功能测试（unit/）─────────────────────────────────────────────
 import test_intent           # noqa: E402
 import test_purchase_sop     # noqa: E402
 import test_repair_sop       # noqa: E402
@@ -20,6 +23,8 @@ import test_function_tools   # noqa: E402
 import test_retrieval        # noqa: E402
 import test_agent_guards     # noqa: E402
 import test_dialogue         # noqa: E402
+
+# ── 评测轨（eval/）───────────────────────────────────────────────
 import test_retrieval_eval   # noqa: E402
 import test_context_eval     # noqa: E402
 import test_intent_eval      # noqa: E402
@@ -35,6 +40,7 @@ MODULES = [
     ("检索", test_retrieval),
     ("Agent 前置防护", test_agent_guards),
     ("多轮实战对话", test_dialogue),
+    # ── 评测轨 ──
     ("检索质量评测", test_retrieval_eval),
     ("多轮上下文评测", test_context_eval),
     ("意图分类评测", test_intent_eval),

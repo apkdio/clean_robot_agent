@@ -9,6 +9,13 @@
   - [数据可用时] 选购 SOP 全流程（真实 enumerate_models）"""
 import sys
 import re
+import os
+import sys
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
+    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
+
 from _runner import *
 import sops  # 触发 purchase/repair SOP 注册
 import sops.base

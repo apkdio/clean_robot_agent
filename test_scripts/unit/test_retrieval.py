@@ -12,6 +12,13 @@
   - reranker.rerank 的降级契约（模型不可用 → None）
   - [--e2e] HybridRetriever 端到端：域过滤 / 阈值过滤 / 精排打分（需 Ollama + Chroma + reranker 模型）"""
 import sys
+import os
+import sys
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
+    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
+
 from _runner import *
 from langchain_core.documents import Document
 

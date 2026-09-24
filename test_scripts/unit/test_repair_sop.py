@@ -6,6 +6,13 @@
   - repair SOP 流程：触发词含症状 → 直接出排查（stub 掉 LLM/Chroma 的 action）
   - repair SOP 提取失败 → 反问故障现象（stub 掉 extract）"""
 import sys
+import os
+import sys
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
+    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
+
 from _runner import *
 import sops  # 触发注册
 import sops.base

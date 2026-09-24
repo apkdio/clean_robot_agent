@@ -54,3 +54,18 @@ def orchestration_mode() -> str:
     if raw is False:
         return "off"
     return str(raw).lower()
+
+
+def shadow_sample() -> float:
+    """`agent.yaml tools.shadow_sample`：影子模式采样率（0~1），默认 1.0。
+
+    影子模式每轮多打一次 7b 调用（延迟 +1~3s），全量跑有成本 → 观察期可用采样控制。
+    """
+    from tools.config_tool import load_config
+
+    try:
+        raw = ((load_config("agent") or {}).get("tools") or {}).get("shadow_sample", 1.0)
+        value = float(raw)
+    except Exception:  # noqa: BLE001
+        return 1.0
+    return max(0.0, min(1.0, value))

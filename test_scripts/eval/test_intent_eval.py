@@ -16,9 +16,9 @@
   - 高置信错判：判错 **且** `margin ≥ intent.high_conf_margin` —— 模型很确信地错，最危险
 
 运行（需 torch + Ollama bge-m3 + 已训练的分类头）：
-  .venv\\Scripts\\python.exe test_intent_eval.py --e2e
-  .venv\\Scripts\\python.exe test_intent_eval.py --e2e --save-baseline   # 存基线
-  .venv\\Scripts\\python.exe test_intent_eval.py --e2e --compare         # 对比基线
+  .venv\\Scripts\\python.exe test_scripts/eval/test_intent_eval.py --e2e
+  .venv\\Scripts\\python.exe test_scripts/eval/test_intent_eval.py --e2e --save-baseline   # 存基线
+  .venv\\Scripts\\python.exe test_scripts/eval/test_intent_eval.py --e2e --compare         # 对比基线
 """
 import hashlib
 import json
@@ -27,9 +27,12 @@ import shutil
 import sys
 import time
 from collections import defaultdict
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
+    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
 from _runner import *
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.dirname(_SCRIPT_DIR))   # 上两级：test_scripts/eval/ → 项目根
 _GOLDEN_FILE = os.path.join(_ROOT, "data", "eval", "intent", "golden.jsonl")
 _BASELINE_FILE = os.path.join(_ROOT, "data", "eval", "intent", "baseline.json")
 _PREV_BASELINE_FILE = os.path.join(_ROOT, "data", "eval", "intent", "baseline.prev.json")

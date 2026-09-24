@@ -12,6 +12,13 @@
   - _cn_to_int（中文数字）
   - enumerate_models_by_series（数据依赖，自动跳过）"""
 import sys
+import os
+import sys
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
+    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
+
 from _runner import *
 
 

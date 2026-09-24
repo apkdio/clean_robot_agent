@@ -61,27 +61,31 @@ clean_robot_agent/
 │   ├── date_tool.py             # 日期计算工具（绝对/相对日期 → 日期范围）
 │   ├── budget_tool.py           # 预算提取工具（规则 miss 时 function calling 兜底）
 │   ├── symptom_tool.py          # 故障现象分类工具（规则 miss 时 function calling 兜底）
-│   ├── model_tool.py            # 型号提取工具（7b 提取型号名，精准检索型号详情）
-│   └── service_point_tool.py    # 售后网点工具（geonamescache 离线解析城市 + Haversine 距离）
+│   ├── model_tool.py            # 型号工具：提取型号名 + find_models 按预算/参数/排序筛选型号
+│   ├── kb_tool.py               # 知识库检索工具（search_kb：自足检索式 + 可选知识域）
+│   ├── service_point_tool.py    # 售后网点工具（geonamescache 离线解析城市 + Haversine 距离）
+│   └── registry.py              # 工具注册中心（对外暴露的工具白名单 + 编排开关读取）
 ├── sops/                        # SOP 标准操作流程（多轮引导）
 │   ├── base.py                  # 会话状态（按 session_id 隔离）+ 执行器 + 知识域定义
 │   ├── purchase.py              # 选购推荐 SOP
 │   └── repair.py                # 故障排查 SOP
-├── test_scripts/                # 分模块测试（按模块命名，run_tests.py 聚合）
+├── test_scripts/                # 测试与评测（run_tests.py 聚合；unit/ 功能测试 · eval/ 评测轨）
 │   ├── run_tests.py             # 聚合入口：python run_tests.py [--e2e]
-│   ├── _runner.py               # 共享断言/汇总/e2e 门控
-│   ├── test_intent.py           # 意图分类（robot/other/casual/unknown，需 --e2e）
-│   ├── test_purchase_sop.py     # 选购 SOP（SOP 状态机 + 选购推荐流程）
-│   ├── test_repair_sop.py       # 故障排查 SOP（症状映射 + 流程）
-│   ├── test_context.py          # 上下文存储（append/get_recent/meta/UUID 校验）
-│   ├── test_metadata.py         # 结构化提取（价格/日期/型号/系列/过滤）
-│   ├── test_function_tools.py   # 日期/预算/型号/症状/网点五个工具
-│   ├── test_retrieval.py        # 检索链路（域路由/分词/过滤/RRF/阈值/精排/条目切分）
-│   ├── test_agent_guards.py     # Agent 前置防护（情绪/注入/危险/退出意图）
-│   ├── test_dialogue.py         # 多轮实战对话（正常 + 非人类，需 --e2e）
-│   ├── test_retrieval_eval.py   # 检索质量评测（hit@k/MRR，需 --e2e；评测集在 data/eval/retrieval）
-│   ├── test_context_eval.py     # 多轮上下文评测（出口行为断言，需 --e2e；评测集在 data/eval/context）
-│   └── test_intent_eval.py      # 意图分类评测（留出集，需 --e2e；口径见 data/datasets/README.md）
+│   ├── _runner.py               # 共享断言/汇总/e2e 门控/测试数据隔离
+│   ├── unit/                    # 功能测试（快、确定性，多数无需模型）
+│   │   ├── test_intent.py       # 意图分类（robot/other/casual/unknown，需 --e2e）
+│   │   ├── test_purchase_sop.py # 选购 SOP（SOP 状态机 + 选购推荐流程）
+│   │   ├── test_repair_sop.py   # 故障排查 SOP（症状映射 + 流程）
+│   │   ├── test_context.py      # 上下文存储（append/get_recent/meta/UUID 校验）
+│   │   ├── test_metadata.py     # 结构化提取（价格/日期/型号/系列/过滤）
+│   │   ├── test_function_tools.py  # 日期/预算/型号/症状/网点五个工具
+│   │   ├── test_retrieval.py    # 检索链路（域路由/分词/过滤/RRF/阈值/精排/条目切分）
+│   │   ├── test_agent_guards.py # Agent 前置防护（情绪/注入/危险/退出意图）
+│   │   └── test_dialogue.py     # 多轮实战对话（正常 + 非人类，需 --e2e）
+│   └── eval/                    # 评测轨（留出集 + 基线，需 --e2e）
+│       ├── test_retrieval_eval.py  # 检索质量评测（hit@k/MRR；评测集 data/eval/retrieval）
+│       ├── test_context_eval.py    # 多轮上下文评测（出口行为断言；评测集 data/eval/context）
+│       └── test_intent_eval.py     # 意图分类评测（留出集；口径见 data/datasets/README.md）
 ├── intent_classifier_training/  # 意图分类模型训练工具
 │   ├── build_intent_dataset.py  # 数据集构建（从知识库抽取 + 规则改写）
 │   └── train_intent_classifier.py # 分类头训练脚本
@@ -100,6 +104,7 @@ clean_robot_agent/
 |------|------|
 | `agent.py` | RAG 编排：意图路由 → 知识域路由 → 检索 → 结构化直出或 LLM 生成 |
 | `intent_router.py` | 意图分类：本地分类头（bge-m3 + Linear）判 robot/casual/other/unknown |
+| `orchestrator.py` | 工具编排：让模型在工具白名单里做一次决策（选工具 + 填参数），**只出决策、不执行工具**；影子模式用于与现有链路对照并打日志 |
 | `hybrid_retriever.py` | 召回编排：dense + sparse → RRF 融合 → 精排 →（域内 top1 不过阈值时）撤域过滤二次全库召回 + 两池限额合并 → 截断 |
 | `vector_store.py` | Chroma 稠密检索、入库、metadata 过滤、稀疏索引构建 |
 | `sparse_retriever.py` | BM25 关键词检索（含 pickle 持久化缓存） |
@@ -122,8 +127,10 @@ clean_robot_agent/
 | `date_tool.py` | 日期计算工具：`calc_date_range` 把"最近半年""2025年三月"等表达换算成日期范围 |
 | `budget_tool.py` | 预算提取工具：规则 miss 时用 3b function calling 提取预算上限（"一千来块"等） |
 | `symptom_tool.py` | 故障分类工具：规则 miss 时用 3b function calling 归类口语故障（"奇怪的声音"等） |
-| `model_tool.py` | 型号提取工具：7b function calling 提取型号名（含上下文指代），按型号名精准检索详情；支持属性维度精准查询 |
+| `model_tool.py` | 型号工具：7b function calling 提取型号名（含上下文指代）后精准检索详情；`find_models` 支持按预算（传原话，规则解析方向与浮动）/ 规格参数 / 排序 / 发布时间筛选型号，并带参数校验（按用户原话纠正方向、剔除无效条件） |
 | `service_point_tool.py` | 售后网点工具：geonamescache 离线解析城市经纬度（中文名/重名候选）+ Haversine 距离排序 + 网点格式化 |
+| `kb_tool.py` | 知识库检索工具：`search_kb` 接自足检索式 + 可选知识域（域为软约束，域内置信度低时检索器会撤过滤并合并全库结果） |
+| `registry.py` | 工具注册中心：收敛对外暴露的工具白名单（型号筛选 / 知识库检索 / 售后网点），未知工具名直接报错 |
 
 ## SOP 模块（sops/）
 
@@ -265,46 +272,48 @@ python intent_classifier_training/train_intent_classifier.py
 .venv/Scripts/python.exe test_scripts/run_tests.py --e2e
 
 # 单个模块也可独立运行
-.venv/Scripts/python.exe test_scripts/test_retrieval.py [--e2e]
+.venv/Scripts/python.exe test_scripts/unit/test_retrieval.py [--e2e]
 ```
 
 ### 测试模块
 
+测试分两层：`unit/` 是功能测试（快、确定性，多数不需要模型），`eval/` 是带留出集与基线的评测轨。
+
 | 模块 | 覆盖范围 | 需 `--e2e` |
 |------|---------|:---------:|
-| `test_intent.py` | 意图分类（robot/other/casual/unknown，常规 + 极端泛化） | ✓ |
-| `test_purchase_sop.py` | 选购 SOP（状态机 + 选购推荐流程） | |
-| `test_repair_sop.py` | 故障排查 SOP（症状映射 + 流程） | |
-| `test_context.py` | 上下文存储（消息读写 / meta / UUID 校验 / 会话列表） | |
-| `test_metadata.py` | 结构化提取（价格 / 日期 / 型号 / 系列 / 过滤） | |
-| `test_function_tools.py` | 日期 / 预算 / 型号 / 症状 / 网点五个工具 | |
-| `test_retrieval.py` | 检索链路（域路由 / 分词 / 过滤 / RRF / 阈值 / 精排 / 条目切分） | 部分 |
-| `test_agent_guards.py` | Agent 前置防护（情绪 / 注入 / 危险 / 退出意图） | |
-| `test_dialogue.py` | 多轮实战对话（正常对话 + 非人类对话） | ✓ |
-| `test_retrieval_eval.py` | 检索质量评测（hit@k / MRR / 无召回率 / 结构化直出命中率） | ✓ |
-| `test_context_eval.py` | 多轮上下文评测（出口行为断言 + 回归门禁） | ✓ |
-| `test_intent_eval.py` | 意图分类评测（逐条标签 / 各类 F1 / 混淆矩阵 / 高置信错判） | ✓ |
+| `unit/test_intent.py` | 意图分类（robot/other/casual/unknown，常规 + 极端泛化） | ✓ |
+| `unit/test_purchase_sop.py` | 选购 SOP（状态机 + 选购推荐流程） | |
+| `unit/test_repair_sop.py` | 故障排查 SOP（症状映射 + 流程） | |
+| `unit/test_context.py` | 上下文存储（消息读写 / meta / UUID 校验 / 会话列表） | |
+| `unit/test_metadata.py` | 结构化提取（价格 / 日期 / 型号 / 系列 / 过滤） | |
+| `unit/test_function_tools.py` | 日期 / 预算 / 型号 / 症状 / 网点五个工具 | |
+| `unit/test_retrieval.py` | 检索链路（域路由 / 分词 / 过滤 / RRF / 阈值 / 精排 / 条目切分） | 部分 |
+| `unit/test_agent_guards.py` | Agent 前置防护（情绪 / 注入 / 危险 / 退出意图） | |
+| `unit/test_dialogue.py` | 多轮实战对话（正常对话 + 非人类对话） | ✓ |
+| `eval/test_retrieval_eval.py` | 检索质量评测（hit@k / MRR / 无召回率 / 结构化直出命中率） | ✓ |
+| `eval/test_context_eval.py` | 多轮上下文评测（出口行为断言 + 回归门禁） | ✓ |
+| `eval/test_intent_eval.py` | 意图分类评测（逐条标签 / 各类 F1 / 混淆矩阵 / 高置信错判） | ✓ |
 
 集成用例用 `@e2e` 装饰器标注，未加 `--e2e` 时自动跳过；意图分类是统计模型，用准确率阈值（常规 ≥90%、极端 ≥75%）断言，误判只打印、不计失败。
 
 ### 检索质量评测
 
-`test_retrieval_eval.py` 基于 golden 评测集度量检索质量，用于改动前后的回归对比。
+`eval/test_retrieval_eval.py` 基于 golden 评测集度量检索质量，用于改动前后的回归对比。
 
 - **评测集**：`data/eval/retrieval/golden.jsonl`（**本地数据，已 gitignore**，不随仓库发布），覆盖域路由 / 型号精准 / 预算过滤 / 时间过滤 / 领域外五类；每条带 `id`（`R001`…，只增不删 → **id 区间即批次**）；
-- **指标**：域路由准确率、hit@1/@3/@5、MRR、无召回率、结构化直出命中率；
+- **指标**：域路由准确率（top1）、域覆盖命中率（含双域 `$in`）、hit@1/@3/@5、MRR、无召回率、结构化直出命中率；
 - **构建准则与扩充方法**：见 `data/eval/retrieval/README.md`；三条评测轨的总览见 `data/eval/README.md`；评测集缺失时该模块自动跳过，不影响其它测试。
 - **基线记录环境**：`baseline.json` 同时记下采集时的代码提交（含未提交改动清单）、知识库指纹、配置指纹与关键阈值；`--compare` 会先核对这几项，知识库 / 配置变了会明确提示「指标变化可能来自它们」。
 
 ```bash
 # 跑评测
-.venv/Scripts/python.exe test_scripts/test_retrieval_eval.py --e2e
+.venv/Scripts/python.exe test_scripts/eval/test_retrieval_eval.py --e2e
 # 与基线对比（data/eval/retrieval/baseline.json）
-.venv/Scripts/python.exe test_scripts/test_retrieval_eval.py --e2e --compare
+.venv/Scripts/python.exe test_scripts/eval/test_retrieval_eval.py --e2e --compare
 # 只跑某一批（id 区间）：加新条目时先做旧批回归
-.venv/Scripts/python.exe test_scripts/test_retrieval_eval.py --e2e --only R001-R070 --compare
+.venv/Scripts/python.exe test_scripts/eval/test_retrieval_eval.py --e2e --only R001-R070 --compare
 # 刷新基线
-.venv/Scripts/python.exe test_scripts/test_retrieval_eval.py --e2e --save-baseline
+.venv/Scripts/python.exe test_scripts/eval/test_retrieval_eval.py --e2e --save-baseline
 ```
 
 ### 意图分类评测
@@ -314,7 +323,7 @@ python intent_classifier_training/train_intent_classifier.py
 标注口径以 `data/datasets/README.md` 为准，本轨不另立标准。
 
 ```bash
-.venv/Scripts/python.exe test_scripts/test_intent_eval.py --e2e --compare
+.venv/Scripts/python.exe test_scripts/eval/test_intent_eval.py --e2e --compare
 ```
 
 留出集**与训练集零重叠**（harness 硬断言，避免拿训练样本自证）；评测集缺失或分类头未训练时该模块自动跳过。
@@ -323,7 +332,7 @@ python intent_classifier_training/train_intent_classifier.py
 
 | 配置 | 关键项 |
 |------|--------|
-| `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关）、`behavior.verbose_log`（文件日志是否降到 DEBUG） |
+| `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关）、`behavior.verbose_log`（文件日志是否降到 DEBUG）、`tools.orchestration`（工具编排：`"off"` 走现有分支 / `"shadow"` 只记对照日志不执行 / `"on"` 选路生效，取值需带引号）、`tools.shadow_sample`（影子采样率） |
 | `rag.yaml` | `chunk.chunk_size`、`retrieval.dense_top_k/sparse_top_k/final_top_k/score_threshold`、`retrieval.domain_margin`（域路由 margin 门控，0 关闭）、`rrf.*`、`rerank.*`（精排开关/模型/候选宽度/阈值）、`data_dir`（知识库源目录） |
 | `chroma.yaml` | `persist_dir`、`collection_name`、`embedding.model` |
 | `context.yaml` | `intent.low_conf_margin`（低置信降级阈值，0 关闭）、`intent.high_conf_margin`（安全告警窗口内的放行阀，0 关闭）、`context.topic_window`（回看多少条会话记录判定话题与安全告警）、`context.safety_carry_max`（同一告警最多承接几次，0 关闭）、`context.rewrite.*`（改写开关/模式/选轮相似度阈值） |

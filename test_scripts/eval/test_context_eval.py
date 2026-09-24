@@ -6,20 +6,32 @@
 harness 对每条 case：回放 `turns[:query_index]` 重建上下文与 SOP 状态，再发 `case.query`，
 按 `expect.behaviour`（出口行为）+ `must_contain_any` / `must_not_contain` 断言。
 
-通过语义（xfail 风格）：
+两类断言的分工（2026-09-24 明确）：
+  - **硬行为**（`safety_alert` / `safety_carry` / `refuse` / `no_answer_fallback` / `structured` / `answer`，
+    话术可判定）→ 进**回归门**。
+  - **软行为**（`chitchat` / `clarify` / `slot_filled` / `scope_guard`）→ **一律不判失败**：它们本来就没有
+    唯一正确答案（“闲聊该怎么回”），所以只输出「软行为复核清单」（本次回复 + 偏离点）交人工 / LLM 复核。
+
+通过语义（xfail 风格，仅对硬行为生效）：
   - `verdict=pass` 或 `type=regression_fixed` → **必过**；失败 = 回归（硬失败）。
   - 其余（未修 badcase）→ 通过记 xpass（已修复），失败记 xfail（仍存在）；都不算回归。
 
 运行（需 Ollama + Chroma）：
-  .venv\\Scripts\\python.exe test_context_eval.py --e2e
+  .venv\\Scripts\\python.exe test_scripts/eval/test_context_eval.py --e2e
 """
 import json
 import os
 import sys
+import time
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
+    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
 from _runner import *
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.dirname(_SCRIPT_DIR))   # 上两级：test_scripts/eval/ → 项目根
 _GOLDEN_FILE = os.path.join(_ROOT, "data", "eval", "context", "golden.jsonl")
+_REVIEW_DIR = os.path.join(_ROOT, "data", "eval", "output")   # 复核文件：<YYYYMMDD>/<HHMM>.md
 
 # 出口行为的文本标记（与 tools/agent.py 的话术一一对应）
 _DANGER_ALERT_MARK = "请立即停止使用"           # 危险拦截话术
@@ -143,8 +155,10 @@ def _run_row(row: dict) -> list:
         except Exception as exc:  # noqa: BLE001
             reply = f"<EXCEPTION {type(exc).__name__}: {exc}>"
             problems = [f"执行异常：{type(exc).__name__}: {exc}"]
-        must_pass = (case.get("verdict") == "pass") or (case.get("type") == "regression_fixed")
-        results.append({"case": case, "reply": reply, "problems": problems, "must_pass": must_pass})
+        hard = case["expect"].get("behaviour") in _HARD_BEHAVIOURS
+        must_pass = hard and ((case.get("verdict") == "pass") or (case.get("type") == "regression_fixed"))
+        results.append({"case": case, "reply": reply, "problems": problems,
+                        "hard": hard, "must_pass": must_pass})
         replayed = qi + 1
 
     delete_session(sid)
@@ -153,8 +167,8 @@ def _run_row(row: dict) -> list:
 
 
 def _print_detail(results):
-    print("── 逐条明细 ──")
-    for r in results:
+    print("── 硬行为（话术可判定 → 进回归门）──")
+    for r in (x for x in results if x["hard"]):
         c = r["case"]
         if not r["problems"]:
             mark = "PASS" if r["must_pass"] else "xpass"
@@ -164,6 +178,79 @@ def _print_detail(results):
         print(f"  [{mark:<7}] {c['id']} ({tag}/{c.get('type')}) {c['query']}")
         if r["problems"]:
             print(f"              ↳ {'；'.join(r['problems'])}")
+
+    print("── 软行为（无唯一正确答案 → 只出复核清单，不判失败）──")
+    for r in (x for x in results if not x["hard"]):
+        c = r["case"]
+        if r["problems"]:
+            mark = "⚠需复核"
+        elif c.get("verdict") == "fail":
+            mark = "✓已转通过"
+        else:
+            mark = "· 未偏离"
+        print(f"  [{mark:<7}] {c['id']} ({c.get('type')}) {c['query']}")
+        if r["problems"]:
+            print(f"              ↳ {'；'.join(r['problems'])}")
+
+
+def _review_path():
+    """复核文件路径：`data/eval/output/<YYYYMMDD>/<HHMM>.md`（同一分钟重复跑则加 -2 / -3）。"""
+    day_dir = os.path.join(_REVIEW_DIR, time.strftime("%Y%m%d"))
+    os.makedirs(day_dir, exist_ok=True)
+    stamp = time.strftime("%H%M")
+    path = os.path.join(day_dir, stamp + ".md")
+    n = 2
+    while os.path.exists(path):
+        path = os.path.join(day_dir, f"{stamp}-{n}.md")
+        n += 1
+    return path
+
+
+def _write_review(rows, results, hard_results, soft_results, must_pass, regressions):
+    """把**软行为复核清单**落盘——复核是人工 / LLM 的活，得能拿出去看。
+
+    软行为没有唯一正确答案，所以文件里只摆事实：期望要点 + 本次回复 + 偏离点 + 归档判据。
+    """
+    need_review = [r for r in soft_results if r["problems"]]
+    out = [
+        "# 上下文轨 · 软行为复核清单",
+        "",
+        f"- 生成时间：{time.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 评测集：`data/eval/context/golden.jsonl`"
+        f"（{len(rows)} 会话 / {len(results)} 条标注：硬 {len(hard_results)} · 软 {len(soft_results)}）",
+        f"- 硬行为（回归门）：必过 {len(must_pass) - len(regressions)}/{len(must_pass)} 通过"
+        + (f"，**{len(regressions)} 条回归需处理**" if regressions else ""),
+        f"- 软行为：**{len(need_review)}/{len(soft_results)} 条偏离期望要点**（不判失败，按下表复核）",
+        "",
+        "> 软行为本来就没有“必须包含某句话”的正确答案，所以只列事实，判断留给人 / LLM。",
+        "",
+    ]
+    for r in soft_results:
+        c, exp = r["case"], r["case"]["expect"]
+        if r["problems"]:
+            mark = "⚠ 需复核"
+        elif c.get("verdict") == "fail":
+            mark = "✓ 已转通过"
+        else:
+            mark = "· 未偏离"
+        want = []
+        if exp.get("must_contain_any"):
+            want.append("应含 " + " / ".join(exp["must_contain_any"]))
+        if exp.get("must_not_contain"):
+            want.append("不应含 " + " / ".join(exp["must_not_contain"]))
+        out += [f"## {mark} {c['id']}（{c.get('type')}）", "",
+                f"- 用户：{c['query']}",
+                f"- 期望要点：{'；'.join(want) if want else '（未写 must / must_not）'}",
+                f"- 本次回复：{r['reply']}"]
+        if r["problems"]:
+            out.append(f"- 偏离点：{'；'.join(r['problems'])}")
+        if c.get("note"):
+            out.append(f"- 归档判据：{c['note']}")
+        out.append("")
+    path = _review_path()
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out) + "\n")
+    return path
 
 
 def run():
@@ -184,27 +271,49 @@ def run():
 
     _print_detail(results)
 
-    must_pass = [r for r in results if r["must_pass"]]
-    regressions = [r for r in must_pass if r["problems"]]
-    xfail = [r for r in results if not r["must_pass"] and r["problems"]]
-    xpass = [r for r in results if not r["must_pass"] and not r["problems"]]
-
     print()
     print("=" * 72)
     print("多轮上下文评测汇总")
     print("=" * 72)
-    print(f"  会话 {len(rows)} 个 / 标注 {len(results)} 条")
-    print(f"  必过条目：{len(must_pass) - len(regressions)}/{len(must_pass)} 通过")
-    print(f"  未修 badcase：仍失败 {len(xfail)}，已转通过 {len(xpass)}")
+    hard_results = [r for r in results if r["hard"]]
+    soft_results = [r for r in results if not r["hard"]]
+    must_pass = [r for r in hard_results if r["must_pass"]]
+    regressions = [r for r in must_pass if r["problems"]]
+    xfail = [r for r in hard_results if not r["must_pass"] and r["problems"]]
+    xpass = [r for r in hard_results if not r["must_pass"] and not r["problems"]]
+    need_review = [r for r in soft_results if r["problems"]]
+
+    print(f"  会话 {len(rows)} 个 / 标注 {len(results)} 条（硬行为 {len(hard_results)} · 软行为 {len(soft_results)}）")
+    print(f"  【硬行为·回归门】必过 {len(must_pass) - len(regressions)}/{len(must_pass)} 通过"
+          f"；未修 badcase 仍失败 {len(xfail)}、已转通过 {len(xpass)}")
     if xpass:
-        print("  已转通过：" + "、".join(r["case"]["id"] for r in xpass))
+        print("                  已转通过：" + "、".join(r["case"]["id"] for r in xpass))
+    print(f"  【软行为·复核清单】{len(need_review)}/{len(soft_results)} 条偏离期望要点 → 需人工 / LLM 复核（不算失败）")
     print("=" * 72)
+
+    if need_review:
+        print("\n── 软行为复核清单（软行为无唯一正确答案，下面只摆事实，请人工判断）──")
+        for r in need_review:
+            c, exp = r["case"], r["case"]["expect"]
+            want = []
+            if exp.get("must_contain_any"):
+                want.append("应含 " + " / ".join(exp["must_contain_any"]))
+            if exp.get("must_not_contain"):
+                want.append("不应含 " + " / ".join(exp["must_not_contain"]))
+            want_text = "；".join(want) if want else "（未写 must / must_not）"
+            print(f"  {c['id']}  「{c['query']}」")
+            print(f"      期望要点：{want_text}")
+            print(f"      本次回复：{r['reply']}")
+            print(f"      偏离点：{'；'.join(r['problems'])}")
+
+    review_path = _write_review(rows, results, hard_results, soft_results, must_pass, regressions)
+    print(f"\n[复核清单] 已写入 {os.path.relpath(review_path, _ROOT)}")
 
     if regressions:
         for r in regressions:
             _assert(False, f"回归 {r['case']['id']}「{r['case']['query']}」→ " + "；".join(r["problems"]))
     else:
-        _assert(True, f"必过条目全部通过（{len(must_pass)}/{len(must_pass)}）")
+        _assert(True, f"硬行为必过条目全部通过（{len(must_pass)}/{len(must_pass)}）")
 
     return stats()
 
