@@ -1,0 +1,26 @@
+README.md
+  s_40681318f5a20b::t_62c6adc07c2731 122-123,132,341,350-357
+tools/agent.py
+  h_26b9a38f4942dd 772,967-969,982
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.45-trip",
+  "base_commit_sha": "ec5d54f43301894e03df613ba0f8d9d5042b35ac",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
