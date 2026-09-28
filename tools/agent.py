@@ -170,13 +170,24 @@ def _is_symbols_only(query: str) -> bool:
     return not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", query)
 
 
-def _match_yes_no(query: str) -> bool | None:
-    """确认门里判断用户答的是「是」（True）/「不是」（False）/ 都不是（None）。
-    """
-    q = query.strip().lower()
-    if any(w in q for w in ["不是", "不对", "不用", "否", "继续", "别退出", "不退出", "不要"]):
+def _match_yes_no(query: str, gate: str = "exit") -> bool | None:
+    """确认门判据：True=是、False=不是、None=认不出（调用方再问一次，有界两次）。"""
+    from config.word_dict_config import (
+        CONFIRM_YES_WORDS, CONFIRM_NO_WORDS, CONFIRM_SHORT_YES, CONFIRM_EXIT_ONLY,
+    )
+
+    text = re.sub(r"[\s，,。.！!？?~～、]+", "", query or "")
+    if not text:
+        return None
+    if any(w in text for w in CONFIRM_NO_WORDS):  # 否定优先：「不对」不被「对」吃掉
         return False
-    if any(w in q for w in ["是", "对", "嗯", "要", "好", "行", "退出", "确认"]):
+    if gate == "exit":
+        for w, val in CONFIRM_EXIT_ONLY.items():
+            if w in text:
+                return val
+    if any(w in text for w in CONFIRM_YES_WORDS):
+        return True
+    if text in CONFIRM_SHORT_YES:
         return True
     return None
 
@@ -272,6 +283,7 @@ _SAFETY_CARRY_PREFIX = "您前面提到的"
 
 # 退出确认门话术
 _EXIT_CONFIRM = "您当前正在「{sop}」环节。是要退出吗？回复「是」退出，「不是」继续～"
+_ENTER_CONFIRM = "匹配到您可能需要「{sop}」引导流程。要走引导吗？回复「是」开始，「不是」我直接回答这个问题～"
 
 _SAFETY_CARRY = (
     _SAFETY_CARRY_PREFIX + "{danger}属于安全隐患，不建议继续使用机器人：请保持断电停机，"
@@ -304,10 +316,6 @@ def _cosine(a, b) -> float:
 
 def _select_history_turns(session_id: str, query: str) -> list:
     """挑出与当前 query 最相关的历史用户话术（过了相似度下限的）。
-
-    只服务于改写，挑不出来就不改写（宁缺毋滥）。
-    实测 bge-m3 在同域短句上区分度很低（无关句也能到 0.53），所以取严：
-    只保留 top-N 且必须过 min_similarity。
     """
     cfg = _rewrite_cfg()
     top_k = int(cfg.get("max_history_turns", 2) or 2)
@@ -452,11 +460,7 @@ def _resolve_date_filter(query: str) -> dict | None:
 
 
 def _has_model_ref(query: str) -> bool:
-    """判断 query 是否指向某个具体型号（指代词或直接报型号名）。
-
-    用于弱触发（咨询词）时判断：只有 query 明确指向某个型号（「这款怎么样」
-    「云顶 X2 怎么样」）才走 model_tool，避免「扫地机器人怎么样」这类泛咨询
-    被误触发。
+    """判断 query 是否指向某个具体型号（指代词或直接报型号名）。服务于弱触发
     """
     from config.word_dict_config import MODEL_REF_WORDS
     if any(w in query for w in MODEL_REF_WORDS):
@@ -509,9 +513,6 @@ def _resolve_model_query(session_id: str, query: str):
 
 def _resolve_series_query(query: str):
     """系列查询：系列名 + 枚举意图词 → 枚举该系列型号结构化直出。
-
-    「净白 S 系列有什么产品/推荐」这类 query，系列已明确，直接枚举系列型号，
-    不走选购 SOP（避免「推荐」词误触发 SOP 问预算）。未命中系列返回 None。
     """
     from config.word_dict_config import SERIES_QUERY_WORDS
     if not any(w in query for w in SERIES_QUERY_WORDS):
@@ -644,7 +645,7 @@ def _log_behavior(tag: str, **detail) -> None:
 
 
 def _shadow_probe(query: str, session_id: str, chain_category: str, chain_detail: str = "") -> None:
-    """影子模式：让模型并行做一次决策，与链路**实际走的类目**对照，只落日志、不改行为。
+    """影子模式：让模型并行做一次决策，与链路实际走的类目对照，只落日志、不改行为。
     """
     from function_tools.registry import orchestration_mode, shadow_sample
     from tools.orchestrator import chain_fc_eligible, decide, shadow_line
@@ -719,7 +720,9 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         query = _strip_emotion(query)  # 剥离情绪词，避免 LLM 把抱怨当独立问题
 
     # SOP 会话：有活跃 SOP 时继续该流程（不经过意图路由）
-    from sops import has_active_sop, continue_sop, end_sop, start_sop, match_sop, get_active_sop_id
+    from sops import (has_active_sop, continue_sop, end_sop, start_sop, match_sop,
+                      get_active_sop_id, sop_needs_enter_confirm)
+    from tools.context_store import is_enter_declined, set_enter_declined
     continue_after_exit = False  # 退出句里还带着诉求 → 本轮要继续往下走，重新理解这一句
     if has_active_sop(session_id):
         sop_id = get_active_sop_id(session_id)
@@ -806,6 +809,32 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             return
         # 返回 None：状态已清除 → 回退正常流程
 
+    # 进入侧确认门：上一轮问了「要不要走一遍引导」，这一轮等「是 / 不是」
+    if pending and pending.get("kind") == "confirm_enter":
+        ans = _match_yes_no(query, gate="enter")
+        retry = int(pending.get("retry") or 0)
+        sop_id = pending.get("sop") or "purchase"
+        sop_name = _sop_name(sop_id)
+        if ans is True:
+            pending_store.clear(session_id)
+            # 用当初那句弱触发 query 预填首槽，用户已经说过的信息不重复问
+            reply, _done = start_sop(session_id, sop_id, pending.get("query") or query)
+            if reply:
+                _log_behavior("start_sop", sop=sop_id, via="confirm_enter")
+                yield reply
+            return
+        if ans is False or retry >= 1:
+            pending_store.clear(session_id)
+            set_enter_declined(session_id)
+            logger.info("[SOP] enter declined: %s", sop_id)
+            # 答「不是」= 不进引导、直接回答 → 用当初那句 query 继续（系统问的是是/不是，这一句本身没有信息量）
+            query = pending.get("query") or query
+        else:
+            pending_store.bump_retry(session_id)
+            _log_behavior("ask_clarify", kind="confirm_enter_retry")
+            yield _ENTER_CONFIRM.format(sop=sop_name)
+            return
+
     from intent_router import route_intent_with_margin, get_guess_hint
     intent, margin = route_intent_with_margin(query)
 
@@ -879,6 +908,16 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     # SOP 触发：robot/unknown 意图 + 命中场景 trigger（guards 已由 match_sop 评估）
     if intent in ("robot", "unknown"):
         sop_id = match_sop(query)
+        # 弱触发：先问一句要不要走引导；用户拒绝过且这次仍是弱信号 → 不打扰，走正常作答
+        if sop_id and sop_needs_enter_confirm(sop_id, query):
+            if is_enter_declined(session_id):
+                logger.info("[SOP] enter declined before, skip gate: %s", sop_id)
+                sop_id = None
+            else:
+                pending_store.set(session_id, "confirm_enter", sop=sop_id, query=query)
+                _log_behavior("ask_clarify", kind="confirm_enter")
+                yield _ENTER_CONFIRM.format(sop=_sop_name(sop_id))
+                return
         if sop_id:
             reply, _done = start_sop(session_id, sop_id, query)
             if reply:

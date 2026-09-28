@@ -6,11 +6,16 @@
 harness 对每条 case：回放 `turns[:query_index]` 重建上下文与 SOP 状态，再发 `case.query`，
 按 `expect.behaviour`（出口行为）+ `must_contain_any` / `must_not_contain` 断言。
 
+出口行为的判定方式（2026-09-28 起）：**不解析话术**，改读主链路的 `[Behavior]` tag
+（`tools/agent.py::_log_behavior`，每个出口一行）——harness 用一个 logging handler 在**进程内**收集，
+判「tag 映射出的行为」是否等于 `expect.behaviour`。话术会随文案漂移，tag 是契约。
+
 两类断言的分工（2026-09-24 明确）：
   - **硬行为**（`safety_alert` / `safety_carry` / `refuse` / `no_answer_fallback` / `structured` / `answer`，
-    话术可判定）→ 进**回归门**。
+    都有对应的 `[Behavior]` tag）→ 进**回归门**。
   - **软行为**（`chitchat` / `clarify` / `slot_filled` / `scope_guard`）→ **一律不判失败**：它们本来就没有
-    唯一正确答案（“闲聊该怎么回”），所以只输出「软行为复核清单」（本次回复 + 偏离点）交人工 / LLM 复核。
+    唯一正确答案（“闲聊该怎么回”），所以只输出「软行为复核清单」（本次回复 + 偏离点）交人工 / LLM 复核；
+    `[Behavior]` tag 与期望行为对不上时也列进清单（同一份复核，依旧不判失败）。
 
 通过语义（xfail 风格，仅对硬行为生效）：
   - `verdict=pass` 或 `type=regression_fixed` → **必过**；失败 = 回归（硬失败）。
@@ -20,6 +25,7 @@ harness 对每条 case：回放 `turns[:query_index]` 重建上下文与 SOP 状
   .venv\\Scripts\\python.exe test_scripts/eval/test_context_eval.py --e2e
 """
 import json
+import logging
 import os
 import sys
 import time
@@ -33,21 +39,57 @@ _ROOT = os.path.dirname(os.path.dirname(_SCRIPT_DIR))   # 上两级：test_scrip
 _GOLDEN_FILE = os.path.join(_ROOT, "data", "eval", "context", "golden.jsonl")
 _REVIEW_DIR = os.path.join(_ROOT, "data", "eval", "output")   # 复核文件：<YYYYMMDD>/<HHMM>.md
 
-# 出口行为的文本标记（与 tools/agent.py 的话术一一对应）
-_DANGER_ALERT_MARK = "请立即停止使用"           # 危险拦截话术
-_SAFETY_CARRY_MARK = "安全隐患"                 # 安全承接话术
-_CARRY_PREFIX = "您前面提到的"
-_REFUSE_MARK = "专属助手"                       # 领域外拒答
-_FALLBACK_MARKS = ("没查到", "没找到", "暂时还没")  # 兜底话术
-_STRUCTURED_MARKS = ("型号信息如下", "在您预算内", "有以下型号",
-                     "符合您预算和时间要求", "该时间段内发布")
-_SCOPE_GUARD_MARKS = ("只能回答", "产品相关", "不涉及", "不便提供", "无法提供")
+# 唯一还靠文本的地方：回放「孤儿危险告警轮」时用它认出那条 assistant 回复（见 _replay_prefix）
+_DANGER_ALERT_MARK = "请立即停止使用"
 
-# 文本可可靠区分的硬行为 → 断言「判定行为 == 期望行为」
+# 行为观测点：主链路每个出口记一行 `[Behavior] <tag> [k=v ...]`（tools/agent.py::_log_behavior）
+_BEHAVIOR_PREFIX = "[Behavior] "
+
+# `[Behavior]` tag → 本评测集的出口行为闭集（expect.behaviour 的取值）。
+# 软行为侧没有专属 tag 的（slot_filled / scope_guard）只从期望侧出现，不会被映射到。
+_TAG_TO_BEHAVIOUR = {
+    "stop_use_safety": "safety_alert",
+    "carry_safety": "safety_carry",
+    "refuse_offtopic": "refuse",
+    "no_answer_fallback": "no_answer_fallback",
+    "structured_answer": "structured",
+    "retrieve_answer": "answer",
+    "chitchat": "chitchat",
+    "ask_clarify": "clarify",
+    # 下面三个不折算成别的行为：它们既不是「检索作答」也不是「闲聊」，
+    # 出现即说明这一轮走了流程，不该被任何期望值悄悄满足。
+    "start_sop": "start_sop",
+    "sop_step": "sop_step",
+    "exit_sop": "exit_sop",
+    "block_inject": "block_inject",
+}
+
+# 有 tag 可判定的硬行为 → 断言「映射出的行为 == 期望行为」
 _HARD_BEHAVIOURS = {"safety_alert", "safety_carry", "refuse",
                     "no_answer_fallback", "structured", "answer"}
-# 文本无法可靠区分的软行为 → 只靠 must_contain_any / must_not_contain 断言
+# 文本无法可靠区分的软行为 → 不做行为判定，只由 must / must_not + 下面的 tag 提示进复核
 _SOFT_BEHAVIOURS = {"chitchat", "clarify", "slot_filled", "scope_guard"}
+
+# 期望行为 → 可接受的 tag（软行为的「行为对得上吗」提示用；硬行为判定走 _TAG_TO_BEHAVIOUR）。
+# 两条无专属 tag 的按 notes/BEHAVIOR_TAGS_0928.md §五 折算：
+# 越界应由拒答分支接住（scope_guard）；槽位提取的证据是流程内推进或预算直出（slot_filled）。
+_ACCEPTED_TAGS = {
+    "safety_alert": {"stop_use_safety"},
+    "safety_carry": {"carry_safety"},
+    "refuse": {"refuse_offtopic"},
+    "no_answer_fallback": {"no_answer_fallback"},
+    "structured": {"structured_answer"},
+    "answer": {"retrieve_answer"},
+    "chitchat": {"chitchat"},
+    "clarify": {"ask_clarify"},
+    "scope_guard": {"refuse_offtopic"},
+    "slot_filled": {"sop_step", "structured_answer"},
+    # 流程类：没有对应的旧标签（行为轨用例会直接用这些期望值），一对一同名
+    "start_sop": {"start_sop"},
+    "sop_step": {"sop_step"},
+    "exit_sop": {"exit_sop"},
+    "block_inject": {"block_inject"},
+}
 
 # 缺触发轮时的危险占位消息（含危险词，供 agent._window_danger_word 取词）
 _DANGER_PLACEHOLDER = "（漏电告警轮：原始用户消息未落盘）"
@@ -69,25 +111,29 @@ def _load_golden():
     return rows
 
 
-def _detect_behaviour(reply: str) -> str:
-    """把回复归入出口行为闭集（标记法，按确定性从高到低判定）。"""
-    if _DANGER_ALERT_MARK in reply:
-        return "safety_alert"
-    if _SAFETY_CARRY_MARK in reply or reply.startswith(_CARRY_PREFIX):
-        return "safety_carry"
-    if _REFUSE_MARK in reply:
-        return "refuse"
-    if any(m in reply for m in _STRUCTURED_MARKS):
-        return "structured"
-    if any(m in reply for m in _FALLBACK_MARKS):
-        return "no_answer_fallback"
-    if any(m in reply for m in _SCOPE_GUARD_MARKS):
-        return "scope_guard"
-    return "answer"
+class _BehaviourCapture(logging.Handler):
+    """收集本轮主链路发出的 `[Behavior]` 行（行为观测点），供断言直接读 tag。"""
+
+    def __init__(self):
+        super().__init__(level=logging.INFO)
+        self.tags = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = record.getMessage()
+        except Exception:  # noqa: BLE001 - 观测点解析失败不该打断评测
+            return
+        if msg.startswith(_BEHAVIOR_PREFIX):
+            self.tags.append(msg[len(_BEHAVIOR_PREFIX):].split(" ", 1)[0])
 
 
-def _check_case(reply: str, expect: dict) -> list:
-    """返回问题清单（空 = 通过）。"""
+def _tag_text(tags: list) -> str:
+    """给人看的 tag 摘要；一轮没有 tag 是要报出来的事实，不是空白。"""
+    return "tag=" + "/".join(tags) if tags else "tag=未捕获"
+
+
+def _check_case(reply: str, expect: dict, tags: list) -> list:
+    """返回问题清单（空 = 通过）。硬行为读 tag，软行为只由 must / must_not 承担。"""
     problems = []
     for s in expect.get("must_not_contain") or []:
         if s in reply:
@@ -97,17 +143,44 @@ def _check_case(reply: str, expect: dict) -> list:
         problems.append("应至少包含 " + " / ".join(mca) + " 之一")
     beh = expect.get("behaviour")
     if beh in _HARD_BEHAVIOURS:
-        got = _detect_behaviour(reply)
-        if got != beh:
-            problems.append(f"出口行为应为 {beh}，实际判定为 {got}")
-    # 软行为（chitchat / slot_filled / scope_guard / clarify）不做行为文本判定，
-    # 由 must / must_not 承担——见 data/eval/context/README.md「没有唯一正确答案」一节。
+        if not tags:
+            problems.append(f"本轮未捕获 [Behavior] 行（期望出口行为 {beh}）")
+        else:
+            unknown = [t for t in tags if t not in _TAG_TO_BEHAVIOUR]
+            got = {_TAG_TO_BEHAVIOUR[t] for t in tags if t in _TAG_TO_BEHAVIOUR}
+            if unknown:
+                problems.append("未登记的 [Behavior] tag：" + " / ".join(unknown))
+            elif beh not in got:
+                problems.append(f"出口行为应为 {beh}，实际 {_tag_text(tags)}"
+                                f"（→ {' / '.join(sorted(got))}）")
+        # 任一 tag 命中即算对：`exit_sop via=exit_word_with_request` 之后本轮还会继续
+        # 处理这一句（拿它当新问题重新理解），两种期望都算这一轮做对了。
+    elif beh and tags:
+        # 软行为（chitchat / clarify / slot_filled / scope_guard）不判对错，但「行为对不上」
+        # 是有价值的复核信号——例如期望 slot_filled 却停在 ask_clarify：槽位并没提取，
+        # 只是被进入确认门挡在了前面。只列进复核清单，不参与失败判定。
+        accepted = _ACCEPTED_TAGS.get(beh) or set()
+        if accepted and not (set(tags) & accepted):
+            problems.append(f"期望行为 {beh}，实际 {_tag_text(tags)}（软行为，仅供复核参考）")
     return problems
 
 
-def _ask(sid: str, query: str) -> str:
+def _ask(sid: str, query: str):
+    """发一轮，返回 (回复, 本轮 [Behavior] tag 列表)。
+
+    handler 挂在 `tools.agent.logger` 上（`get_logger` 走 `logging.getLogger(name)`，全局同名），
+    因此与主链路是同一个 logger 实例，不受模块双重导入影响。
+    """
+    from tools import agent as agent_module
     from tools.agent import ask_stream
-    return "".join(ask_stream(query, sid)).strip()
+
+    capture = _BehaviourCapture()
+    agent_module.logger.addHandler(capture)
+    try:
+        reply = "".join(ask_stream(query, sid)).strip()
+    finally:
+        agent_module.logger.removeHandler(capture)
+    return reply, list(capture.tags)
 
 
 def _replay_prefix(sid: str, turns: list, lo: int, hi: int):
@@ -124,7 +197,8 @@ def _replay_prefix(sid: str, turns: list, lo: int, hi: int):
     for idx in range(lo, hi):
         t = turns[idx]
         if t["role"] == "user":
-            append_message(sid, "assistant", _ask(sid, t["content"]))
+            reply, _tags = _ask(sid, t["content"])
+            append_message(sid, "assistant", reply)
             continue
         prev_is_user = idx > 0 and turns[idx - 1]["role"] == "user"
         if not prev_is_user and t["content"].startswith(_DANGER_ALERT_MARK):
@@ -134,13 +208,14 @@ def _replay_prefix(sid: str, turns: list, lo: int, hi: int):
 
 def _run_row(row: dict) -> list:
     import sops.base
-    from tools.agent import _pending_exits, _pending_service
     from tools.context_store import append_message, delete_session
+    from tools.pending_store import clear as clear_pending
 
     sid = "ctxeval-" + row["session_id"]
     sops.base._sessions = {}
-    _pending_exits.clear()
-    _pending_service.clear()
+    # 待确认状态（退出确认门 / 网点问城市等）2026-09-28 起统一在 pending_store：
+    # Redis 键 + 内存降级都要清，否则同一 sid 上一行的残留会污染下一行。
+    clear_pending(sid)
 
     turns = row["turns"]
     results = []
@@ -149,33 +224,36 @@ def _run_row(row: dict) -> list:
         qi = case["query_index"]
         try:
             _replay_prefix(sid, turns, replayed, qi)
-            reply = _ask(sid, case["query"])
+            reply, tags = _ask(sid, case["query"])
             append_message(sid, "assistant", reply)
-            problems = _check_case(reply, case["expect"])
+            problems = _check_case(reply, case["expect"], tags)
         except Exception as exc:  # noqa: BLE001
             reply = f"<EXCEPTION {type(exc).__name__}: {exc}>"
+            tags = []
             problems = [f"执行异常：{type(exc).__name__}: {exc}"]
         hard = case["expect"].get("behaviour") in _HARD_BEHAVIOURS
         must_pass = hard and ((case.get("verdict") == "pass") or (case.get("type") == "regression_fixed"))
         results.append({"case": case, "reply": reply, "problems": problems,
-                        "hard": hard, "must_pass": must_pass})
+                        "hard": hard, "must_pass": must_pass, "tags": tags})
         replayed = qi + 1
 
     delete_session(sid)
+    clear_pending(sid)
     sops.base._sessions = {}
     return results
 
 
 def _print_detail(results):
-    print("── 硬行为（话术可判定 → 进回归门）──")
+    print("── 硬行为（有 [Behavior] tag 可判定 → 进回归门）──")
     for r in (x for x in results if x["hard"]):
         c = r["case"]
         if not r["problems"]:
             mark = "PASS" if r["must_pass"] else "xpass"
         else:
             mark = "REGRESS" if r["must_pass"] else "xfail"
-        tag = "必过" if r["must_pass"] else "badcase"
-        print(f"  [{mark:<7}] {c['id']} ({tag}/{c.get('type')}) {c['query']}")
+        kind = "必过" if r["must_pass"] else "badcase"
+        print(f"  [{mark:<7}] {c['id']} ({kind}/{c.get('type')}) {c['query']}"
+              f"   [{_tag_text(r['tags'])}]")
         if r["problems"]:
             print(f"              ↳ {'；'.join(r['problems'])}")
 
@@ -188,7 +266,8 @@ def _print_detail(results):
             mark = "✓已转通过"
         else:
             mark = "· 未偏离"
-        print(f"  [{mark:<7}] {c['id']} ({c.get('type')}) {c['query']}")
+        print(f"  [{mark:<7}] {c['id']} ({c.get('type')}) {c['query']}"
+              f"   [{_tag_text(r['tags'])}]")
         if r["problems"]:
             print(f"              ↳ {'；'.join(r['problems'])}")
 
@@ -220,7 +299,7 @@ def _write_review(rows, results, hard_results, soft_results, must_pass, regressi
         f"（{len(rows)} 会话 / {len(results)} 条标注：硬 {len(hard_results)} · 软 {len(soft_results)}）",
         f"- 硬行为（回归门）：必过 {len(must_pass) - len(regressions)}/{len(must_pass)} 通过"
         + (f"，**{len(regressions)} 条回归需处理**" if regressions else ""),
-        f"- 软行为：**{len(need_review)}/{len(soft_results)} 条偏离期望要点**（不判失败，按下表复核）",
+        f"- 软行为：**{len(need_review)}/{len(soft_results)} 条偏离期望要点或行为对不上**（不判失败，按下表复核）",
         "",
         "> 软行为本来就没有“必须包含某句话”的正确答案，所以只列事实，判断留给人 / LLM。",
         "",
@@ -241,6 +320,7 @@ def _write_review(rows, results, hard_results, soft_results, must_pass, regressi
         out += [f"## {mark} {c['id']}（{c.get('type')}）", "",
                 f"- 用户：{c['query']}",
                 f"- 期望要点：{'；'.join(want) if want else '（未写 must / must_not）'}",
+                f"- 行为 tag：{_tag_text(r['tags'])}（期望行为 {c['expect'].get('behaviour')}，软行为不判定）",
                 f"- 本次回复：{r['reply']}"]
         if r["problems"]:
             out.append(f"- 偏离点：{'；'.join(r['problems'])}")
@@ -265,9 +345,16 @@ def run():
     rows = _load_golden()
     _assert(len(rows) > 0, f"评测集加载成功（{len(rows)} 个会话）")
 
+    # 影子探针在这条轨上是纯开销：多跑一次 FC（实测每轮 +75~125s），且它只落日志、不改被测行为。
+    # 跑用例期间关掉，算力让给被测主链路；跑完即恢复（run_tests 同进程还会跑后面的模块）。
+    restore_shadow = disable_shadow()
+    print("  [隔离] 影子探针已关闭：算力让给被测主链路（见 _runner.disable_shadow）")
     results = []
-    for row in rows:
-        results.extend(_run_row(row))
+    try:
+        for row in rows:
+            results.extend(_run_row(row))
+    finally:
+        restore_shadow()
 
     _print_detail(results)
 
@@ -288,7 +375,7 @@ def run():
           f"；未修 badcase 仍失败 {len(xfail)}、已转通过 {len(xpass)}")
     if xpass:
         print("                  已转通过：" + "、".join(r["case"]["id"] for r in xpass))
-    print(f"  【软行为·复核清单】{len(need_review)}/{len(soft_results)} 条偏离期望要点 → 需人工 / LLM 复核（不算失败）")
+    print(f"  【软行为·复核清单】{len(need_review)}/{len(soft_results)} 条偏离期望要点或行为对不上 → 需人工 / LLM 复核（不算失败）")
     print("=" * 72)
 
     if need_review:

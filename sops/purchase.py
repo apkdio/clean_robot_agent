@@ -3,7 +3,7 @@
 import re
 
 from sops.base import register, is_consulting, is_aftersales, is_brand
-from config.word_dict_config import PURCHASE_TRIGGER
+from config.word_dict_config import PURCHASE_TRIGGER, PURCHASE_WEAK_TRIGGER
 from tools.metadata_extractor import (
     extract_price_constraint,
     enumerate_models,
@@ -53,6 +53,8 @@ def _search(slots: dict):
 PURCHASE_SOP = {
     "id": "purchase",
     "trigger": PURCHASE_TRIGGER,
+    # 只命中这些弱信号时，先进「进入确认门」问一句
+    "weak_trigger": PURCHASE_WEAK_TRIGGER,
     "guards": [
         {"check": is_consulting},
         {"check": is_aftersales},

@@ -175,8 +175,22 @@ def stats():
     return _passed, _total, _skipped
 
 
+def disable_shadow():
+    """评测期间关掉主链路的影子探针（`tools/agent.py::_shadow_probe`）。
+
+    影子只落日志、不参与被测行为，却要额外跑一次 LLM 决策（实测每轮 +75~125s），
+    白白占住主链路要用的算力。返回 restore 回调，请在 `finally` 里复现——“run_tests.py
+    在同一个进程里顺序跑多个模块，漏复现会污染后面的模块。
+    """
+    from tools import agent as agent_mod
+
+    original = agent_mod._shadow_probe
+    agent_mod._shadow_probe = lambda *args, **kwargs: None
+    return lambda: setattr(agent_mod, "_shadow_probe", original)
+
+
 __all__ = [
-    "E2E", "reset", "run_tests", "summary", "stats", "e2e", "_skip",
+    "E2E", "reset", "run_tests", "summary", "stats", "e2e", "_skip", "disable_shadow",
     "_assert", "_assert_eq", "_assert_true", "_assert_false",
     "_assert_in", "_assert_not_in", "_assert_raises",
 ]

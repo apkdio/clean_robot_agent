@@ -158,6 +158,18 @@ def match_sop(query: str):
     return None
 
 
+def sop_needs_enter_confirm(sop_id: str, query: str) -> bool:
+    """判断是否要走「进入确认门」：只命中弱触发词、没有明确诉求时为 True。"""
+    sop = SOPS.get(sop_id) or {}
+    weak = sop.get("weak_trigger") or []
+    if not weak:
+        return False
+    strong = [w for w in sop.get("trigger", []) if w not in weak]
+    if any(w in query for w in strong):
+        return False
+    return any(w in query for w in weak)
+
+
 def _run(session_id: str, user_input: str):
     """执行/推进指定会话的 SOP。返回 (reply_text, done)。"""
     session = _load_session(session_id)

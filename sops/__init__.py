@@ -12,6 +12,7 @@ from sops.base import (  # noqa: F401
     has_active_sop,
     get_active_sop_id,
     match_sop,
+    sop_needs_enter_confirm,
     handle_followup,
 )
 

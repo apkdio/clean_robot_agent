@@ -11,7 +11,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 for _sub in (_HERE, os.path.join(_HERE, "unit"), os.path.join(_HERE, "eval")):
     sys.path.insert(0, _sub)
 
-from _runner import E2E  # noqa: E402
+from _runner import E2E, disable_shadow  # noqa: E402
 
 # ── 功能测试（unit/）─────────────────────────────────────────────
 import test_intent           # noqa: E402
@@ -22,6 +22,7 @@ import test_metadata         # noqa: E402
 import test_function_tools   # noqa: E402
 import test_retrieval        # noqa: E402
 import test_agent_guards     # noqa: E402
+import test_behavior_tags    # noqa: E402
 import test_dialogue         # noqa: E402
 
 # ── 评测轨（eval/）───────────────────────────────────────────────
@@ -39,6 +40,7 @@ MODULES = [
     ("Function Tools", test_function_tools),
     ("检索", test_retrieval),
     ("Agent 前置防护", test_agent_guards),
+    ("行为观测点 tag", test_behavior_tags),
     ("多轮实战对话", test_dialogue),
     # ── 评测轨 ──
     ("检索质量评测", test_retrieval_eval),
@@ -48,6 +50,9 @@ MODULES = [
 
 
 def main():
+    # 评测隔离：影子探针只落日志、不参与被测行为，却要额外跑一次 FC（实测每轮 +75~125s）。
+    # 整个测试进程关掉，算力让给被测主链路；进程结束即失效，不影响正常运行时的影子观测。
+    disable_shadow()
     grand_p = grand_t = grand_s = 0
     for name, mod in MODULES:
         p, t, s = mod.run()

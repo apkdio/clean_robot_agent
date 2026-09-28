@@ -62,6 +62,11 @@ def test_extract_price_constraint():
     _assert_eq(f("一千以内"), (None, 1000), "中文上限 一千以内")
     _assert_eq(f("两千左右"), (1500, 2500), "中文浮动 两千左右")
     _assert_eq(f("三千以上"), (3000, None), "中文下限 三千以上")
+    # 「预算 N」没有方向词 → 视为上限
+    _assert_eq(f("预算 3000"), (None, 3000), "预算 3000 → 上限")
+    _assert_eq(f("预算3000"), (None, 3000), "预算3000 → 上限")
+    _assert_eq(f("预算大概是3000"), (None, 3000), "预算大概是3000 → 上限")
+    _assert_eq(f("预算 3000 的扫地机器人"), (None, 3000), "带后置名词也能提取")
     # 无效
     _assert(f("不知道") is None, "无预算→None")
     _assert(f("随便") is None, "无关→None")

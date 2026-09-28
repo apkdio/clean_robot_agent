@@ -2,7 +2,7 @@
 
 Redis 存 `sop:pending:{session_id}`（带 TTL）；无 Redis 时降级内存并做时间戳校验。
 `kind` 取值：confirm_exit（答是/不是）、ask_city（答城市名）、pick_city（答序号）；
-`confirm_enter` 预留给后续「进入 SOP 的确认门」。
+`confirm_enter` 用于「进入 SOP 的确认门」（弱触发才问）。
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _write(session_id: str, state: dict) -> dict:
     return state
 
 
-def get(session_id: str) -> Optional[dict]:
+def get(session_id: str) -> dict | None:
     """读待确认状态；不存在或已过期返回 None。"""
     r = get_redis()
     if r is not None:

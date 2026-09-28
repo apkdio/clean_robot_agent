@@ -326,6 +326,16 @@ def get_last_models(session_id: str):
     return _get_meta_field(session_id, "last_models")
 
 
+def set_enter_declined(session_id: str, declined: bool = True):
+    """记下用户拒绝了「进入引导」（本会话不再问；用户明确要求时仍会直接进）。"""
+    _update_meta(session_id, sop_enter_declined=bool(declined))
+
+
+def is_enter_declined(session_id: str) -> bool:
+    """用户是否已拒绝过进入引导。"""
+    return bool(_get_meta_field(session_id, "sop_enter_declined"))
+
+
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,

@@ -66,6 +66,11 @@ def test_match_yes_no():
     _assert(agent_mod._match_yes_no("不对") is False, "「不对」不能被「对」劫持（先判否定）")
     _assert(agent_mod._match_yes_no("随便") is None, "认不出→None（不再默认退出）")
     _assert(agent_mod._match_yes_no("今天天气不错") is None, "无关内容→None")
+    _assert(agent_mod._match_yes_no("嗯嗯这个嘛") is None, "含弱应答词的长句→None（不许判成「是」）")
+    _assert(agent_mod._match_yes_no("嗯") is True, "整句就是「嗯」→是")
+    _assert(agent_mod._match_yes_no("嗯好的") is True, "「嗯好的」→是")
+    _assert(agent_mod._match_yes_no("退出", gate="enter") is None, "进入门不认「退出」（那是退出门的词）")
+    _assert(agent_mod._match_yes_no("继续", gate="enter") is None, "进入门不认「继续」")
 
 
 # ──────────────────────────────────────────────────────────────

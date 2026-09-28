@@ -31,6 +31,8 @@ _BUDGET_TOOL_MODEL = get_small_model_name()
 
 _PRICE_PATTERN = re.compile(r"参考价[:：]?\s*(\d+(?:\.\d+)?)")
 _PRICE_RANGE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*[-–~到]\s*(\d+(?:\.\d+)?)")
+# 「预算 3000」这类只有数字、没有方向词的说法 → 视为上限（中文数字「预算五千」不在此列，交模型兜底）
+_BUDGET_BARE_PATTERN = re.compile(r"预算[^\d]{0,5}?(\d{3,})\s*(?:元|块|块钱)?")
 _PUBLISH_DATE_PATTERN = re.compile(
     r"发布时间[:：]?\s*(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})"
 )
@@ -72,8 +74,6 @@ _SPEC_SKIP_KEYS = {"参考价", "发布时间"}   # 已有专用抽取器（min_
 def _spec_number(value: str):
     """值 → 数值 + 单位中的数字；不是数值则 None。
 
-    额外拒绝"拉丁字母 + 中文"混排的单位：否则「3D结构光」会被当成数值 3（单位 D结构光），
-    在 metadata 里凭空多出一个无意义的 `param_避障_num`。
     """
     m = _SPEC_NUM_RE.match(value.replace(" ", ""))
     if not m:
@@ -88,11 +88,6 @@ def _spec_number(value: str):
 
 def extract_spec_metadata(text: str) -> Dict:
     """从规格行提取**通用**参数 metadata：`param_<键>`（原文）+ `param_<键>_num`（可解析为数值时）。
-
-    不预设参数名——只要按格式模板写成 `键：值｜键：值` 就能被抽到，**新增型号 / 新增参数都不用改代码**。
-    这是为"有没有 LDS 导航的""吸力最大的几款"这类精准筛选准备的：文本走包含匹配，数值走比较/排序。
-    参考价 / 发布时间 跳过，由上面两个专用抽取器负责。
-    Chroma 的 metadata 只支持标量，所以展开为扁平键，不做嵌套。
     """
     out: Dict = {}
     for line in text.split("\n"):
@@ -114,11 +109,6 @@ def extract_spec_metadata(text: str) -> Dict:
 
 def param_inventory() -> Dict:
     """从**已入库的 metadata** 派生参数清单（键 → 值枚举 / 数值区间 / 覆盖条数）。
-
-    用途：给工具 schema 生成**数据驱动**的参数描述——新增型号、新增规格键都不用改代码，
-    也**不需要手写匹配词表**（枚举值就是抽取结果的去重）：
-        {键: {"values": {值: 覆盖数}, "num_min":…, "num_max":…, "coverage": n}}
-    文本值出现包含关系时（如「结构光」⊂「3D结构光」）交给调用方决定包含匹配，本函数不做归一化。
     """
     from vector_store import get_vector_store   # 函数内导入：vector_store 依赖本模块，避免循环导入
 
@@ -140,9 +130,6 @@ def param_inventory() -> Dict:
 
 def extract_model_info(doc) -> Dict:
     """从单型号 chunk 提取结构化型号信息（name/series/price/吸力/导航/避障/发布时间）。
-
-    型号名取 **加粗** 内容，价格取 metadata（条目级切分保证 min_price 即该条目价）；
-    缺失字段为空字符串或 None。
     """
     text = doc.page_content
 
@@ -188,8 +175,6 @@ MODEL_ASPECTS = {
 
 def format_model_line(info: Dict, aspect: str = None) -> str:
     """把单个型号信息格式化成一行可读文本。
-
-    aspect 指定时只输出该属性维度（见 MODEL_ASPECTS），否则输出全字段。
     """
     name = info.get("name", "")
     if aspect:
@@ -233,8 +218,6 @@ _ASPECT_KEYWORDS = [
 
 def extract_model_aspect(query: str) -> str:
     """从 query 规则提取型号属性维度（确定性，不依赖 LLM）。
-
-    返回 MODEL_ASPECTS 的 key（如「价格」「吸力」），未命中返回空字符串。
     """
     for kw, aspect in _ASPECT_KEYWORDS:
         if kw in query:
@@ -248,9 +231,6 @@ _MODELS_CACHE_FILE = "data/pkl/models.pkl"
 
 def _match_model_filter(info: Dict, f: dict) -> bool:
     """判断型号 info 是否满足 Chroma 风格的 where 过滤（内存过滤）。
-
-    字段映射：min_price/max_price → price（条目级切分保证 min_price==price），
-    publish_date 由字符串转 int 比较；file_name 忽略（型号都在具体型号文件）。
     """
     if not f:
         return True
@@ -296,10 +276,6 @@ def _enumerate_models_from_store(filter: dict, require_field: str) -> list[Dict]
 
 def get_all_model_records() -> list[Dict]:
     """全量型号记录：`extract_model_info` 的字段 + 该 chunk 的全部 `param_*`（通用规格）。
-
-    与 `extract_model_info` 里写死的 suction/navigation/obstacle 不同，这里把**规格行解析出的全部参数**
-    原样带上，所以**新增规格键不用改这个函数**——工具侧按 `param_<键>` / `param_<键>_num` 过滤或排序即可。
-    每次现读 Chroma（型号量级只有十几~几十个，不必缓存）。
     """
     from vector_store import search_by_filter
 
@@ -318,9 +294,6 @@ def get_all_model_records() -> list[Dict]:
 
 def get_all_models() -> list[Dict]:
     """全量型号 info 列表，走 data/pkl/models.pkl 缓存（fingerprint = chunk_count）。
-
-    注意：fingerprint 只看条数，**改内容但不改条数时缓存不会失效**，
-    需由调用方（如热更新）显式删缓存文件。
     """
     import os
     import pickle
@@ -423,9 +396,6 @@ def _cn_to_int(s: str) -> Optional[int]:
 
 def extract_price_constraint(query: str) -> Optional[tuple]:
     """从 query 提取价格约束，返回 (min_price, max_price) 元组，未命中返回 None。
-
-    支持区间（"1000-2000"）、上限（"1000以内"）、下限（"1000以上"）、
-    浮动（"1000左右" → ±500）、口语尾音（"2000吧"，见 BC-20260921-07）。
     """
     # 1. 显式区间
     m = _PRICE_RANGE_PATTERN.search(query)
@@ -470,6 +440,11 @@ def extract_price_constraint(query: str) -> Optional[tuple]:
         v = int(m.group(1))
         return (max(0, v - 500), v + 500)
 
+    # 6. 「预算 3000」这类没有方向词的 → 视为上限（说"预算 3000"＝愿意花到 3000）
+    m = _BUDGET_BARE_PATTERN.search(query)
+    if m:
+        return (None, int(m.group(1)))
+
     return None
 
 
@@ -494,10 +469,6 @@ def build_filter(query: str) -> Optional[Dict]:
 
 def resolve_budget_filter(query: str) -> Optional[Dict]:
     """把问题里的预算表达解析成 Chroma 过滤条件（规则优先 + LLM 兜底）。
-
-    规则（build_filter）覆盖"1000以内""1000-2000"等常见表达；
-    规则 miss 且含预算提示特征时，用 3b function calling 兜底口语/模糊表达
-    （"一千来块""1500上下"）；无提示特征则直接返回 None，不白调 LLM。
     """
     # 1. 确定性规则（显式区间 / 单一上限）
     f = build_filter(query)
