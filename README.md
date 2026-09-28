@@ -119,6 +119,8 @@ clean_robot_agent/
 | `config_tool.py` / `path_tool.py` / `prompts_tool.py` | 配置 / 路径 / Prompt 加载 |
 | `context_store.py` | 会话上下文：按 session_id 持久化最近 6 轮对话（jsonl）+ meta 元数据（LLM 标题）+ 会话增删查改 |
 | `redis_store.py` | Redis 连接封装 + 互斥锁（SET NX）+ 降级回退：无 Redis 时自动回退本地内存 |
+| `pending_store.py` | 统一待确认状态（SOP 退出确认 / 网点问城市 / 选序号）：Redis `sop:pending:{sid}` + TTL，无 Redis 降级内存并校验时间戳 |
+| `test_hooks.py` | **仅供测试/评测**的状态注入助手（danger 窗口 / 连续承接计数 / 活跃 SOP / 待确认状态）|
 
 ## 工具调用模块（function_tools/）
 
@@ -127,7 +129,7 @@ clean_robot_agent/
 | `date_tool.py` | 日期计算工具：`calc_date_range` 把"最近半年""2025年三月"等表达换算成日期范围 |
 | `budget_tool.py` | 预算提取工具：规则 miss 时用 3b function calling 提取预算上限（"一千来块"等） |
 | `symptom_tool.py` | 故障分类工具：规则 miss 时用 3b function calling 归类口语故障（"奇怪的声音"等） |
-| `model_tool.py` | 型号工具：7b function calling 提取型号名（含上下文指代）后精准检索详情；`find_models` 支持按预算（传原话，规则解析方向与浮动）/ 规格参数 / 排序 / 发布时间筛选型号，并带参数校验（按用户原话纠正方向、剔除无效条件） |
+| `model_tool.py` | 型号工具：7b function calling 提取型号名（含上下文指代）后精准检索详情；`find_models` 支持按预算（传原话，规则解析方向与浮动）/ 规格参数 / 排序（规格、「参考价」、「发布时间」）/ **筛选范围（全库 / 上一轮推荐内 / 比上一轮更便宜·更贵·更新·更旧，可组合）** 筛选型号，并带参数校验（按用户原话纠正方向、剔除无效条件） |
 | `service_point_tool.py` | 售后网点工具：geonamescache 离线解析城市经纬度（中文名/重名候选）+ Haversine 距离排序 + 网点格式化 |
 | `kb_tool.py` | 知识库检索工具：`search_kb` 接自足检索式 + 可选知识域（域为软约束，域内置信度低时检索器会撤过滤并合并全库结果） |
 | `registry.py` | 工具注册中心：收敛对外暴露的工具白名单（型号筛选 / 知识库检索 / 售后网点），未知工具名直接报错 |
@@ -336,7 +338,7 @@ python intent_classifier_training/train_intent_classifier.py
 | `rag.yaml` | `chunk.chunk_size`、`retrieval.dense_top_k/sparse_top_k/final_top_k/score_threshold`、`retrieval.domain_margin`（域路由 margin 门控，0 关闭）、`rrf.*`、`rerank.*`（精排开关/模型/候选宽度/阈值）、`data_dir`（知识库源目录） |
 | `chroma.yaml` | `persist_dir`、`collection_name`、`embedding.model` |
 | `context.yaml` | `intent.low_conf_margin`（低置信降级阈值，0 关闭）、`intent.high_conf_margin`（安全告警窗口内的放行阀，0 关闭）、`context.topic_window`（回看多少条会话记录判定话题与安全告警）、`context.safety_carry_max`（同一告警最多承接几次，0 关闭）、`context.rewrite.*`（改写开关/模式/选轮相似度阈值） |
-| `redis.yaml` | `host`/`port`/`password`（Redis 连接）、`sop_ttl`（SOP 会话过期）、`lock_ttl`（锁过期） |
+| `redis.yaml` | `host`/`port`/`password`（Redis 连接）、`sop_ttl`（SOP 会话过期）、`pending_ttl`（待确认状态过期：SOP 退出确认 / 网点问城市）、`lock_ttl`（锁过期） |
 
 ## 问答流程
 
@@ -345,7 +347,15 @@ flowchart TD
     Q["用户提问"] --> G1["① 提示词注入检测 → 命中直接拒绝<br/>② 危险现象检测 → 命中停机转售后"]
     G1 --> G2["③ 记录用户消息（供 RAG 拼接历史、自主消解指代）<br/>④ 负面情绪安抚（只安抚不拦截）"]
     G2 --> G3{"⑤ 有活跃 SOP？"}
-    G3 -->|是| S1["继续多轮引导"]
+    G3 -->|是| S1{"SOP 内：这一句是？"}
+    S1 -->|"纯退出词 / 纯符号"| S1A["退出确认门：是要退出吗？<br/>是→退出；不是→继续；两次都认不出→直接退出"]
+    S1 -->|"「0」"| S1B["直接退出（开场语约定，不再确认）"]
+    S1 -->|"带诉求的退出句"| S1C["退出 + 重新理解这一句（跳过网点待确认）"]
+    S1 -->|其他| S1D["继续多轮引导（推进流程）"]
+    S1A --> OUT
+    S1B --> OUT
+    S1C --> IR
+    S1D --> OUT
     G3 -->|否| IR{"⑥ intent_router（本地分类头）"}
     IR -->|other| O1["礼貌拒答"]
     IR -->|casual| O2["自然回应"]
@@ -375,7 +385,7 @@ flowchart TD
 ## 注意事项
 
 - 所有模型本地运行，无云端依赖；其中精排模型 `bge-reranker-v2-m3`（约 2.2GB）首次运行需联网下载（见「快速开始 §3」），加载失败会自动降级为“不精排”，也可在 `rag.yaml` 设 `rerank.enabled: false` 主动关闭
-- Redis 为可选依赖：未配置 `config/redis.yaml` 时，SOP 会话状态/并发锁/摄入锁自动降级到本地内存，功能不受影响
+- Redis 为可选依赖：未配置 `config/redis.yaml` 时，SOP 会话状态 / **待确认状态（退出确认、网点问城市）** / 并发锁 / 摄入锁自动降级到本地内存（待确认状态带时间戳校验），功能不受影响
 - `data/vector_store/`、`data/pkl/`、`data/state/`、`data/bgm_model/`、`data/context/`、`data/context_meta/` 为运行时产物，已加入 `.gitignore`
 - `data/eval/`（评测集与基线：`retrieval/` 单轮检索、`context/` 多轮行为）为本地数据，同样已加入 `.gitignore`；缺失时对应评测模块自动跳过
 - `data/test_context/`、`data/test_context_metadata/`（测试产生的会话文件）同样已加入 `.gitignore`

@@ -352,8 +352,6 @@ def get_all_models() -> list[Dict]:
 def enumerate_models(filter: dict, require_field: str = "price") -> list[Dict]:
     """按 filter 枚举匹配型号（基于 pickle 缓存 + 内存过滤，不读 Chroma）。
 
-    get_all_models 已按 price 过滤，故 require_field="price" 天然满足；
-    publish_date 等其它字段再内存过滤一次。
     """
     models = get_all_models()
     if require_field and require_field != "price":

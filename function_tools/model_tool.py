@@ -161,9 +161,18 @@ FIND_MODELS_TOOL_SCHEMA = {
                         "required": ["key", "op", "value"],
                     },
                 },
+                "scope": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["prev", "cheaper", "pricier", "newer", "older"]},
+                    "description": (
+                        "筛选范围（默认全库，填空数组）：prev=只在上一轮推荐结果内；"
+                        "cheaper/pricier=比上一轮最便宜/最贵的还便宜/还贵；newer/older=比上一轮最新/最旧的还新/还旧。"
+                        "相对维度**可多选，同时满足**（「更新更便宜的」→ [\"newer\",\"cheaper\"]）；排序由系统固定。"
+                    ),
+                },
                 "sort_by": {
                     "type": "string",
-                    "description": "排序依据（规格名，如「吸力」「续航」；或「参考价」）；不排序填空字符串",
+                    "description": "排序依据（规格名，如「吸力」「续航」；或「参考价」「发布时间」）；不排序填空字符串",
                 },                "order": {"type": "string", "enum": ["desc", "asc"], "description": "排序方向，默认 desc"},
                 "limit": {"type": "integer", "description": "最多返回几条，默认 5"},
             },
@@ -187,12 +196,58 @@ def _param_num_of(record: Dict, key: str):
     return record.get(f"param_{key}_num")
 
 
-def _publish_int(record: Dict) -> int:
-    """型号记录的发布时间 → int YYYYMMDD。
+# 相对上一轮展示边界的筛选：scope -> (取值字段, 边界函数, 比较方向, 固定排序键, 降序?)
+_SCOPE_RELATIVE = {
+    "cheaper": ("price", min, "lt", "参考价", "desc"),
+    "pricier": ("price", max, "gt", "参考价", "asc"),
+    "newer": ("publish", max, "gt", "发布时间", "asc"),
+    "older": ("publish", min, "lt", "发布时间", "desc"),
+}
 
-    注意 `extract_model_info` 给的是**文本**（「2026-03-15」），而区间比较要数值，
-    所以这里不直接 int()（会抛 ValueError），而是抽数字。
-    """
+
+def _bound_value(record: Dict, field: str) -> int:
+    """取价格或发布时间（数值化），用于相对上一轮边界的比较。"""
+    return int(record.get("price") or 0) if field == "price" else _publish_int(record)
+
+
+def _filter_relative(models: List[Dict], prev_models, scope: str) -> List[Dict]:
+    """按 scope 过滤出越过上一轮展示边界的型号（更便宜/更贵/更新/更旧）。"""
+    field, pick, op, _key, _desc = _SCOPE_RELATIVE[scope]
+    edges = [_bound_value(m, field) for m in (prev_models or [])]
+    edges = [e for e in edges if e]
+    if not edges:
+        return []
+    edge = pick(edges)
+    return [m for m in models
+            if _bound_value(m, field) and
+            (_bound_value(m, field) < edge if op == "lt" else _bound_value(m, field) > edge)]
+
+
+def _scope_list(scope) -> List[str]:
+    """把 scope 归一成小写取值列表（支持字符串、逗号串、数组）。"""
+    if isinstance(scope, (list, tuple)):
+        raw = [str(s) for s in scope]
+    else:
+        raw = str(scope or "").replace("，", ",").split(",")
+    return [s.strip().lower() for s in raw if s.strip()]
+
+
+def _relative_scopes(scope) -> List[str]:
+    """scope 里的相对维度（可多选，同时满足）。"""
+    return [s for s in _scope_list(scope) if s in _SCOPE_RELATIVE]
+
+
+def _sort_value_of(record: Dict, sort_by: str) -> float:
+    """排序取值：参考价 → price；发布时间 → publish_date(YYYYMMDD)；其余 → param_<键>_num。"""
+    if sort_by in ("参考价", "价格", "价钱", "价位"):
+        return float(record.get("price") or 0)
+    if sort_by in ("发布时间", "发布日期"):
+        return float(_publish_int(record))
+    return float(_param_num_of(record, sort_by) or 0)
+
+
+def _publish_int(record: Dict) -> int:
+    """型号记录的发布时间 → int YYYYMMDD（库里给的是文本，区间比较要数值）。"""
     value = record.get("publish_date")
     if isinstance(value, int):
         return value
@@ -200,7 +255,7 @@ def _publish_int(record: Dict) -> int:
     return int(digits) if len(digits) >= 8 else 0
 
 
-def find_models_by_args(args: Dict) -> List[Dict]:
+def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> List[Dict]:
     """执行 find_models：参数筛选 → 排序 → limit，返回型号记录列表。
 
     任何单个条件写得不对（如参数键不存在、数值填了非数字）只会让该条件命中 0 条，
@@ -210,10 +265,18 @@ def find_models_by_args(args: Dict) -> List[Dict]:
 
     args = args or {}
     models = get_all_model_records()
+    scopes = _scope_list(args.get("scope"))
+    rels = [s for s in scopes if s in _SCOPE_RELATIVE]
+    if rels:
+        # 多维度同时满足：「更新更便宜的」= 比上一轮更新 **且** 更便宜
+        for rel in rels:
+            models = _filter_relative(models, prev_models, rel)
+    elif any(s in ("prev", "last") for s in scopes):
+        # 只在上一轮结果内；上一轮可能来自规则路径（记录不带 param_*）→ 按型号名回填完整记录
+        by_name = {m.get("name"): m for m in models}
+        models = [by_name.get(m.get("name"), m) for m in (prev_models or [])]
 
-    # 预算优先按**原话**用规则解析：模型只要看到货币单位（「5000元以上」「5000块以上」）
-    # 就会切进「预算 X 元」这个惯用模板、把方向词吃掉，稳定填成 budget_max=5000（实测 5/5）；
-    # 不填单位反而正确（budget_min）。方向/单位/浮动交给规则，模型只负责把原话搬过来。
+    # 预算优先按**原话**用规则解析：模型见到货币单位会把方向词吃掉，方向/单位/浮动交给规则
     bmin = bmax = 0
     phrase = str(args.get("budget") or "").strip()
     if phrase:
@@ -273,11 +336,7 @@ def find_models_by_args(args: Dict) -> List[Dict]:
     sort_by = (args.get("sort_by") or "").strip()
     if sort_by:
         order = (args.get("order") or "desc").strip()
-        models = sorted(
-            models,
-            key=lambda m: float(_param_num_of(m, sort_by) or 0),
-            reverse=(order != "asc"),
-        )
+        models = sorted(models, key=lambda m: _sort_value_of(m, sort_by), reverse=(order != "asc"))
 
     limit = args.get("limit") or 5
     try:
@@ -292,13 +351,8 @@ def bare_name(name: str) -> str:
     return name[len(_BRAND_NAME):] if name.startswith(_BRAND_NAME) else name
 
 
-# ── 参数校验器：按用户原话纠正模型填的 args（P1-5 基建）───────────────────
-# 实测（temp/probe_fc_args.py，多条件下重复 5 次）模型有三类**稳定**错误：
-#   ① 看到货币单位就切进「预算 X 元」模板：「5000元以上」稳定填成 budget_max（5/5）；
-#   ② 「大吸力」这类模糊说法被塞进 params 做数值比较（吸力 >= "大"）→ 比较恒不成立、结果归零；
-#   ③ 问「有哪些」只填 limit=5 → 结果被静默截断。
-# 这里只做**确定性**纠正，不去猜用户意图：纠正不了的（未知键、知识库里不存在的值）原样留着，
-# 让该条件命中 0 条、由编排层决定退回语义检索还是友好降级。
+# 只做确定性纠正（方向翻面、剔除无效条件、枚举问法放开截断），不猜用户意图；
+# 纠正不了的（未知键、库里不存在的值）原样留着，让该条件命中 0 条、由编排层决定降级。
 _ABOVE_RE = re.compile(r"以上|超过|至少|起步|不低于|大于|往上")
 _BELOW_RE = re.compile(r"以内|以下|不超过|不到|低于|小于|之内")
 _PRICE_KEYS = ("参考价", "价格", "价钱", "价位")
@@ -379,6 +433,20 @@ def validate_find_models_args(query: str, args: Dict) -> tuple:
         kept.append(cond)
     args["params"] = kept
 
+    sort_by = str(args.get("sort_by") or "").strip()
+    if sort_by and sort_by not in ("参考价", "价格", "价钱", "价位", "发布时间", "发布日期"):
+        values = _spec_values_of(sort_by)
+        if values and not any(values):
+            notes.append("排序键「%s」在知识库里不存在（将按 0 排序）" % sort_by)
+
+    # 相对维度（更便宜/更贵/更新/更旧）的排序由规则固定：最接近上一轮边界的优先；多维度取第一个
+    _rels = _relative_scopes(args.get("scope"))
+    if _rels:
+        want_key, want_order = _SCOPE_RELATIVE[_rels[0]][3], _SCOPE_RELATIVE[_rels[0]][4]
+        if (args.get("sort_by") or want_key) != want_key or (args.get("order") or want_order) != want_order:
+            notes.append("scope=%s：排序已按「%s + %s」处理" % ("+".join(_rels), want_key, want_order))
+        args["sort_by"], args["order"] = want_key, want_order
+
     # ③ 枚举类问法（「有哪些」）不要拿 5 条截断结果
     if _ENUM_RE.search(query):
         try:
@@ -399,11 +467,8 @@ def _is_number(value: str) -> bool:
         return False
 
 
-def run_find_models(query: str, args: Dict) -> tuple:
+def run_find_models(query: str, args: Dict, prev_models: "List[Dict] | None" = None) -> tuple:
     """工具层入口：先按原话校验纠正，再执行。返回 (型号列表, 纠正说明)。
-
-    编排层（P1-5）拿 args 后只调这里；`find_models_by_args` 保持"照参数执行"的纯语义，
-    供离线测试直接构造参数用。
     """
     fresh, notes = validate_find_models_args(query, args)
-    return find_models_by_args(fresh), notes
+    return find_models_by_args(fresh, prev_models), notes

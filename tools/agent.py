@@ -12,16 +12,12 @@ import re
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config_tool import load_config
+from tools import pending_store
 from llm_tool import get_chat_model_name, stream_chat
 from log_tool import get_logger
 from prompts_tool import load_main_prompts
 from config.word_dict_config import (DOMAIN_MAP, EMOTION_MILD, EMOTION_STRONG, EXIT_WORDS,
                                      NO_ANSWER_REPLIES, domain_files_of)
-
-# 注意：本文件里的 context_store 刻意用 `tools.` 前缀导入，与 app.py / sops/ 保持一致。
-# 项目里同时存在 `tools.X` 与裸 `X` 两种写法，会加载出**两个模块实例**、各持一份内存缓存。
-# app.py 用 `tools.context_store` 追加客服回复，这里若走裸模块去读就永远读不到
-# ——会话历史会缺掉 assistant 那一半。要统一时请整体统一，别单独把这几处改回去。
 
 logger = get_logger(name="agent")
 
@@ -161,14 +157,6 @@ def _domain_filter(query: str):
             return ({"$in": files} if len(files) > 1 else files[0]), "top2"
     return (files[0] if len(files) == 1 else {"$in": files}), "top1"
 
-
-# SOP 退出确认状态：非 None 表示正在询问用户是否退出该 SOP
-_pending_exits = {}
-
-# 网点查询待确认状态：session_id → {"city": True}（反问城市后等城市名）
-#   或 {"pick": [candidates]}（列出重名候选后等用户选序号）
-_pending_service = {}
-
 # SOP 中文名（用于退出提醒）
 _SOP_NAMES = {"purchase": "选购推荐", "repair": "故障排查"}
 
@@ -182,17 +170,16 @@ def _is_symbols_only(query: str) -> bool:
     return not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", query)
 
 
-def _match_exit_intent(query: str) -> bool:
-    """判断用户是想退出（True）还是继续（False）。无法判断时默认退出（True）。"""
+def _match_yes_no(query: str) -> bool | None:
+    """确认门里判断用户答的是「是」（True）/「不是」（False）/ 都不是（None）。
+    """
     q = query.strip().lower()
-    # 明确"不是/继续/不用" → 继续（注意："不"单字会误伤"不知道"，故用完整词）
-    if any(w in q for w in ["不是", "继续", "不用", "否", "别退出", "不退出"]):
+    if any(w in q for w in ["不是", "不对", "不用", "否", "继续", "别退出", "不退出", "不要"]):
         return False
-    # 明确"是/对/要/退出" → 退出
-    if any(w in q for w in ["是", "对", "嗯", "要", "好", "行", "退出", "换", "别的", "其他"]):
+    if any(w in q for w in ["是", "对", "嗯", "要", "好", "行", "退出", "确认"]):
         return True
-    # 无法模糊匹配 → 默认退出
-    return True
+    return None
+
 
 
 _EXIT_RESIDUE_RE = re.compile(r"[\s，,。.、！!？?~～…·「」【】（）()\"'“”‘’:：;；-]+")
@@ -200,12 +187,6 @@ _EXIT_RESIDUE_RE = re.compile(r"[\s，,。.、！!？?~～…·「」【】（�
 
 def _has_residual_request(query: str) -> bool:
     """退出/纠正句里是否还带着实际诉求。
-
-    「我说的是保养怎么做」「你理解错了，我要问滤网」→ True（摘掉退出词后还剩实义内容）；
-    「算了」「退出」「0」「不用了谢谢」→ False。
-
-    阈值取 4 个实义字符：礼貌尾音（「谢谢」2 字）不算诉求，否则会莫名其妙多答一句。
-    这是启发式，要在多轮评测集上核（边界类）。
     """
     rest = query.strip()
     for w in EXIT_WORDS:
@@ -228,11 +209,9 @@ def _history_block(session_id: str) -> str:
     )
 
 
-# ── 上下文承接与查询改写（P0-3）───────────────────────────────────────────
-# 追问句（"那这个电流现象影响大吗"）的指代在上文，单看没有信号，会被意图分类头
+# 上下文承接与查询改写
 # 判成领域外而直接拒答。这里做两件事：判不了时先看上文有没有可承接的话题；
 # 该走检索的，先用上文把 query 补成自足形式（只影响检索，会话记录仍是原文）。
-# 设计见 notes/OPTIMIZATION_ROADMAP.md 的「P0-3 详细设计」。
 
 _ctx_cfg_cache = None
 
@@ -291,6 +270,9 @@ def _window_domain(session_id: str) -> str | None:
 
 _SAFETY_CARRY_PREFIX = "您前面提到的"
 
+# 退出确认门话术
+_EXIT_CONFIRM = "您当前正在「{sop}」环节。是要退出吗？回复「是」退出，「不是」继续～"
+
 _SAFETY_CARRY = (
     _SAFETY_CARRY_PREFIX + "{danger}属于安全隐患，不建议继续使用机器人：请保持断电停机，"
     "不要自行拆机、也不要继续充电，尽快联系官方售后（400-860-1314）安排检测。\n\n"
@@ -300,10 +282,6 @@ _SAFETY_CARRY = (
 
 def _recent_carry_count(session_id: str) -> int:
     """最近**连续**几条客服回复是安全承接（同一告警最多承接 `context.safety_carry_max` 次）。
-
-    不用「上一条是不是承接」当闸门：告警后用户往往连着追问好几句
-    （「啊，但是他之前没有这种情况哎」→「会不会有危险这种情况」），只按上一条判会把
-    第二句追问挡回普通检索（实测：回放时会掉进 0 命中兑底），反而丢掉承接。
     """
     n = 0
     for m in reversed(_window_messages(session_id)):
@@ -407,13 +385,6 @@ def _llm_rewrite(query: str, history_block: str) -> str | None:
 
 def _rewrite_query(session_id: str, query: str) -> tuple[str, str]:
     """把依赖上文的追问改写成自足 query，返回 (effective_query, via)。
-
-    via ∈ {"none", "rule", "llm"}；none 表示不改写，调用方直接用原 query。
-    只作用于检索（域路由 + 双路召回）：会话记录永远写原文，审计保真。
-
-    这里是**编排层之前**的改写（`tools.orchestration: off` / `shadow` 时全靠它）。
-    编排上线后，改写由模型在 `search_kb` 的 `query_summarization` 参数里顺手给出（搭检索那趟车），
-    不再单开一层——所以这里没有、也不该有“工具调用形态”的改写。
     """
     cfg = _rewrite_cfg()
     if not _ctx_enabled() or not cfg.get("enabled", True):
@@ -500,11 +471,7 @@ def _has_model_ref(query: str) -> bool:
 
 def _resolve_model_query(session_id: str, query: str):
     """型号查询兜底：命中触发词 → LLM 提取型号名 → 按名精准检索型号详情。
-
-    把对话历史拼给 LLM，让它消解指代/对比（"这两个有什么区别""它怎么样"），
-    避免用指代句直接检索而召不回具体型号；提取不到型号时返回 None，退回正常 RAG。
-    触发分两档：强触发（对比/明确指代）直接走；弱触发（咨询词）需 query 带型号
-    上下文才走，防误伤泛咨询。
+        就是把最近的上下文拼给LLM，让LLM自己理解去
     """
     from config.word_dict_config import MODEL_QUERY_WORDS, MODEL_CONSULT_WORDS
     if not any(w in query for w in MODEL_QUERY_WORDS):
@@ -585,28 +552,26 @@ def _service_choice_prompt(candidates):
 
 
 def _resolve_service_pending(session_id, state, query):
-    """处理网点查询的待确认回答（反问城市后答城市名 / 重名后选序号）。
-
-    返回 reply：成功直出或乱答重问话术；用户主动退出时返回 None（状态已清除）。
+    """处理网点待确认（反问城市后答城市名 / 重名后选序号）。
     """
     from function_tools.service_point_tool import geocode_city
 
-    # 主动退出（算了/退出/取消等）→ 清除状态，回退正常流程
+    # 主动退出（算了/退出/取消等）→ 清除状态并明确告知
     if any(w in query for w in EXIT_WORDS):
-        _pending_service.pop(session_id, None)
-        return None
+        pending_store.clear(session_id)
+        return "好的，已取消网点查询～有新的问题可以直接问我。", "exit_sop"
 
     if state.get("city"):
         # 用户答的是城市名
         candidates = geocode_city(query)
         if len(candidates) == 1:
-            _pending_service.pop(session_id, None)
-            return _format_nearest(candidates[0])
+            pending_store.clear(session_id)
+            return _format_nearest(candidates[0]), "structured_answer"
         if len(candidates) > 1:
-            _pending_service[session_id] = {"pick": candidates}
-            return _service_choice_prompt(candidates)
+            pending_store.set(session_id, "pick_city", pick=candidates)
+            return _service_choice_prompt(candidates), "ask_clarify"
         # 乱答（不是城市名）→ 保留状态重问
-        return "没太听清您在哪个城市，能再说一下城市名吗？比如「开封」「上海」～"
+        return "没太听清您在哪个城市，能再说一下城市名吗？比如「开封」「上海」～", "ask_clarify"
 
     if state.get("pick"):
         # 用户答的是序号
@@ -615,22 +580,18 @@ def _resolve_service_pending(session_id, state, query):
         if m:
             idx = int(m.group()) - 1
             if 0 <= idx < len(cands):
-                _pending_service.pop(session_id, None)
-                return _format_nearest(cands[idx])
-            return f"请回复 1-{len(cands)} 之间的序号～"
-        return "请回复序号（如 1）选择您要查询的地点～"
+                pending_store.clear(session_id)
+                return _format_nearest(cands[idx]), "structured_answer"
+            return f"请回复 1-{len(cands)} 之间的序号～", "ask_clarify"
+        return "请回复序号（如 1）选择您要查询的地点～", "ask_clarify"
 
-    _pending_service.pop(session_id, None)
-    return None
+    pending_store.clear(session_id)
+    return None, ""
+
 
 
 def _resolve_service_point_query(session_id, query, lng=None, lat=None):
     """售后网点查询：网点词（非政策咨询）→ geonamescache 解析位置 → 距离直出。
-
-    返回 (reply, matched)：
-      - matched=False：未命中网点查询，走正常流程
-      - matched=True 且 reply 非 None：网点结果（或重名候选话术）
-      - matched=True 且 reply 为 None：缺位置，已记状态，调用方需反问城市
     """
     from config.word_dict_config import SERVICE_POINT_WORDS, SERVICE_POINT_CONSULT_WORDS
     if not any(w in query for w in SERVICE_POINT_WORDS):
@@ -670,24 +631,20 @@ def _resolve_service_point_query(session_id, query, lng=None, lat=None):
     if len(candidates) == 1:
         return _format_nearest(candidates[0]), True
     if len(candidates) > 1:
-        _pending_service[session_id] = {"pick": candidates}
+        pending_store.set(session_id, "pick_city", pick=candidates)
         return _service_choice_prompt(candidates), True
-    _pending_service[session_id] = {"city": True}
+    pending_store.set(session_id, "ask_city", city=True)
     return None, True
+
+
+def _log_behavior(tag: str, **detail) -> None:
+    """行为观测点：把这一轮「处置成哪一类行为」记一行，供行为轨评测与影子对照读取。只输出日志。
+    """
+    logger.info("[Behavior] %s%s", tag, "".join(" %s=%s" % (k, v) for k, v in detail.items()))
 
 
 def _shadow_probe(query: str, session_id: str, chain_category: str, chain_detail: str = "") -> None:
     """影子模式：让模型并行做一次决策，与链路**实际走的类目**对照，只落日志、不改行为。
-
-    `tools.orchestration: "off"`（默认）→ 一行都不跑；`"shadow"` → 在 fc_eligible 的类目里调用
-    `orchestrator.decide()`（**不执行任何工具**），并打印 `[Shadow]` 一行便于事后统计。
-
-    为什么必须走旁路线程：实测同一条 7b 决策调用要 5~52s（模型冷热差很大），同步跑等于给用户白加几十秒延迟。
-
-    硬要求：这个函数**不得影响用户看到的结果**。因此——
-      · 只在 `off` 以外的模式且命中采样时调用；
-      · 决策跑在 daemon 线程里，异常只记 warning；
-      · 调用点全部放在各分支“已决定要答什么”之后，不参与任何判断。
     """
     from function_tools.registry import orchestration_mode, shadow_sample
     from tools.orchestrator import chain_fc_eligible, decide, shadow_line
@@ -719,10 +676,9 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     """流式问答入口 —— 经本地分类头做意图路由，支持多轮 SOP 引导。
 
     other → 礼貌拒答；casual → 闲聊；
-    unknown → 软引导 + RAG；robot → SOP 引导 / 结构化预算直出 / RAG。
-    session_id 用于区分对话会话（上下文按会话持久化到 data/context/）。
+    unknown → 软引导 + RAG；
+    robot → SOP 引导 / 结构化预算直出 / RAG。
     """
-    global _pending_exits, _pending_service
     from tools.context_store import append_message
 
     # 角色扮演 / 指令注入：直接拒绝，不发给 LLM（最先判断）
@@ -732,6 +688,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     if _INJECT_RE.search(query):
         append_message(session_id, "user", query, blocked="inject")
         logger.warning("[Guard] injection blocked: %s", query[:60])
+        _log_behavior("block_inject")
         yield "我是扫地机器人助手，只能帮你解答扫地机器人相关的问题，无法扮演其他角色哦～"
         return
 
@@ -746,8 +703,8 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         # 已升级为停机 + 联系售后，继续故障排查流程自相矛盾 → 结束 SOP 及其待答子状态
         from sops import end_sop
         end_sop(session_id)
-        _pending_exits.pop(session_id, None)
-        _pending_service.pop(session_id, None)
+        pending_store.clear(session_id)
+        _log_behavior("stop_use_safety", word=danger_hit)
         yield ("请立即停止使用机器人并断开电源！涉及冒烟/烧焦/进水等安全风险，"
                "不要自行拆机或继续充电，请马上联系官方售后（400-860-1314）处理。")
         return
@@ -763,76 +720,96 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
 
     # SOP 会话：有活跃 SOP 时继续该流程（不经过意图路由）
     from sops import has_active_sop, continue_sop, end_sop, start_sop, match_sop, get_active_sop_id
-    sop_exit_with_request = False  # 退出句里还带着诉求 → 本轮要继续往下走，重新理解这一句
+    continue_after_exit = False  # 退出句里还带着诉求 → 本轮要继续往下走，重新理解这一句
     if has_active_sop(session_id):
-        # 状态1：正在询问是否退出 → 匹配"是/不是"
-        if session_id in _pending_exits:
-            # 从_pending_exits获取SOP名称，同时无论用户意图如何，都退出_pending_exits
-            # 也就是说，_pending_exits 仅作为一个临时状态，判断逻辑走完就会话就退出临时状态
-            exit_now = _match_exit_intent(query)
-            sop_name = _sop_name(str(_pending_exits.get(session_id)))
-            _pending_exits.pop(session_id, None)
-            if exit_now:
-                end_sop(session_id)
-                yield f"好的，已退出「{sop_name}」环节～有新的问题可以直接问我。"
-            else:
+        sop_id = get_active_sop_id(session_id)
+        sop_name = _sop_name(sop_id)
+        # 状态A：退出确认门 —— 上一轮问了「是要退出「X」环节吗」
+        pending = pending_store.get(session_id)
+        if pending and pending.get("kind") == "confirm_exit":
+            ans = _match_yes_no(query)
+            retry = int(pending.get("retry") or 0)
+            if ans is False:
+                pending_store.clear(session_id)
+                _log_behavior("sop_step", via="confirm_no")
                 yield "好的，那我们继续刚才的话题～"
-            return
-
-        # 状态2：纯符号 → 礼貌询问是否要咨询其他问题
-        # 进入用户退出意图判断临时状态
-        if _is_symbols_only(query):
-            sop_id = get_active_sop_id(session_id)
-            _pending_exits[session_id] = sop_id
-            yield (f"没有听懂哦～您当前正在「{_sop_name(sop_id)}」环节。"
-                   f"是否需要咨询其他问题？是的话回复「是」，不是回复「不是」。")
-            return
-
-        # 状态3：明确的退出/纠正词 → 退出并提醒，fall through 重新理解用户的话
-        # 注意：不含"不是/不对/错了"——它们会误伤反问句（"是不是该换了""对不对"）
-        # "0" 精确匹配退出（SOP 开场语里提示的退出方式），避免"1000"含"0"误伤
-        if query.strip() == "0" or any(w in query for w in EXIT_WORDS):
-            sop_id = get_active_sop_id(session_id)
-            sop_name = _sop_name(sop_id)
-            end_sop(session_id)
-            yield f"好的，已退出「{sop_name}」环节～"
-            # 纯退出句（「算了」「退出」「0」）到此为止；**带着诉求的退出句**
-            # （「我说的是保养怎么做」）继续往下走、重新理解这一句——这是 v1.7.2 的原始意图，
-            # v2.2 加网点 SOP 时被 return 掉（那时是防退出句掉进网点的"待确认"分支），
-            # 现在用 sop_exit_with_request 精确跳过那一个分支，把重新理解的行为恢复回来。
-            sop_exit_with_request = _has_residual_request(query)
-            if not sop_exit_with_request:
+                return
+            if ans is True or retry >= 1:
+                pending_store.clear(session_id)
+                end_sop(session_id)
+                _log_behavior("exit_sop", via="confirm" if ans is True else "confirm_timeout")
+                if ans is True:
+                    # 答「是」→ 退出，这一句本身没有别的诉求
+                    yield f"好的，已退出「{sop_name}」环节～"
+                    return
+                # 两次都没踩中「是/不是」→ 直接退出，**不对这一句做二次意图理解**
+                # （已明确提示过回复「是/不是」；用户真有需求会重新说，避免"退出后又被系统自作主张处理一遍"）
+                yield f"好的，已退出「{sop_name}」环节～有新的问题可以直接问我。"
+                return
+            else:
+                # 第一次没踩中「是 / 不是」→ 再问一次
+                pending_store.bump_retry(session_id)
+                _log_behavior("ask_clarify", kind="confirm_exit_retry")
+                yield _EXIT_CONFIRM.format(sop=sop_name)
                 return
 
-        # 状态4：正常继续 SOP
+        # 状态B：「0」是 SOP 开场语里承诺的退出方式 → 直接退出，不再确认
+        elif query.strip() == "0":
+            pending_store.clear(session_id)
+            end_sop(session_id)
+            _log_behavior("exit_sop", via="zero")
+            yield f"好的，已退出「{sop_name}」环节～"
+            return
+
+        # 状态C：退出/纠正词或纯符号 -> 退出 or 确认门
+        elif any(w in query for w in EXIT_WORDS) or _is_symbols_only(query):
+            symbols_only = _is_symbols_only(query)
+            if not symbols_only and _has_residual_request(query):
+                pending_store.clear(session_id)
+                end_sop(session_id)
+                _log_behavior("exit_sop", via="exit_word_with_request")
+                yield f"好的，已退出「{sop_name}」环节～"
+                # 置True后继续往下走，并跳过网点反问的确认
+                continue_after_exit = True
+            else:
+                # 纯退出词 / 纯符号 → 退出确认门
+                pending_store.set(session_id, "confirm_exit", sop_id=sop_id, retry=0)
+                _log_behavior("ask_clarify",
+                              kind="confirm_exit_symbols" if symbols_only else "confirm_exit")
+                yield _EXIT_CONFIRM.format(sop=sop_name)
+                return
+
+        # 状态D：正常继续 SOP
         else:
             result = continue_sop(session_id, query)
             if result is not None:
                 reply, _done = result
                 if reply:
+                    _log_behavior("sop_step")
                     yield reply
                 return
 
     # 网点查询的待确认回答（反问城市后答城市名 / 重名后选序号）
-    # 退出 SOP 且该句是普通请求时不走这里：它只处理"答城市/答序号"，不是那个待确认的回答。
-    if session_id in _pending_service and not sop_exit_with_request:
-        state = _pending_service[session_id]
-        reply = _resolve_service_pending(session_id, state, query)
+    # 退出 SOP 且该句要继续往下走时跳过：它只处理「答城市 / 答序号」，不是那个待确认的回答。
+    pending = pending_store.get(session_id)
+    if pending and pending.get("kind") in ("ask_city", "pick_city") and not continue_after_exit:
+        if query.strip() == "0":
+            # 开场语承诺过可回复「0」退出 → 网点环节也要认（原来这里退不出去）
+            pending_store.clear(session_id)
+            _log_behavior("exit_sop", kind="service_point")
+            yield "好的，已取消网点查询～有新的问题可以直接问我。"
+            return
+        reply, tag = _resolve_service_pending(session_id, pending, query)
         if reply:
+            _log_behavior(tag or "ask_clarify", kind="service_point")
             yield reply
             return
-        # 返回 None：用户主动退出（状态已清除）→ 回退正常流程
+        # 返回 None：状态已清除 → 回退正常流程
 
     from intent_router import route_intent_with_margin, get_guess_hint
     intent, margin = route_intent_with_margin(query)
 
-    # S2-a：近期发生过安全告警 → 直接承接（零检索、零 LLM）。
-    # 刻意不按四分类标签放行：2026-09-23 实测（单向/双向/几何三种平滑）显示，任何意图侧的
-    # 变化都可能把这类追问挤成一个低置信的 robot，承接只要挂在意图分支上就会被绕开。
-    # 改由两个与标签正交的信号决定：
-    #   ① 告警仍在 topic_window 内（danger 标记）
-    #   ② 本轮自身没有足够确信的 robot 判断（只有 robot + 高 margin 才放行去正常回答）
-    # 同一告警最多承接 safety_carry_max 次（连刷兜底；0 = 不承接）。
+    # 近期发生过安全告警 → 直接承接（零检索、零 LLM）。
     low_conf_margin = float((_ctx_cfg().get("intent") or {}).get("low_conf_margin", 0) or 0)
     low_conf = low_conf_margin > 0 and margin < low_conf_margin
     high_conf_margin = float((_ctx_cfg().get("intent") or {}).get("high_conf_margin", 0) or 0)
@@ -845,10 +822,11 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
                 "[Context] intent=%s (margin=%.3f) + 安全告警(%s) → 安全承接",
                 intent, margin, danger_word or "-",
             )
+            _log_behavior("carry_safety", danger=danger_word or "-")
             yield _SAFETY_CARRY.format(danger=f"「{danger_word}」" if danger_word else "情况")
             return
 
-    # S1：低置信的 other 不硬拒答——但“低置信”只是入场券，
+    # 低置信的 other 不硬拒答
     # 还要上文有可承接的话题，否则就是真域外，维持拒答。
     if intent == "other" and low_conf:
         if _window_domain(session_id):
@@ -862,6 +840,8 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         from sops import handle_followup
         followup_reply = handle_followup(session_id, query)
         if followup_reply:
+            _shadow_probe(query, session_id, "model_query", "追问筛选")
+            _log_behavior("structured_answer", kind="followup")
             yield followup_reply
             return
 
@@ -870,6 +850,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         model_reply = _resolve_model_query(session_id, query)
         if model_reply:
             _shadow_probe(query, session_id, "model_query", "型号/对比兜底")
+            _log_behavior("structured_answer", kind="model_detail")
             yield model_reply
             return
 
@@ -878,6 +859,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         series_reply = _resolve_series_query(query)
         if series_reply:
             _shadow_probe(query, session_id, "model_query", "系列枚举")
+            _log_behavior("structured_answer", kind="series")
             yield series_reply
             return
 
@@ -888,6 +870,9 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         _shadow_probe(query, session_id, "service_point", "网点查询")
         if service_reply is None:
             service_reply = "请问您所在的城市是？告诉我城市名，我帮您查最近的售后网点～"
+            _log_behavior("ask_clarify", kind="service_point_city")
+        else:
+            _log_behavior("structured_answer", kind="service_point")
         yield service_reply
         return
 
@@ -897,6 +882,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         if sop_id:
             reply, _done = start_sop(session_id, sop_id, query)
             if reply:
+                _log_behavior("start_sop", sop=sop_id)
                 yield reply
             return
 
@@ -909,13 +895,16 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             if sop_id == "repair":
                 reply, _done = start_sop(session_id, sop_id, query)
                 if reply:
+                    _log_behavior("start_sop", sop="repair", via="strong_words")
                     yield reply
                 return
+        _log_behavior("refuse_offtopic")
         yield "抱歉，我是扫地机器人专属助手，对这方面不太了解哦～你可以问我扫地机器人的选购、故障排查、使用维护等问题。"
         return
 
     # 闲聊问候：自然回应，跳过检索
     if intent == "casual":
+        _log_behavior("chitchat")
         for chunk in stream_chat(
                 [
                     SystemMessage(content=load_main_prompts()),
@@ -938,7 +927,6 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     metadata_filter = resolve_budget_filter(query)
 
     # 解析日期表达（"最近半年"/"2025年三月"）→ 日期过滤
-    # 品牌事件/新闻类（"2026年经历了什么""有什么大事"）问的是事件而非产品发布时间，跳过
     from config.word_dict_config import BRAND_EVENT_WORDS
     if any(w in query for w in BRAND_EVENT_WORDS):
         date_filter = None
@@ -963,6 +951,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
                 "date": f"该时间段内发布的机器人有 {len(models)} 款：",
                 "budget+date": f"符合您预算和时间要求的机器人有 {len(models)} 款：",
             }.get(filter_kind, f"符合条件的机器人有 {len(models)} 款：")
+            _log_behavior("structured_answer", kind="filter", n=len(models))
             yield prefix + "\n\n" + "\n".join(lines)
             return
         # 没有匹配型号 → 回退到普通 RAG
@@ -975,10 +964,9 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     else:
         effective_query, rewrite_via = query, "none"
 
-    # 域定向检索：filter 是**软约束**（hybrid_retriever 内部据此走两遍召回）。
-    # 域内精排 top1 低于阈值时，它会撤掉 filter 再做一次全库召回并**合并**两池。
-    # 两域咬得很近时 _domain_filter 会返回两个域（$in）——不再"先命中的域吃掉"。
-    # 域路由不中（返回空）时没有 filter，只跑一遍，硬阈值照旧挡领域外。
+    # 域定向检索：filter 是软约束（hybrid_retriever 内部据此走两遍召回）。
+    # 域内精排 top1 低于阈值时，它会撤掉 filter 再做一次全库召回并合并两池。
+    # 两域分数相似时 _domain_filter 会返回两个域（$in）。
     domain_value, domain_via = _domain_filter(effective_query)
     chunks = hr.search(effective_query, filter={"file_name": domain_value} if domain_value else None)
 
@@ -991,17 +979,17 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     history_block = _history_block(session_id)
 
     if not chunks:
-        # 无召回 → 不自由作答（P1-4 层①）。原提示词让模型“根据自身知识回答”，会复述
-        # 上一轮内容甚至编造事实（BC-20260920-01 断点③）；实测改成“禁止凭自身知识作答”
-        # 的提示词也约束不住（模型照答不误），所以这里直接走确定性兜底话术。
+        # 无召回 → 不自由作答
         import random
 
         logger.info("[RAG] 0 chunk retrieved, fall back to canned reply (query=%s)", query[:40])
+        _log_behavior("no_answer_fallback", hits=0)
         yield random.choice(NO_ANSWER_REPLIES)
         return
 
     if _behavior.get("retrieval_only", False):
         top = chunks[0]
+        _log_behavior("retrieve_answer", mode="retrieval_only")
         src = top.metadata.get("file_name", "")
         yield f"📄 来源：{src}\n\n{top.page_content}"
         return
@@ -1023,6 +1011,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             "没有相关内容才用「暂无信息」话术，二者只能选一个。"
     )
 
+    _log_behavior("retrieve_answer", hits=len(chunks))
     for chunk in stream_chat(
             [
                 SystemMessage(content=load_main_prompts()),

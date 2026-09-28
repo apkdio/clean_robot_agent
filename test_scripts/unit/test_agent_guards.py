@@ -4,7 +4,7 @@
   - detect_emotion（负面情绪识别：强/弱/无）
   - _strip_emotion（剥离情绪词）
   - _is_symbols_only（纯符号判断）
-  - _match_exit_intent（SOP 退出意图判断）
+  - _match_yes_no（SOP 退出确认门的三态判断：是 / 不是 / 认不出）
   - 角色扮演 / 指令注入拦截（ask_stream 最先判断，直接拒绝，不调 LLM）
   - 危险现象安全拦截（ask_stream 第二判断，立即停机话术，不调 LLM）
   - 注入正则负例（正常问题不误伤）"""
@@ -55,13 +55,17 @@ def test_is_symbols_only():
     _assert(not agent_mod._is_symbols_only("abc123"), "字母数字→False")
 
 
-def test_match_exit_intent():
-    _assert(agent_mod._match_exit_intent("是"), "是→退出")
-    _assert(agent_mod._match_exit_intent("退出"), "退出→退出")
-    _assert(not agent_mod._match_exit_intent("不是"), "不是→继续")
-    _assert(not agent_mod._match_exit_intent("继续"), "继续→继续")
-    _assert(not agent_mod._match_exit_intent("不用"), "不用→继续")
-    _assert(agent_mod._match_exit_intent("随便"), "无法判断→默认退出")
+def test_match_yes_no():
+    """确认门判据：True=是 / False=不是 / None=认不出（由调用方再问一次，两次都认不出才默认退出）。"""
+    _assert(agent_mod._match_yes_no("是") is True, "是→退出")
+    _assert(agent_mod._match_yes_no("退出") is True, "退出→退出")
+    _assert(agent_mod._match_yes_no("确认") is True, "确认→退出")
+    _assert(agent_mod._match_yes_no("不是") is False, "不是→继续")
+    _assert(agent_mod._match_yes_no("继续") is False, "继续→继续")
+    _assert(agent_mod._match_yes_no("不用") is False, "不用→继续")
+    _assert(agent_mod._match_yes_no("不对") is False, "「不对」不能被「对」劫持（先判否定）")
+    _assert(agent_mod._match_yes_no("随便") is None, "认不出→None（不再默认退出）")
+    _assert(agent_mod._match_yes_no("今天天气不错") is None, "无关内容→None")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -106,7 +110,7 @@ TESTS = [
     test_detect_emotion,
     test_strip_emotion,
     test_is_symbols_only,
-    test_match_exit_intent,
+    test_match_yes_no,
     test_injection_refused,
     test_inject_re_negative,
     test_danger_intercepted,

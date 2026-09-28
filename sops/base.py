@@ -2,14 +2,12 @@
 
 一个 SOP 是一组有状态的步骤，通过槽位（slot）记忆上下文，逐步引导用户完成一个业务场景。
 步骤类型：ask（提问收集槽位）、action（执行动作，如按预算检索）、reply（输出结果并结束）。
-
-会话状态按 session_id 隔离；Redis 可用时存 Redis（带 TTL），否则降级到进程内 `_sessions`。
 """
 import re
 from tools.log_tool import get_logger
 from config.word_dict_config import (
     AFTERSALES_WORDS,BUY_WORDS, CONSULT_WORDS, BRAND_WORDS,
-    LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS,
+    LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS, PRICIER_WORDS, NEWER_WORDS, OLDER_WORDS,
 )
 
 logger = get_logger(name="sops_base")
@@ -18,9 +16,7 @@ SOPS = {}  # sop_id → sop 定义
 
 def is_consulting(query: str) -> bool:
     """判断是否是「选购咨询」（选购要注意什么），而非「选购动作」（我要买）。
-
-    咨询类含"选购/购买"等动作词 + "注意/问题/技巧"等咨询词，
-    这类是 FAQ 问答，不应触发选购 SOP。
+    需要同时命中两个词表才能判True
     """
     has_buy = any(w in query for w in BUY_WORDS)
     has_consult = any(w in query for w in CONSULT_WORDS)
@@ -239,16 +235,70 @@ def _run(session_id: str, user_input: str):
             _save_session(session_id, session)
 
 
+# 相对上一轮展示范围：rel -> (取值字段, 边界函数, 比较方向, 降序?)
+_REL_SPEC = {
+    "cheaper": ("price", min, "lt", True),
+    "pricier": ("price", max, "gt", False),
+    "newer": ("publish", max, "gt", False),
+    "older": ("publish", min, "lt", True),
+}
+_REL_LABEL = {"cheaper": "更便宜", "pricier": "更贵", "newer": "更新", "older": "发布更早"}
+_REL_SUPER = {"cheaper": "最便宜", "pricier": "最贵", "newer": "最新", "older": "最早发布"}
+
+
+def _rel_header(rels: list) -> str:
+    """相对追问的回复头（多维度时并列，如「更便宜、更新」）。"""
+    return "比刚才那几款%s的有：" % "、".join(_REL_LABEL[r] for r in rels)
+
+
+def _rel_none_msg(rels: list) -> str:
+    """越过门槛的型号一个都没有时的回复；多维度要点名组合，避免误读成单维度已到顶。"""
+    if len(rels) == 1:
+        return "刚才推荐的那几款已经是目前%s的了～" % _REL_SUPER[rels[0]]
+    return "比刚才那几款%s的型号暂时没有～" % "、".join(_REL_LABEL[r] for r in rels)
+
+
+def _publish_key(model: dict) -> int:
+    """型号发布时间 → int YYYYMMDD（记录里可能是文本，如 2026-03-15）。"""
+    digits = re.sub(r"\D", "", str(model.get("publish_date") or ""))
+    return int(digits) if len(digits) >= 8 else 0
+
+
+def _relative_filter(prev: list, models: list, rel: str) -> list:
+    """按单个相对维度过滤出越过上一轮展示边界的型号（不排序、不截断）。"""
+    field, pick, op, _desc = _REL_SPEC[rel]
+
+    def value(m: dict) -> int:
+        return int(m.get("price") or 0) if field == "price" else _publish_key(m)
+
+    edges = [value(m) for m in prev if value(m)]
+    if not edges:
+        return []
+    edge = pick(edges)
+    return [m for m in models if value(m) and (value(m) < edge if op == "lt" else value(m) > edge)]
+
+
+def _relative_slice(prev: list, models: list, rels: list) -> list:
+    """按一个或多个相对维度过滤（同时满足），最接近门槛的在前，最多 3 条。"""
+    for rel in rels:
+        models = _relative_filter(prev, models, rel)
+    if not models:
+        return []
+    field, _pick, _op, desc = _REL_SPEC[rels[0]]
+
+    def value(m: dict) -> int:
+        return int(m.get("price") or 0) if field == "price" else _publish_key(m)
+
+    return sorted(models, key=value, reverse=desc)[:3]
+
+
 def handle_followup(session_id: str, query: str):
     """回答追问。返回回复文本或 None。
 
-    两类追问语义不同：
-      - 最近发布/新款 → 重定向：全局按发布时间倒序（不限上一轮预算区间）
-      - 更便宜/划算 → 限定：上一轮结果内按价格升序
+    全局类（最近发布 / 最贵 / 最便宜）不依赖上一轮；相对类（更便宜 / 更贵 / 更新 / 更旧）
+    以上一轮展示过的边界为门槛，在全库取越过边界、最接近边界的几款。
     """
     # 最近发布类：全局检索（不依赖上一轮上下文）
-    #   - 明确词："新款/最新/比较新/最近发布/新出/上市"
-    #   - 笼统"最近"（后面不带时间单位）+ "发布/新/出"
     latest_hit = any(w in query for w in LATEST_WORDS)
     vague_recent = (
             "最近" in query
@@ -272,14 +322,25 @@ def handle_followup(session_id: str, query: str):
             save_recommend(session_id, models[:1])
             return _format_models(models[:1], "目前最便宜的是这一款：")
 
-    # 限定追问：更便宜 → 上一轮结果内按价格升序
-    if any(w in query for w in CHEAPER_WORDS):
-        models = get_last_recommend(session_id)
-        if not models:
+    # 相对上一轮展示范围的追问：更便宜 / 更贵 / 更新 / 更旧
+    # 找到第一个命中四个"更加"域的词
+    # 多个相对维度可并列（「更新更便宜的」= 更新 **且** 更便宜），逐个收窄；
+    # 裸「更新」不进球表（与「固件更新」撞），但「更X更Y」结构无歧义，用 regex 兜
+    newer_hit = any(w in query for w in NEWER_WORDS) or bool(re.search(r"更新更(?:便宜|贵|新|旧)", query))
+    rels = [k for k, hit in (("cheaper", any(w in query for w in CHEAPER_WORDS)),
+                             ("pricier", any(w in query for w in PRICIER_WORDS)),
+                             ("newer", newer_hit),
+                             ("older", any(w in query for w in OLDER_WORDS))) if hit]
+    if rels:
+        prev = get_last_recommend(session_id)
+        if not prev:
             return None
-        sorted_models = sorted(models, key=lambda m: m.get("price") or 0)
-        save_recommend(session_id, sorted_models[:3])
-        return _format_models(sorted_models[:3], "在刚才的推荐里，更便宜的有这几款：")
+        field = "publish_date" if _REL_SPEC[rels[0]][0] == "publish" else "price"
+        got = _relative_slice(prev, _search_global(field, False, field), rels)
+        if not got:
+            return _rel_none_msg(rels)
+        save_recommend(session_id, got)
+        return _format_models(got, _rel_header(rels))
 
     return None
 

@@ -70,6 +70,11 @@ def lock_ttl() -> int:
     return _cfg_int("lock_ttl", 60)
 
 
+def pending_ttl() -> int:
+    """待确认状态（SOP 退出确认 / 网点问城市等）的过期秒数。"""
+    return _cfg_int("pending_ttl", 600)
+
+
 def json_dumps(obj) -> str:
     return json.dumps(obj, ensure_ascii=False)
 

@@ -6,3 +6,4 @@ db: 0
 # 业务 key TTL（秒）
 sop_ttl: 1800      # SOP 会话状态 30 分钟
 lock_ttl: 60       # 并发锁 / 摄入锁 60 秒
+pending_ttl: 600   # 待确认状态（退出确认 / 网点问城市）10 分钟
