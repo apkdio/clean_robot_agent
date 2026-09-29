@@ -4,7 +4,9 @@
 结构与用法见同目录 `README.md`）。一行 = 一个会话：`turns`（全部消息）+ `cases`（标注条目）。
 
 harness 对每条 case：回放 `turns[:query_index]` 重建上下文与 SOP 状态，再发 `case.query`，
-按 `expect.behaviour`（出口行为）+ `must_contain_any` / `must_not_contain` 断言。
+按 `expect.behaviour`（出口行为，读主链路的 `[Behavior]` tag）判定。
+数据里的 `must_contain_any` / `must_not_contain` 保留不动但**暂不参与判定**（2026-09-29）：
+话术断言会随文案漂移，而「行为对不对」与「话里有没有某个词」是两回事——后者属内容级，归检索轨与人工复核。
 
 出口行为的判定方式（2026-09-28 起）：**不解析话术**，改读主链路的 `[Behavior]` tag
 （`tools/agent.py::_log_behavior`，每个出口一行）——harness 用一个 logging handler 在**进程内**收集，
@@ -71,7 +73,7 @@ _HARD_BEHAVIOURS = {"safety_alert", "safety_carry", "refuse",
 _SOFT_BEHAVIOURS = {"chitchat", "clarify", "slot_filled", "scope_guard"}
 
 # 期望行为 → 可接受的 tag（软行为的「行为对得上吗」提示用；硬行为判定走 _TAG_TO_BEHAVIOUR）。
-# 两条无专属 tag 的按 notes/BEHAVIOR_TAGS_0928.md §五 折算：
+# 两条无专属 tag 的按 project_detail.md §4.15「与存量 behaviour 的映射」折算：
 # 越界应由拒答分支接住（scope_guard）；槽位提取的证据是流程内推进或预算直出（slot_filled）。
 _ACCEPTED_TAGS = {
     "safety_alert": {"stop_use_safety"},
@@ -132,15 +134,13 @@ def _tag_text(tags: list) -> str:
     return "tag=" + "/".join(tags) if tags else "tag=未捕获"
 
 
-def _check_case(reply: str, expect: dict, tags: list) -> list:
-    """返回问题清单（空 = 通过）。硬行为读 tag，软行为只由 must / must_not 承担。"""
+def _check_case(expect: dict, tags: list) -> list:
+    """返回问题清单（空 = 通过）。**判据只有出口行为**（读 `[Behavior]` tag）。
+
+    `must_contain_any` / `must_not_contain` 暂不参与判定：它们判的是“话里有没有某个词”，
+    与“这一轮被处置成哪类行为”是两回事（内容级问题归检索轨与人工复核）。
+    """
     problems = []
-    for s in expect.get("must_not_contain") or []:
-        if s in reply:
-            problems.append(f"不应出现「{s}」")
-    mca = expect.get("must_contain_any") or []
-    if mca and not any(s in reply for s in mca):
-        problems.append("应至少包含 " + " / ".join(mca) + " 之一")
     beh = expect.get("behaviour")
     if beh in _HARD_BEHAVIOURS:
         if not tags:
@@ -216,6 +216,11 @@ def _run_row(row: dict) -> list:
     # 待确认状态（退出确认门 / 网点问城市等）2026-09-28 起统一在 pending_store：
     # Redis 键 + 内存降级都要清，否则同一 sid 上一行的残留会污染下一行。
     clear_pending(sid)
+    # 主链路 trace（tools/trace_store.py）也按 sid 落盘，同一 sid 跨行复用——先清掉上轮的落盘与
+    # 进程内计数，否则 `turn_index` 会接着前一次运行数、文件也会累积。
+    reset_trace(sid)
+    # 上一次运行若被中断，会话文件会留在盘上（收尾才删）——开头也删一次，让中断后的重跑自愈。
+    delete_session(sid)
 
     turns = row["turns"]
     results = []
@@ -226,21 +231,60 @@ def _run_row(row: dict) -> list:
             _replay_prefix(sid, turns, replayed, qi)
             reply, tags = _ask(sid, case["query"])
             append_message(sid, "assistant", reply)
-            problems = _check_case(reply, case["expect"], tags)
+            problems = _check_case(case["expect"], tags)
         except Exception as exc:  # noqa: BLE001
             reply = f"<EXCEPTION {type(exc).__name__}: {exc}>"
             tags = []
             problems = [f"执行异常：{type(exc).__name__}: {exc}"]
+        record = read_last_turn(sid)
+        if record.get("aborted"):
+            # 评测里正常不会出现（生成器必被消费完）；真出现说明这轮被截断，行为判定不可信
+            problems.append("本轮 trace 标记 aborted（回答未跑完，判定不可信）")
         hard = case["expect"].get("behaviour") in _HARD_BEHAVIOURS
         must_pass = hard and ((case.get("verdict") == "pass") or (case.get("type") == "regression_fixed"))
+        # 有问题的条目附上本轮 trace 摘要（主链路落的结构化环节记录），省得回头 grep 日志
         results.append({"case": case, "reply": reply, "problems": problems,
-                        "hard": hard, "must_pass": must_pass, "tags": tags})
+                        "hard": hard, "must_pass": must_pass, "tags": tags,
+                        "trace": _trace_brief(record) if problems else ""})
         replayed = qi + 1
 
     delete_session(sid)
     clear_pending(sid)
     sops.base._sessions = {}
     return results
+
+
+def _trace_brief(record: dict) -> str:
+    """把一条 trace 记录压成一行人读摘要（失败归因用）；没有 trace 返回空串。"""
+    if not record:
+        return ""
+    steps = record.get("steps") or {}
+    bits = []
+    intent = steps.get("intent") or {}
+    if intent:
+        margin = intent.get("margin")
+        bits.append("意图=%s%s" % (intent.get("intent"),
+                                  "(%.3f)" % float(margin) if isinstance(margin, (int, float)) else ""))
+    rewrite = steps.get("rewrite") or {}
+    if rewrite and rewrite.get("via") not in (None, "none"):
+        bits.append("改写=%s→「%s」" % (rewrite.get("via"), rewrite.get("effective_query")))
+    retrieve = steps.get("retrieve") or {}
+    if retrieve:
+        bits.append("检索=%s/%s条" % (retrieve.get("domain") or "全库", retrieve.get("n_chunks")))
+    ms = record.get("ms") or {}
+    if ms:
+        bits.append("耗时ms=" + "/".join("%s:%s" % (k, v) for k, v in sorted(ms.items())))
+    return " · ".join(bits)
+
+
+def _trace_version() -> str:
+    """主链路 trace 的记录版本（`tools/trace_store.py::VERSION`），写进报告便于日后对齐。"""
+    try:
+        import trace_store
+
+        return "v%s" % trace_store.VERSION
+    except Exception:  # noqa: BLE001
+        return "?"
 
 
 def _print_detail(results):
@@ -256,6 +300,8 @@ def _print_detail(results):
               f"   [{_tag_text(r['tags'])}]")
         if r["problems"]:
             print(f"              ↳ {'；'.join(r['problems'])}")
+            if r.get("trace"):
+                print(f"              · 本轮环节：{r['trace']}")
 
     print("── 软行为（无唯一正确答案 → 只出复核清单，不判失败）──")
     for r in (x for x in results if not x["hard"]):
@@ -270,6 +316,8 @@ def _print_detail(results):
               f"   [{_tag_text(r['tags'])}]")
         if r["problems"]:
             print(f"              ↳ {'；'.join(r['problems'])}")
+            if r.get("trace"):
+                print(f"              · 本轮环节：{r['trace']}")
 
 
 def _review_path():
@@ -288,7 +336,7 @@ def _review_path():
 def _write_review(rows, results, hard_results, soft_results, must_pass, regressions):
     """把**软行为复核清单**落盘——复核是人工 / LLM 的活，得能拿出去看。
 
-    软行为没有唯一正确答案，所以文件里只摆事实：期望要点 + 本次回复 + 偏离点 + 归档判据。
+    软行为没有唯一正确答案，所以文件里只摆事实：期望行为 + 实际 tag + 本次回复 + 偏离点 + 归档判据。
     """
     need_review = [r for r in soft_results if r["problems"]]
     out = [
@@ -297,9 +345,10 @@ def _write_review(rows, results, hard_results, soft_results, must_pass, regressi
         f"- 生成时间：{time.strftime('%Y-%m-%d %H:%M:%S')}",
         f"- 评测集：`data/eval/context/golden.jsonl`"
         f"（{len(rows)} 会话 / {len(results)} 条标注：硬 {len(hard_results)} · 软 {len(soft_results)}）",
+        f"- trace 记录：{_trace_version()}（`tools/trace_store.py`，每轮一条；有问题的条目附「本轮环节」）",
         f"- 硬行为（回归门）：必过 {len(must_pass) - len(regressions)}/{len(must_pass)} 通过"
         + (f"，**{len(regressions)} 条回归需处理**" if regressions else ""),
-        f"- 软行为：**{len(need_review)}/{len(soft_results)} 条偏离期望要点或行为对不上**（不判失败，按下表复核）",
+        f"- 软行为：**{len(need_review)}/{len(soft_results)} 条行为与期望不符**（不判失败，按下表复核）",
         "",
         "> 软行为本来就没有“必须包含某句话”的正确答案，所以只列事实，判断留给人 / LLM。",
         "",
@@ -312,18 +361,15 @@ def _write_review(rows, results, hard_results, soft_results, must_pass, regressi
             mark = "✓ 已转通过"
         else:
             mark = "· 未偏离"
-        want = []
-        if exp.get("must_contain_any"):
-            want.append("应含 " + " / ".join(exp["must_contain_any"]))
-        if exp.get("must_not_contain"):
-            want.append("不应含 " + " / ".join(exp["must_not_contain"]))
         out += [f"## {mark} {c['id']}（{c.get('type')}）", "",
                 f"- 用户：{c['query']}",
-                f"- 期望要点：{'；'.join(want) if want else '（未写 must / must_not）'}",
-                f"- 行为 tag：{_tag_text(r['tags'])}（期望行为 {c['expect'].get('behaviour')}，软行为不判定）",
+                f"- 期望行为：{exp.get('behaviour')}",
+                f"- 实际 tag：{_tag_text(r['tags'])}",
                 f"- 本次回复：{r['reply']}"]
         if r["problems"]:
             out.append(f"- 偏离点：{'；'.join(r['problems'])}")
+        if r.get("trace"):
+            out.append(f"- 本轮环节：{r['trace']}")
         if c.get("note"):
             out.append(f"- 归档判据：{c['note']}")
         out.append("")
@@ -371,11 +417,12 @@ def run():
     need_review = [r for r in soft_results if r["problems"]]
 
     print(f"  会话 {len(rows)} 个 / 标注 {len(results)} 条（硬行为 {len(hard_results)} · 软行为 {len(soft_results)}）")
+    print(f"  trace 记录版本：{_trace_version()}（失败归因取自它；逐轮时间线用 test_scripts/trace_report.py 看）")
     print(f"  【硬行为·回归门】必过 {len(must_pass) - len(regressions)}/{len(must_pass)} 通过"
           f"；未修 badcase 仍失败 {len(xfail)}、已转通过 {len(xpass)}")
     if xpass:
         print("                  已转通过：" + "、".join(r["case"]["id"] for r in xpass))
-    print(f"  【软行为·复核清单】{len(need_review)}/{len(soft_results)} 条偏离期望要点或行为对不上 → 需人工 / LLM 复核（不算失败）")
+    print(f"  【软行为·复核清单】{len(need_review)}/{len(soft_results)} 条行为与期望不符 → 需人工 / LLM 复核（不算失败）")
     print("=" * 72)
 
     if need_review:

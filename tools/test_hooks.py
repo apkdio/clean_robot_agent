@@ -3,7 +3,7 @@
 评测 harness 不该直接摸内部结构——会话记录里的 `danger` 标记、安全承接的"连续承接次数"、
 SOP 会话状态与统一待确认状态——所以把最小的 setup 接口集中在这里。
 
-对应 notes/TODO_0927.md 的「状态型用例」（`kind: stateful`）：
+对应 project_detail.md §4.15 的状态型用例（`kind: stateful`；决策见 ADR-25）：
 
     setup = {"danger_word": "糊味", "carry_count": 1, "intent": "unknown"}
     → set_danger_window(sid, "糊味"); set_carry_count(sid, 1)

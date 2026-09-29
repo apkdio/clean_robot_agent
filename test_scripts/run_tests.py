@@ -1,75 +1,65 @@
-"""聚合运行所有测试（`unit/` 功能测试 + `eval/` 评测轨；每个文件也可独立运行）。
-
-默认只跑纯规则用例（快、确定性）；加 --e2e 追加需要 Ollama / Chroma / torch 的
-集成用例（意图分类、多轮实战对话、检索质量评测、多轮上下文评测、意图分类评测）。
-模块清单见下方 import 与 MODULES 列表。解释器用 .venv\\Scripts\\python.exe。
+"""评测入口：只跑 `eval/` 下的数据集评测轨（检索质量 / 多轮行为 / 意图分类 + tag 契约自检）。
 """
 import os
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-for _sub in (_HERE, os.path.join(_HERE, "unit"), os.path.join(_HERE, "eval")):
+for _sub in (_HERE, os.path.join(_HERE, "eval")):
     sys.path.insert(0, _sub)
 
-from _runner import E2E, disable_shadow  # noqa: E402
+from _runner import E2E, check_module_duality, disable_shadow  # noqa: E402
 
-# ── 功能测试（unit/）─────────────────────────────────────────────
-import test_intent           # noqa: E402
-import test_purchase_sop     # noqa: E402
-import test_repair_sop       # noqa: E402
-import test_context          # noqa: E402
-import test_metadata         # noqa: E402
-import test_function_tools   # noqa: E402
-import test_retrieval        # noqa: E402
-import test_agent_guards     # noqa: E402
+# ── tag 契约自检（纯规则，先跑：判据错了后面的评测跑得再久也没意义）──────
 import test_behavior_tags    # noqa: E402
-import test_dialogue         # noqa: E402
 
-# ── 评测轨（eval/）───────────────────────────────────────────────
+# ── 数据集评测轨（eval/）─────────────────────────────────────────
 import test_retrieval_eval   # noqa: E402
 import test_context_eval     # noqa: E402
 import test_intent_eval      # noqa: E402
 
 
 MODULES = [
-    ("意图分类", test_intent),
-    ("选购 SOP", test_purchase_sop),
-    ("故障排查 SOP", test_repair_sop),
-    ("上下文存储", test_context),
-    ("结构化提取", test_metadata),
-    ("Function Tools", test_function_tools),
-    ("检索", test_retrieval),
-    ("Agent 前置防护", test_agent_guards),
-    ("行为观测点 tag", test_behavior_tags),
-    ("多轮实战对话", test_dialogue),
-    # ── 评测轨 ──
+    ("行为观测点 tag 契约（自检）", test_behavior_tags),
     ("检索质量评测", test_retrieval_eval),
-    ("多轮上下文评测", test_context_eval),
+    ("多轮行为评测", test_context_eval),
     ("意图分类评测", test_intent_eval),
 ]
 
 
 def main():
     # 评测隔离：影子探针只落日志、不参与被测行为，却要额外跑一次 FC（实测每轮 +75~125s）。
-    # 整个测试进程关掉，算力让给被测主链路；进程结束即失效，不影响正常运行时的影子观测。
+    # 整个评测进程关掉，算力让给被测主链路；进程结束即失效，不影响正常运行时的影子观测。
     disable_shadow()
     grand_p = grand_t = grand_s = 0
     for name, mod in MODULES:
-        p, t, s = mod.run()
+        try:
+            p, t, s = mod.run()
+        except Exception as exc:  # noqa: BLE001 - 一个模块崩了（如评测集文件坏了）不该让整份报告消失
+            print(f"\n[!] {name} 执行异常：{type(exc).__name__}: {exc}")
+            p, t, s = 0, 1, 0
         grand_p += p
         grand_t += t
         grand_s += s
 
+    dup = check_module_duality()
+    if dup:
+        print(f"\n⚠ 同名模块两份实例（裸名 + `tools.` 前缀）：{'、'.join(dup)}")
+        print("  幂等/缓存类影响低；带可变状态的模块分裂会真的出错——新增模块时统一用 `tools.` 前缀。")
+
     print()
     print("#" * 72)
-    print(f"# 总计：{grand_p}/{grand_t} 通过，跳过 {grand_s}", end="")
-    if grand_p == grand_t:
-        print("  ✔ 全部通过")
+    if grand_t:
+        print(f"# 总计：{grand_p}/{grand_t} 通过，跳过 {grand_s}", end="")
+        if grand_p == grand_t:
+            print("  ✔ 通过")
+        else:
+            print(f"  ✘ {grand_t - grand_p} 项失败")
     else:
-        print(f"  ✘ {grand_t - grand_p} 项失败")
+        print(f"# 未执行任何用例（{grand_s} 个模块被跳过）")
     print("#" * 72)
     if not E2E:
-        print("提示：追加 --e2e 可运行意图分类与多轮对话等集成/端到端用例。")
+        print("⚠ 未加 --e2e：三条数据集评测轨全部跳过，本次只跑了纯规则自检。")
+        print("  加 --e2e 才是完整评测（需 Ollama + Chroma + reranker）。")
     sys.exit(0 if grand_p == grand_t else 1)
 
 

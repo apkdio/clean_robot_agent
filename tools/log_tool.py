@@ -1,10 +1,39 @@
 from datetime import datetime
+import contextvars
 import logging
 import logging.handlers
 import os
 import sys
 
 from path_tool import get_abs_path
+
+# ── 会话标记 ──────────────────────────────────────────────────────────────
+# 回答期间把会话 id（前 8 位，够 grep）打进当前线程的日志，便于按会话捞轨迹。
+# 状态挂到 logging 上做全进程单例：本模块会被裸导入与包导入各加载一份，模块级状态会分裂。
+_session_var = getattr(logging, "_cr_session_var", None)
+if _session_var is None:
+    _session_var = contextvars.ContextVar("log_session", default="-")
+    logging._cr_session_var = _session_var
+
+
+def set_log_session(session_id: str) -> None:
+    """标记当前线程的日志属于哪个会话（一轮回答开始时调用）。"""
+    _session_var.set((session_id or "-")[:8])
+
+
+def clear_log_session() -> None:
+    """清掉会话标记（一轮回答结束时调用）。"""
+    _session_var.set("-")
+
+
+class _SessionFilter(logging.Filter):
+    """给每条日志补上会话标记（记录里已有则不动）。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not getattr(record, "session", None):
+            record.session = _session_var.get()
+        return True
+
 
 # ── ANSI 终端颜色 ─────────────────────────────────────────────────────────
 _COLORS = {
@@ -63,12 +92,12 @@ _LOG_MAX_BYTES = 5 * 1024 * 1024   # 5MB
 _LOG_BACKUP_COUNT = 2              # 保留 2 份滚动备份
 
 file_log_template = logging.Formatter(
-    "%(asctime)s - %(name)s - [%(levelname)s] - %(filename)s:%(lineno)d -  %(message)s"
+    "%(asctime)s - %(name)s - [%(session)s] - [%(levelname)s] - %(filename)s:%(lineno)d -  %(message)s"
 )
 
 # ── 控制台日志（彩色级别，紧凑）───────────────────────────────────────────
 console_log_template = _ColorFormatter(
-    "%(asctime)s - %(name)s - %(levelname)s  -  %(message)s"
+    "%(asctime)s - %(name)s - [%(session)s] - %(levelname)s  -  %(message)s"
 )
 
 
@@ -90,6 +119,7 @@ def get_logger(name: str = "agent",
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(console_level)
     console_handler.setFormatter(console_log_template)
+    console_handler.addFilter(_SessionFilter())
     logger.addHandler(console_handler)
 
     # 文件：按大小滚动（超过上限切到 .1/.2），避免单文件无限增长
@@ -106,6 +136,7 @@ def get_logger(name: str = "agent",
     )
     file_handler.setLevel(file_level)
     file_handler.setFormatter(file_log_template)
+    file_handler.addFilter(_SessionFilter())
     logger.addHandler(file_handler)
 
     return logger

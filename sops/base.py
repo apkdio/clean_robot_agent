@@ -97,6 +97,11 @@ def get_active_sop_id(session_id: str):
     return s["sop_id"] if s else None
 
 
+def get_sop_state(session_id: str) -> dict:
+    """返回活跃 SOP 的进度（sop_id / step / slots / retry_count）；无活跃 SOP 时空 dict。"""
+    return _load_session(session_id) or {}
+
+
 def _start(session_id: str, sop_id: str):
     session = {"sop_id": sop_id, "step": 0, "slots": {}, "retry_count": 0}
     _save_session(session_id, session)
@@ -127,6 +132,8 @@ def start_sop(session_id: str, sop_id: str, query: str):
     首轮先尝试用触发 query 提取第一个槽位（预填用户已给的信息），
     提取失败再问第一个问题。开场提示（intro）可选，有则先输出。
     """
+    from tools.context_store import set_enter_declined
+    set_enter_declined(session_id, False)   # 用户这次真进了流程，之前「别再问」的标记作废
     _start(session_id, sop_id)
     logger.info(f"[SOP] Start SOP: {sop_id}")
     reply, done = _run(session_id, query)

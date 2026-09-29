@@ -69,10 +69,10 @@ clean_robot_agent/
 │   ├── base.py                  # 会话状态（按 session_id 隔离）+ 执行器 + 知识域定义
 │   ├── purchase.py              # 选购推荐 SOP
 │   └── repair.py                # 故障排查 SOP
-├── test_scripts/                # 测试与评测（run_tests.py 聚合；unit/ 功能测试 · eval/ 评测轨）
-│   ├── run_tests.py             # 聚合入口：python run_tests.py [--e2e]
+├── test_scripts/                # 测试与评测（run_tests.py 只聚合 eval/ 评测轨；unit/ 功能测试暂搁置）
+│   ├── run_tests.py             # 评测入口：python run_tests.py --e2e
 │   ├── _runner.py               # 共享断言/汇总/e2e 门控/测试数据隔离
-│   ├── unit/                    # 功能测试（快、确定性，多数无需模型）
+│   ├── unit/                    # 功能测试（暂搁置：不进评测入口，文件保留、可单独运行）
 │   │   ├── test_intent.py       # 意图分类（robot/other/casual/unknown，需 --e2e）
 │   │   ├── test_purchase_sop.py # 选购 SOP（SOP 状态机 + 选购推荐流程）
 │   │   ├── test_repair_sop.py   # 故障排查 SOP（症状映射 + 流程）
@@ -82,9 +82,10 @@ clean_robot_agent/
 │   │   ├── test_retrieval.py    # 检索链路（域路由/分词/过滤/RRF/阈值/精排/条目切分）
 │   │   ├── test_agent_guards.py # Agent 前置防护（情绪/注入/危险/退出意图）
 │   │   └── test_dialogue.py     # 多轮实战对话（正常 + 非人类，需 --e2e）
-│   └── eval/                    # 评测轨（留出集 + 基线，需 --e2e）
+│   └── eval/                    # 评测轨（留出集 + 基线，评测入口默认跑这些；多数需 --e2e）
+│       ├── test_behavior_tags.py   # 行为观测点 tag 契约自检（纯规则，不依赖模型）
 │       ├── test_retrieval_eval.py  # 检索质量评测（hit@k/MRR；评测集 data/eval/retrieval）
-│       ├── test_context_eval.py    # 多轮上下文评测（出口行为断言；评测集 data/eval/context）
+│       ├── test_context_eval.py    # 多轮行为评测（按行为观测 tag 判出口行为；评测集 data/eval/context）
 │       └── test_intent_eval.py     # 意图分类评测（留出集；口径见 data/datasets/README.md）
 ├── intent_classifier_training/  # 意图分类模型训练工具
 │   ├── build_intent_dataset.py  # 数据集构建（从知识库抽取 + 规则改写）
@@ -115,12 +116,13 @@ clean_robot_agent/
 | `hot_ingest.py` | 知识库热更新：定时扫描 + 增量入库 |
 | `file_tools.py` | 文档多策略解析（txt/pdf/csv/docx） |
 | `llm_tool.py` | LLM / embedding 工厂（含 function calling） |
-| `log_tool.py` | 日志（控制台彩色 + 文件，按 `logs/<模块>/<日期>/` 分目录） |
+| `log_tool.py` | 日志（控制台彩色 + 文件，按 `logs/<模块>/<日期>/` 分目录；行上带会话标记，可按会话 grep） |
 | `config_tool.py` / `path_tool.py` / `prompts_tool.py` | 配置 / 路径 / Prompt 加载 |
 | `context_store.py` | 会话上下文：按 session_id 持久化最近 6 轮对话（jsonl）+ meta 元数据（LLM 标题）+ 会话增删查改 |
 | `redis_store.py` | Redis 连接封装 + 互斥锁（SET NX）+ 降级回退：无 Redis 时自动回退本地内存 |
 | `pending_store.py` | 统一待确认状态（SOP 退出确认 / 网点问城市 / 选序号）：Redis `sop:pending:{sid}` + TTL，无 Redis 降级内存并校验时间戳 |
 | `test_hooks.py` | **仅供测试/评测**的状态注入助手（danger 窗口 / 连续承接计数 / 活跃 SOP / 待确认状态）|
+| `trace_store.py` | 会话级 trace：每轮落一条结构化记录（`logs/trace/<日期>/<会话>.jsonl`，best-effort 不影响对话，`TRACE_DIR` 可改落点）|
 
 ## 工具调用模块（function_tools/）
 
@@ -258,28 +260,38 @@ python intent_classifier_training/train_intent_classifier.py
 
 ## 测试
 
-测试脚本在 `test_scripts/`，按模块拆分，由 `run_tests.py` 聚合运行。分两层：
+测试脚本在 `test_scripts/`。**评测入口 `run_tests.py` 只跑 `eval/` 下的数据集评测轨**（检索质量 / 多轮行为 / 意图分类 + 一条纯规则的 tag 契约自检）：
 
-- **单元测试**（默认）：纯规则逻辑，快、确定性，**不依赖** Ollama / Chroma / torch；
-- **集成 / 端到端**（加 `--e2e`）：需本地 Ollama + Chroma + 精排模型，覆盖意图分类、多轮对话、SOP 全流程、检索质量评测等；
+- **评测轨**（`eval/`，默认）：基于留出集与基线，需本地 Ollama + Chroma + 精排模型，**要加 `--e2e`**；
+- **单元测试**（`unit/`，**暂搁置**）：纯规则逻辑，快、确定性，不进评测入口；文件都还在，需要时单独运行；
 - **数据隔离**：测试产生的会话/上下文文件写入 `data/test_context/`、`data/test_context_metadata/`，不污染真实会话数据。
 
 > 请用项目虚拟环境解释器运行——`torch` 等依赖只装在 `.venv`，系统 Python 没有。
 
 ```bash
-# 全部单元测试（快，无需模型）
-.venv/Scripts/python.exe test_scripts/run_tests.py
-
-# 追加集成 / 端到端（需 Ollama + Chroma + reranker）
+# 数据集评测轨（需 Ollama + Chroma + reranker）
 .venv/Scripts/python.exe test_scripts/run_tests.py --e2e
 
-# 单个模块也可独立运行
-.venv/Scripts/python.exe test_scripts/unit/test_retrieval.py [--e2e]
+# 单条评测轨也可独立运行
+.venv/Scripts/python.exe test_scripts/eval/test_context_eval.py --e2e
+.venv/Scripts/python.exe test_scripts/eval/test_retrieval_eval.py --e2e --compare
+
+# 单元测试（暂搁置）：不进评测入口，按需单独运行
+.venv/Scripts/python.exe test_scripts/unit/test_purchase_sop.py
 ```
 
 ### 测试模块
 
-测试分两层：`unit/` 是功能测试（快、确定性，多数不需要模型），`eval/` 是带留出集与基线的评测轨。
+`eval/` 是带留出集与基线的评测轨——**评测入口默认跑这些**：
+
+| 模块 | 覆盖范围 | 需 `--e2e` |
+|------|---------|:---------:|
+| `eval/test_behavior_tags.py` | 行为观测点 tag 契约自检（采集 / 映射 / 判定四态 / 影子隔离） | |
+| `eval/test_retrieval_eval.py` | 检索质量评测（hit@k / MRR / 无召回率 / 结构化直出命中率） | ✓ |
+| `eval/test_context_eval.py` | 多轮行为评测（按行为观测 tag 判出口行为 + 回归门禁 + 软行为复核清单） | ✓ |
+| `eval/test_intent_eval.py` | 意图分类评测（逐条标签 / 各类 F1 / 混淆矩阵 / 高置信错判） | ✓ |
+
+`unit/` 是功能测试，**暂搁置**（不进评测入口，需要时单独运行）：
 
 | 模块 | 覆盖范围 | 需 `--e2e` |
 |------|---------|:---------:|
@@ -292,11 +304,8 @@ python intent_classifier_training/train_intent_classifier.py
 | `unit/test_retrieval.py` | 检索链路（域路由 / 分词 / 过滤 / RRF / 阈值 / 精排 / 条目切分） | 部分 |
 | `unit/test_agent_guards.py` | Agent 前置防护（情绪 / 注入 / 危险 / 退出意图） | |
 | `unit/test_dialogue.py` | 多轮实战对话（正常对话 + 非人类对话） | ✓ |
-| `eval/test_retrieval_eval.py` | 检索质量评测（hit@k / MRR / 无召回率 / 结构化直出命中率） | ✓ |
-| `eval/test_context_eval.py` | 多轮上下文评测（出口行为断言 + 回归门禁） | ✓ |
-| `eval/test_intent_eval.py` | 意图分类评测（逐条标签 / 各类 F1 / 混淆矩阵 / 高置信错判） | ✓ |
 
-集成用例用 `@e2e` 装饰器标注，未加 `--e2e` 时自动跳过；意图分类是统计模型，用准确率阈值（常规 ≥90%、极端 ≥75%）断言，误判只打印、不计失败。
+集成用例用 `@e2e` 装饰器标注，未加 `--e2e` 时自动跳过；评测入口缺 `--e2e` 时**不执行任何用例并明确提示**（避免 0/0 被读成“全部通过”）。意图分类是统计模型，用准确率阈值（常规 ≥90%、极端 ≥75%）断言，误判只打印、不计失败。
 
 ### 检索质量评测
 

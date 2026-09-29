@@ -9,15 +9,9 @@
   - 计数与汇总：reset / run_tests / summary。
   - e2e 门控：E2E 标志（由命令行 ``--e2e`` 决定）与 @e2e 装饰器；
     依赖 Ollama / Chroma / torch 的集成用例默认跳过，加 ``--e2e`` 才执行。
-
-约定：
-  - 每个测试模块定义一个 ``run() -> (passed, total, skipped)``，既可独立
-    运行，也可被 run_tests.py 聚合。
-  - 纯规则用例默认运行（快、确定性）；集成/端到端用例用 @e2e 标注。
-
-运行解释器：torch 等依赖只装在 .venv 里，统一用 .venv\\Scripts\\python.exe 执行。
 """
 
+import json
 import os
 import sys
 
@@ -43,6 +37,17 @@ if hasattr(sys.stderr, "reconfigure"):
 # 故能保证首次加载时就指向测试目录（已显式设置时不覆盖）。
 os.environ.setdefault("CONTEXT_DIR", "data/test_context")
 os.environ.setdefault("CONTEXT_META_DIR", "data/test_context_metadata")
+os.environ.setdefault("TRACE_DIR", "temp/trace_test")   # trace 也隔离，避免污染真实 logs/trace/
+
+# 上一段那句「_runner 总先于其它模块被导入」是**隐含约定**，破了会静默失效
+_EARLY_IMPORTED = [m for m in ("tools.context_store", "context_store",
+                               "tools.vector_store", "vector_store") if m in sys.modules]
+if _EARLY_IMPORTED:
+    raise RuntimeError(
+        "测试隔离未生效：%s 已在 _runner 之前被导入——测试会话会被写进真实数据目录。"
+        "请把 `from _runner import *` 放到所有 tools / sops 导入之前。"
+        % "、".join(_EARLY_IMPORTED)
+    )
 
 E2E = "--e2e" in sys.argv
 
@@ -189,8 +194,68 @@ def disable_shadow():
     return lambda: setattr(agent_mod, "_shadow_probe", original)
 
 
+# 双重导入（裸名 + `tools.` 前缀）会加载出两份带状态的模块，两者都能 import 成功。
+# 项目里踩过：context_store 两份实例 → 喂给 LLM 的历史缺 assistant 一侧。
+_WATCHED_MODULES = ("context_store", "vector_store", "redis_store", "log_tool", "llm_tool",
+                    "config_tool", "path_tool", "agent", "intent_router", "metadata_extractor")
+
+
+def check_module_duality():
+    """返回「同名两份实例」的模块名：`sys.modules` 里裸名与 `tools.` 前缀都存在且不同一。
+
+    只报告不报错：已知 `llm_tool` / `log_tool` 是幂等/缓存类，影响低；
+    但带可变状态的模块（`context_store` / `vector_store`）分裂会真的出错。
+    """
+    dup = []
+    for name in _WATCHED_MODULES:
+        bare, prefixed = sys.modules.get(name), sys.modules.get("tools." + name)
+        if bare is not None and prefixed is not None and bare is not prefixed:
+            dup.append(name)
+    return dup
+
+
+def reset_trace(session_id: str) -> None:
+    """清掉某个会话的 trace：删当天落盘文件 + 清 `trace_store` 的进程内计数。
+
+    评测会跨行复用同一个 sid，不清就会：① 文件跨次运行累积；② `turn_index` 接着上次的行数数
+    （`_seq` 只在首次种入）。trace 不是判定依据，这里全 best-effort；若将来内部结构改名，
+    这里只会静默失效——真要长期依赖，应让 `trace_store` 提供一个公开的 reset。
+    """
+    try:
+        import trace_store
+
+        path = trace_store._path(session_id)
+        if os.path.isfile(path):
+            os.remove(path)
+        for key in [k for k in list(trace_store._seq) if k[0] == session_id]:
+            trace_store._seq.pop(key, None)
+        trace_store._last.pop(session_id, None)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def read_last_turn(session_id: str) -> dict:
+    """读某会话当天 trace 的最后一条记录（评测失败归因用）；读不到返回 `{}`。"""
+    try:
+        import trace_store
+
+        last = {}
+        with open(trace_store._path(session_id), encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        last = json.loads(line)
+                    except ValueError:
+                        continue
+        return last
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 __all__ = [
     "E2E", "reset", "run_tests", "summary", "stats", "e2e", "_skip", "disable_shadow",
+    "check_module_duality", "reset_trace", "read_last_turn",
     "_assert", "_assert_eq", "_assert_true", "_assert_false",
     "_assert_in", "_assert_not_in", "_assert_raises",
 ]

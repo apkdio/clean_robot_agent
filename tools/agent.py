@@ -8,13 +8,15 @@
 """
 
 import re
+import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config_tool import load_config
 from tools import pending_store
 from llm_tool import get_chat_model_name, stream_chat
-from log_tool import get_logger
+from log_tool import clear_log_session, get_logger, set_log_session
+import trace_store
 from prompts_tool import load_main_prompts
 from config.word_dict_config import (DOMAIN_MAP, EMOTION_MILD, EMOTION_STRONG, EXIT_WORDS,
                                      NO_ANSWER_REPLIES, domain_files_of)
@@ -642,6 +644,19 @@ def _log_behavior(tag: str, **detail) -> None:
     """行为观测点：把这一轮「处置成哪一类行为」记一行，供行为轨评测与影子对照读取。只输出日志。
     """
     logger.info("[Behavior] %s%s", tag, "".join(" %s=%s" % (k, v) for k, v in detail.items()))
+    trace_store.note_behavior(tag, detail)
+
+
+def _note_sop(session_id: str, **extra) -> None:
+    """把 SOP 当前进度记进 trace：走到哪个节点、已填几个槽位。"""
+    from sops import get_sop_state
+    state = get_sop_state(session_id) or {}
+    fields = dict(extra)
+    if state:
+        fields.update(id=state.get("sop_id"), step=state.get("step"),
+                      n_slots=len(state.get("slots") or {}))
+    if fields:
+        trace_store.step("sop", **fields)
 
 
 def _shadow_probe(query: str, session_id: str, chain_category: str, chain_detail: str = "") -> None:
@@ -674,6 +689,23 @@ def _shadow_probe(query: str, session_id: str, chain_category: str, chain_detail
 
 
 def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
+    """流式问答入口：开一轮 trace，交给 `_ask_stream`，收尾时落盘。"""
+    trace_store.begin_turn(session_id, query)
+    set_log_session(session_id)
+    completed = False
+    try:
+        yield from _ask_stream(query, session_id, lng, lat)
+        completed = True
+    except Exception as exc:  # noqa: BLE001
+        trace_store.note_error(exc)
+        raise
+    finally:
+        # 用户点「停止」时生成器被 close()，completed 仍是 False
+        trace_store.end_turn(aborted=not completed)
+        clear_log_session()
+
+
+def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     """流式问答入口 —— 经本地分类头做意图路由，支持多轮 SOP 引导。
 
     other → 礼貌拒答；casual → 闲聊；
@@ -727,6 +759,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     if has_active_sop(session_id):
         sop_id = get_active_sop_id(session_id)
         sop_name = _sop_name(sop_id)
+        _note_sop(session_id)
         # 状态A：退出确认门 —— 上一轮问了「是要退出「X」环节吗」
         pending = pending_store.get(session_id)
         if pending and pending.get("kind") == "confirm_exit":
@@ -787,6 +820,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             result = continue_sop(session_id, query)
             if result is not None:
                 reply, _done = result
+                _note_sop(session_id, done=bool(_done))
                 if reply:
                     _log_behavior("sop_step")
                     yield reply
@@ -819,6 +853,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             pending_store.clear(session_id)
             # 用当初那句弱触发 query 预填首槽，用户已经说过的信息不重复问
             reply, _done = start_sop(session_id, sop_id, pending.get("query") or query)
+            _note_sop(session_id)
             if reply:
                 _log_behavior("start_sop", sop=sop_id, via="confirm_enter")
                 yield reply
@@ -837,6 +872,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
 
     from intent_router import route_intent_with_margin, get_guess_hint
     intent, margin = route_intent_with_margin(query)
+    trace_store.step("intent", intent=intent, margin=margin)
 
     # 近期发生过安全告警 → 直接承接（零检索、零 LLM）。
     low_conf_margin = float((_ctx_cfg().get("intent") or {}).get("low_conf_margin", 0) or 0)
@@ -912,6 +948,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         if sop_id and sop_needs_enter_confirm(sop_id, query):
             if is_enter_declined(session_id):
                 logger.info("[SOP] enter declined before, skip gate: %s", sop_id)
+                trace_store.step("sop_gate", skipped="declined", sop=sop_id)
                 sop_id = None
             else:
                 pending_store.set(session_id, "confirm_enter", sop=sop_id, query=query)
@@ -920,6 +957,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
                 return
         if sop_id:
             reply, _done = start_sop(session_id, sop_id, query)
+            _note_sop(session_id)
             if reply:
                 _log_behavior("start_sop", sop=sop_id)
                 yield reply
@@ -933,6 +971,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             sop_id = match_sop(query)
             if sop_id == "repair":
                 reply, _done = start_sop(session_id, sop_id, query)
+                _note_sop(session_id)
                 if reply:
                     _log_behavior("start_sop", sop="repair", via="strong_words")
                     yield reply
@@ -998,16 +1037,23 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
 
     # 普通 RAG：双路召回（按知识域定向，识别不准则全库兜底）
     # 低置信追问 / unknown：先按上文把 query 补成自足形式再检索（记录仍是原文）
+    _t_rewrite = time.perf_counter()
     if low_conf or intent == "unknown":
         effective_query, rewrite_via = _rewrite_query(session_id, query)
     else:
         effective_query, rewrite_via = query, "none"
+    trace_store.add_ms("rewrite", _t_rewrite)
+    trace_store.step("rewrite", via=rewrite_via, effective_query=effective_query[:200])
 
     # 域定向检索：filter 是软约束（hybrid_retriever 内部据此走两遍召回）。
     # 域内精排 top1 低于阈值时，它会撤掉 filter 再做一次全库召回并合并两池。
     # 两域分数相似时 _domain_filter 会返回两个域（$in）。
+    _t_retrieve = time.perf_counter()
     domain_value, domain_via = _domain_filter(effective_query)
     chunks = hr.search(effective_query, filter={"file_name": domain_value} if domain_value else None)
+    trace_store.add_ms("retrieve", _t_retrieve)
+    trace_store.step("retrieve", domain=domain_value, via=domain_via, n_chunks=len(chunks),
+                     chunks=trace_store.chunk_brief(chunks))
 
     # 保底 ②：改写后 0 命中 → 用原 query 在全库再检一次（把误改的代价降到多一次检索）
     if not chunks and effective_query != query and _rewrite_cfg().get("retry_with_origin", True):
@@ -1051,6 +1097,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     )
 
     _log_behavior("retrieve_answer", hits=len(chunks))
+    trace_store.step("generate", model=get_chat_model_name())
     for chunk in stream_chat(
             [
                 SystemMessage(content=load_main_prompts()),
