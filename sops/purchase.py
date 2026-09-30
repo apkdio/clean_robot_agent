@@ -50,6 +50,7 @@ def _search(slots: dict):
     return {"count": len(models), "list": "\n".join(lines), "models": models}
 
 
+# 槽位形如 {"budget": [xxx, xxx], "has_pet": xxx}；action 返回 {"count": xxx, "list": xxx, "models": [xxx]}
 PURCHASE_SOP = {
     "id": "purchase",
     "trigger": PURCHASE_TRIGGER,

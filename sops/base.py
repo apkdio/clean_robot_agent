@@ -12,6 +12,9 @@ from config.word_dict_config import (
 
 logger = get_logger(name="sops_base")
 SOPS = {}  # sop_id → sop 定义
+# 定义形如 {"id": xxx, "trigger": [xxx], "guards": [xxx], "intro": xxx, "max_retry": xxx, "steps": [xxx]}
+# 步骤形如 {"id": xxx, "type": ask|action|reply, "slot": xxx, "ask": xxx, "retry": xxx, "extract": xxx}
+#          （action 步换成 "action"，reply 步换成 "template"；可选 "when" 条件跳过）
 
 
 def is_consulting(query: str) -> bool:
@@ -52,6 +55,8 @@ def get_last_recommend(session_id: str):
 
 # 当前活跃会话，按 session_id 隔离（Redis 可用时存 Redis，否则本地降级）
 _sessions = {}
+# 状态形如 {"sop_id": xxx, "step": xxx, "slots": {xxx}, "retry_count": xxx, "result": {xxx}}
+_finished = {}  # session_id -> 刚收尾的那份状态（形状同 _sessions，供 CaseTrace 记槽位/结果，取走即清）
 
 
 def _session_key(session_id: str) -> str:
@@ -85,6 +90,11 @@ def _delete_session(session_id: str):
     if r is not None:
         r.delete(_session_key(session_id))
     _sessions.pop(session_id, None)
+
+
+def pop_finished(session_id: str) -> dict:
+    """取走「刚收尾」的 SOP 状态（含槽位与 action 结果），给 trace 用；没取过就是空 dict。"""
+    return _finished.pop(session_id, None) or {}
 
 
 def has_active_sop(session_id: str) -> bool:
@@ -150,18 +160,20 @@ def continue_sop(session_id: str, query: str):
     return _run(session_id, query)
 
 
-def match_sop(query: str):
-    """按 trigger 匹配 SOP，并评估 guards（排除条件）。
+def match_sop(query: str, sop_id: str = None):
+    """找命中的 SOP：trigger 命中，且它自己的 guards 都没命中（guard 只否掉自己这条）。
 
-    trigger 命中但任一 guard 命中 → 返回 None（该场景不触发 SOP，走后续分支）；
-    trigger 命中且 guards 均未命中 → 返回 sop_id。
+    给了 sop_id 就只看这一条（「这条 SOP 该不该走」的判定）；不给则按注册顺序返回第一条，都不命中返回 None。
     """
-    for sop in SOPS.values():
-        if any(kw in query for kw in sop.get("trigger", [])):
-            if any(g["check"](query) for g in sop.get("guards", [])):
-                return None
-            logger.info(f"[SOP] Match SOP:{sop['id']}")
-            return sop["id"]
+    for sid, sop in SOPS.items():
+        if sop_id and sid != sop_id:
+            continue
+        if not any(kw in query for kw in sop.get("trigger", [])):
+            continue
+        if any(g["check"](query) for g in sop.get("guards", [])):
+            continue
+        logger.info(f"[SOP] Match SOP:{sid}")
+        return sid
     return None
 
 
@@ -177,6 +189,15 @@ def sop_needs_enter_confirm(sop_id: str, query: str) -> bool:
     return any(w in query for w in weak)
 
 
+def _ask_text(step: dict, key: str, ctx: dict) -> str:
+    """取问话文案；文案里带 {} 占位时用槽位/结果填充，缺键就原样返回。"""
+    text = step.get(key, step["ask"]) or ""
+    try:
+        return text.format(**ctx)
+    except (KeyError, IndexError):
+        return text
+
+
 def _run(session_id: str, user_input: str):
     """执行/推进指定会话的 SOP。返回 (reply_text, done)。"""
     session = _load_session(session_id)
@@ -189,12 +210,17 @@ def _run(session_id: str, user_input: str):
     try:
         while session["step"] < len(steps):
             step = steps[session["step"]]
+            ctx = {**session["slots"], **session.get("result", {})}
+            # 针对网点的结果，如果结果只有一个，跳过反问澄清环节
+            if step.get("when") and not step["when"](ctx):
+                session["step"] += 1
+                continue
 
             if step["type"] == "ask":
                 # 有用户输入 → 尝试提取槽位；否则 → 问问题
                 if user_input is None:
                     logger.info("[SOP] %s ask slot=%s", sop["id"], step.get("slot"))
-                    return step["ask"], False
+                    return _ask_text(step, "ask", ctx), False
                 value = step["extract"](user_input, session["slots"])
                 if value is None:
                     # 提取失败：累加重试次数，超过上限则放弃该槽位（记 None 跳过）
@@ -210,8 +236,8 @@ def _run(session_id: str, user_input: str):
                     # 后续提取失败（retry_count≥2）→ 用 retry 话术（重问）
                     logger.info("[SOP] %s slot %s extract failed (retry=%d)", sop["id"], step["slot"], session["retry_count"])
                     if session["retry_count"] == 1:
-                        return step["ask"], False
-                    return step.get("retry", step["ask"]), False
+                        return _ask_text(step, "ask", ctx), False
+                    return _ask_text(step, "retry", ctx), False
                 # 提取成功，重置重试计数
                 session["slots"][step["slot"]] = value
                 session["step"] += 1
@@ -226,9 +252,11 @@ def _run(session_id: str, user_input: str):
                 session["result"] = result
                 if isinstance(result, dict) and "models" in result:
                     save_recommend(session_id, result["models"])
+                    model_cnt = len(result.get("models", [])) if isinstance(result, dict) else 0
+                    logger.info("[SOP] %s action executed (%d models)", sop["id"], model_cnt)
+                else:
+                    logger.info("[SOP] %s action executed",sop["id"])
                 session["step"] += 1
-                model_cnt = len(result.get("models", [])) if isinstance(result, dict) else 0
-                logger.info("[SOP] %s action executed (%d models)", sop["id"], model_cnt)
                 continue
 
             elif step["type"] == "reply":
@@ -239,6 +267,7 @@ def _run(session_id: str, user_input: str):
                 except (KeyError, IndexError):
                     reply = step.get("fallback", "抱歉，出了一点小问题，请重新提问～")
                 ended = True
+                _finished[session_id] = session
                 _end(session_id)
                 logger.info("[SOP] %s finished", sop["id"])
                 return reply, True

@@ -160,7 +160,7 @@ def _domain_filter(query: str):
     return (files[0] if len(files) == 1 else {"$in": files}), "top1"
 
 # SOP 中文名（用于退出提醒）
-_SOP_NAMES = {"purchase": "选购推荐", "repair": "故障排查"}
+_SOP_NAMES = {"purchase": "选购推荐", "repair": "故障排查", "service_point": "售后网点查询"}
 
 
 def _sop_name(sop_id: str) -> str:
@@ -533,111 +533,14 @@ def _resolve_series_query(query: str):
     return None
 
 
-def _format_nearest(coord):
-    """按城市坐标算最近网点并格式化。"""
-    from function_tools.service_point_tool import search_service_points, format_service_points
-    points, _ = search_service_points(lng=coord["lng"], lat=coord["lat"])
-    return format_service_points(points, coord.get("cn_name") or coord.get("name", ""))
-
-
-def _service_choice_prompt(candidates):
-    """列出重名候选让用户选序号。"""
-    lines = []
-    for i, c in enumerate(candidates):
-        label = c.get("cn_name") or c.get("name") or "?"
-        pop = c.get("population") or 0
-        if pop >= 10000:
-            label += f"（人口约 {pop // 10000} 万）"
-        elif pop > 0:
-            label += f"（人口 {pop}）"
-        lines.append(f"{i + 1}. {label}")
-    return "查到多个同名地点：\n" + "\n".join(lines) + "\n请回复序号选择～"
-
-
-def _resolve_service_pending(session_id, state, query):
-    """处理网点待确认（反问城市后答城市名 / 重名后选序号）。
-    """
-    from function_tools.service_point_tool import geocode_city
-
-    # 主动退出（算了/退出/取消等）→ 清除状态并明确告知
-    if any(w in query for w in EXIT_WORDS):
-        pending_store.clear(session_id)
-        return "好的，已取消网点查询～有新的问题可以直接问我。", "exit_sop"
-
-    if state.get("city"):
-        # 用户答的是城市名
-        candidates = geocode_city(query)
-        if len(candidates) == 1:
-            pending_store.clear(session_id)
-            return _format_nearest(candidates[0]), "structured_answer"
-        if len(candidates) > 1:
-            pending_store.set(session_id, "pick_city", pick=candidates)
-            return _service_choice_prompt(candidates), "ask_clarify"
-        # 乱答（不是城市名）→ 保留状态重问
-        return "没太听清您在哪个城市，能再说一下城市名吗？比如「开封」「上海」～", "ask_clarify"
-
-    if state.get("pick"):
-        # 用户答的是序号
-        cands = state["pick"]
-        m = re.search(r"[1-9]", query or "")
-        if m:
-            idx = int(m.group()) - 1
-            if 0 <= idx < len(cands):
-                pending_store.clear(session_id)
-                return _format_nearest(cands[idx]), "structured_answer"
-            return f"请回复 1-{len(cands)} 之间的序号～", "ask_clarify"
-        return "请回复序号（如 1）选择您要查询的地点～", "ask_clarify"
-
-    pending_store.clear(session_id)
-    return None, ""
-
-
-
-def _resolve_service_point_query(session_id, query, lng=None, lat=None):
-    """售后网点查询：网点词（非政策咨询）→ geonamescache 解析位置 → 距离直出。
-    """
-    from config.word_dict_config import SERVICE_POINT_WORDS, SERVICE_POINT_CONSULT_WORDS
-    if not any(w in query for w in SERVICE_POINT_WORDS):
-        return None, False
-    # "网点怎么查询"这类政策咨询走 RAG
-    if any(w in query for w in SERVICE_POINT_CONSULT_WORDS):
-        return None, False
-
-    from function_tools.service_point_tool import (
-        geocode_city, search_service_points, format_service_points,
-        SERVICE_POINT_TOOL_SCHEMA, SERVICE_POINT_TOOL_MODEL,
-    )
-    # 前端定位最精准
-    if lng is not None and lat is not None:
-        points, origin = search_service_points(lng=lng, lat=lat)
-        return format_service_points(points, origin), True
-
-    # 提取城市：先直接 geocode 整句（用户可能只说城市名），失败 LLM 提取
-    candidates = geocode_city(query)
-    if not candidates:
-        try:
-            from llm_tool import chat_with_tools
-            resp = chat_with_tools(
-                [HumanMessage(content=query)],
-                [SERVICE_POINT_TOOL_SCHEMA],
-                model=SERVICE_POINT_TOOL_MODEL,
-            )
-            tool_calls = getattr(resp, "tool_calls", None) or []
-            if tool_calls:
-                tc = tool_calls[0]
-                args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
-                city = (args.get("location") or "").strip()
-                candidates = geocode_city(city)
-        except Exception as e:
-            logger.warning("[Agent] service point tool calling failed: %s", e)
-
-    if len(candidates) == 1:
-        return _format_nearest(candidates[0]), True
-    if len(candidates) > 1:
-        pending_store.set(session_id, "pick_city", pick=candidates)
-        return _service_choice_prompt(candidates), True
-    pending_store.set(session_id, "ask_city", city=True)
-    return None, True
+def _enter_sop(session_id: str, sop_id: str, query: str, **detail) -> str:
+    """进一条 SOP：启动 + 记 trace 进度 + 打行为标签，返回要回给用户的话。"""
+    from sops import start_sop
+    reply, _done = start_sop(session_id, sop_id, query)
+    _note_sop(session_id, sop_id)
+    if reply:
+        _log_behavior("start_sop", sop=sop_id, **detail)
+    return reply
 
 
 def _log_behavior(tag: str, **detail) -> None:
@@ -647,14 +550,19 @@ def _log_behavior(tag: str, **detail) -> None:
     trace_store.note_behavior(tag, detail)
 
 
-def _note_sop(session_id: str, **extra) -> None:
-    """把 SOP 当前进度记进 trace：走到哪个节点、已填几个槽位。"""
-    from sops import get_sop_state
-    state = get_sop_state(session_id) or {}
+def _note_sop(session_id: str, sop_id: str = None, **extra) -> None:
+    """把 SOP 进度记进 trace：本轮开始时停在哪、槽位填了什么；本轮内收尾的补上结果。"""
+    from sops import get_sop_state, pop_finished
+    state = get_sop_state(session_id) or pop_finished(session_id)
     fields = dict(extra)
     if state:
-        fields.update(id=state.get("sop_id"), step=state.get("step"),
-                      n_slots=len(state.get("slots") or {}))
+        slots = state.get("slots") or {}
+        fields.update(id=state.get("sop_id"), step=state.get("step"), n_slots=len(slots),
+                      slots=trace_store.brief(slots))
+        if state.get("result"):
+            fields["result"] = trace_store.brief(state["result"])
+    elif sop_id:
+        fields.update(id=sop_id, done=True)
     if fields:
         trace_store.step("sop", **fields)
 
@@ -759,7 +667,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     if has_active_sop(session_id):
         sop_id = get_active_sop_id(session_id)
         sop_name = _sop_name(sop_id)
-        _note_sop(session_id)
+        _note_sop(session_id, sop_id)
         # 状态A：退出确认门 —— 上一轮问了「是要退出「X」环节吗」
         pending = pending_store.get(session_id)
         if pending and pending.get("kind") == "confirm_exit":
@@ -820,28 +728,13 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             result = continue_sop(session_id, query)
             if result is not None:
                 reply, _done = result
-                _note_sop(session_id, done=bool(_done))
+                _note_sop(session_id, sop_id, done=bool(_done))
                 if reply:
                     _log_behavior("sop_step")
                     yield reply
                 return
 
-    # 网点查询的待确认回答（反问城市后答城市名 / 重名后选序号）
-    # 退出 SOP 且该句要继续往下走时跳过：它只处理「答城市 / 答序号」，不是那个待确认的回答。
     pending = pending_store.get(session_id)
-    if pending and pending.get("kind") in ("ask_city", "pick_city") and not continue_after_exit:
-        if query.strip() == "0":
-            # 开场语承诺过可回复「0」退出 → 网点环节也要认（原来这里退不出去）
-            pending_store.clear(session_id)
-            _log_behavior("exit_sop", kind="service_point")
-            yield "好的，已取消网点查询～有新的问题可以直接问我。"
-            return
-        reply, tag = _resolve_service_pending(session_id, pending, query)
-        if reply:
-            _log_behavior(tag or "ask_clarify", kind="service_point")
-            yield reply
-            return
-        # 返回 None：状态已清除 → 回退正常流程
 
     # 进入侧确认门：上一轮问了「要不要走一遍引导」，这一轮等「是 / 不是」
     if pending and pending.get("kind") == "confirm_enter":
@@ -852,10 +745,8 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         if ans is True:
             pending_store.clear(session_id)
             # 用当初那句弱触发 query 预填首槽，用户已经说过的信息不重复问
-            reply, _done = start_sop(session_id, sop_id, pending.get("query") or query)
-            _note_sop(session_id)
+            reply = _enter_sop(session_id, sop_id, pending.get("query") or query, via="confirm_enter")
             if reply:
-                _log_behavior("start_sop", sop=sop_id, via="confirm_enter")
                 yield reply
             return
         if ans is False or retry >= 1:
@@ -928,17 +819,19 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             yield series_reply
             return
 
-    # 售后网点查询：网点词（非政策咨询）→ geonamescache 解析位置 → 距离直出
-    # 不依赖 intent——"离我最近的维修点"可能被分类器误判 other，但网点词信号足够强
-    service_reply, service_matched = _resolve_service_point_query(session_id, query, lng, lat)
-    if service_matched:
+    # 售后网点：网点词信号强，不依赖 intent（"离我最近的维修点"可能被分类器误判 other）
+    # 前端有坐标 → 直接作答；否则交给网点 SOP 问城市（重名再问一次序号）
+    if match_sop(query, "service_point"):
         _shadow_probe(query, session_id, "service_point", "网点查询")
-        if service_reply is None:
-            service_reply = "请问您所在的城市是？告诉我城市名，我帮您查最近的售后网点～"
-            _log_behavior("ask_clarify", kind="service_point_city")
-        else:
+        if lng is not None and lat is not None:
+            from function_tools.service_point_tool import search_service_points, format_service_points
+            points, origin = search_service_points(lng=lng, lat=lat)
             _log_behavior("structured_answer", kind="service_point")
-        yield service_reply
+            yield format_service_points(points, origin)
+            return
+        reply = _enter_sop(session_id, "service_point", query)
+        if reply:
+            yield reply
         return
 
     # SOP 触发：robot/unknown 意图 + 命中场景 trigger（guards 已由 match_sop 评估）
@@ -956,10 +849,8 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
                 yield _ENTER_CONFIRM.format(sop=_sop_name(sop_id))
                 return
         if sop_id:
-            reply, _done = start_sop(session_id, sop_id, query)
-            _note_sop(session_id)
+            reply = _enter_sop(session_id, sop_id, query)
             if reply:
-                _log_behavior("start_sop", sop=sop_id)
                 yield reply
             return
 
@@ -970,10 +861,8 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         if any(w in query for w in REPAIR_STRONG_WORDS):
             sop_id = match_sop(query)
             if sop_id == "repair":
-                reply, _done = start_sop(session_id, sop_id, query)
-                _note_sop(session_id)
+                reply = _enter_sop(session_id, sop_id, query, via="strong_words")
                 if reply:
-                    _log_behavior("start_sop", sop="repair", via="strong_words")
                     yield reply
                 return
         _log_behavior("refuse_offtopic")

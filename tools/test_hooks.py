@@ -50,7 +50,7 @@ def set_active_sop(session_id: str, sop_id: str, step: int = 0,
 
 
 def set_pending(session_id: str, kind: str, **data) -> None:
-    """写入统一待确认状态：`kind` ∈ {confirm_exit, ask_city, pick_city}。"""
+    """写入统一待确认状态：`kind` ∈ {confirm_exit, confirm_enter}。"""
     pending_store.set(session_id, kind, **data)
 
 

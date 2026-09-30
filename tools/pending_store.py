@@ -1,7 +1,7 @@
 """统一的「待确认」状态存储：SOP 退出确认、网点问城市、网点重名选序号。
 
 Redis 存 `sop:pending:{session_id}`（带 TTL）；无 Redis 时降级内存并做时间戳校验。
-`kind` 取值：confirm_exit（答是/不是）、ask_city（答城市名）、pick_city（答序号）；
+`kind` 取值：confirm_exit（答是/不是）、confirm_enter（要不要走引导）；
 `confirm_enter` 用于「进入 SOP 的确认门」（弱触发才问）。
 """
 
@@ -17,6 +17,7 @@ logger = get_logger(name="pending_store")
 
 # 无 Redis 时的降级存储（带 ts，读时校验是否过期）
 _sessions: Dict[str, dict] = {}
+# 状态形如 {"kind": xxx, "ts": xxx, "retry": xxx, ...}（confirm_exit 另带 sop_id，confirm_enter 另带 sop/query）
 
 
 def _key(session_id: str) -> str:

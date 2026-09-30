@@ -11,12 +11,15 @@ from sops.base import (  # noqa: F401
     end_sop,
     has_active_sop,
     get_active_sop_id,
+    pop_finished,
     get_sop_state,
     match_sop,
     sop_needs_enter_confirm,
     handle_followup,
 )
 
-# 导入各 SOP 模块，触发 register 注册
+# 导入各 SOP 模块，触发 register 注册（顺序＝ match_sop 的优先顺序）
+import sops.service_point  # noqa: F401
 import sops.purchase  # noqa: F401
 import sops.repair  # noqa: F401
+

@@ -12,6 +12,7 @@ from datetime import datetime
 from log_tool import log_path
 
 VERSION = 2
+# 本轮记录形如 {v, ts, session_id, turn_index, query, retry, tag, tags, detail, steps, ms, aborted, error}
 
 # 本模块会被裸导入（agent.py 的 import trace_store）与包导入（from tools import trace_store）
 # 各加载一份，两份各持自己的状态，后者的写入会全丢——best-effort 吞掉，连异常都没有。
@@ -137,6 +138,19 @@ def note_error(exc: BaseException) -> None:
         turn["error"] = "%s: %s" % (type(exc).__name__, exc)
     except Exception:  # noqa: BLE001
         pass
+
+
+def brief(obj, max_str: int = 40):
+    """把值压成看得懂又不炸日志的摘要：标量原样、长字符串截断、对象列表只留条数。"""
+    if isinstance(obj, dict):
+        return {k: brief(v, max_str) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        if all(isinstance(x, (str, int, float, bool, type(None))) for x in obj):
+            return [brief(x, max_str) for x in obj]
+        return "%d 项" % len(obj)
+    if isinstance(obj, str):
+        return obj if len(obj) <= max_str else obj[:max_str] + "…"
+    return obj
 
 
 def chunk_brief(docs, n: int = 3) -> list:

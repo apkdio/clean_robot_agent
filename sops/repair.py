@@ -78,6 +78,7 @@ def _search_and_generate(slots: dict):
     return {"answer": (resp.content or "").strip()}
 
 
+# 槽位形如 {"symptom": xxx}（检索用的标准说法）；action 返回 {"answer": xxx}
 REPAIR_SOP = {
     "id": "repair",
     "trigger": REPAIR_TRIGGER,
