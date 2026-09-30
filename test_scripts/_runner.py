@@ -1,9 +1,8 @@
 """测试公共基础设施：路径注入 + 断言 + 计数汇总 + e2e 门控。
 
-所有 test_*.py 模块通过 ``from _runner import *`` 复用本文件提供的：
-  - 路径注入：把项目根目录和 tools/ 加入 sys.path，保证
-    ``import tools/sops/config/function_tools`` 以及 tools 内部的
-    裸 import（``from config_tool import ...``）都能正确解析。
+所有 test_*.py 模块通过 ``from test_scripts._runner import *`` 复用本文件提供的：
+  - 路径注入：把项目根目录加入 sys.path，保证 ``import tools/sops/config/function_tools``
+    下的包导入都能正确解析（各入口脚本自行插入项目根，此处兜底）。
   - 断言函数：_assert / _assert_eq / _assert_true / _assert_false /
     _assert_in / _assert_not_in / _assert_raises。
   - 计数与汇总：reset / run_tests / summary。
@@ -16,9 +15,8 @@ import os
 import sys
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (_ROOT, os.path.join(_ROOT, "tools")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 # Windows 控制台默认 GBK，强制 stdout/stderr 用 UTF-8，避免中文乱码
 if hasattr(sys.stdout, "reconfigure"):
@@ -40,12 +38,11 @@ os.environ.setdefault("CONTEXT_META_DIR", "data/test_context_metadata")
 os.environ.setdefault("TRACE_DIR", "temp/trace_test")   # trace 也隔离，避免污染真实 logs/trace/
 
 # 上一段那句「_runner 总先于其它模块被导入」是**隐含约定**，破了会静默失效
-_EARLY_IMPORTED = [m for m in ("tools.context_store", "context_store",
-                               "tools.vector_store", "vector_store") if m in sys.modules]
+_EARLY_IMPORTED = [m for m in ("tools.context_store", "tools.vector_store") if m in sys.modules]
 if _EARLY_IMPORTED:
     raise RuntimeError(
         "测试隔离未生效：%s 已在 _runner 之前被导入——测试会话会被写进真实数据目录。"
-        "请把 `from _runner import *` 放到所有 tools / sops 导入之前。"
+        "请把 `from test_scripts._runner import *` 放到所有 tools / sops 导入之前。"
         % "、".join(_EARLY_IMPORTED)
     )
 
@@ -194,24 +191,9 @@ def disable_shadow():
     return lambda: setattr(agent_mod, "_shadow_probe", original)
 
 
-# 双重导入（裸名 + `tools.` 前缀）会加载出两份带状态的模块，两者都能 import 成功。
+# 双重导入（裸名 + `tools.` 前缀）曾会加载出两份带状态的模块，两者都能 import 成功。
 # 项目里踩过：context_store 两份实例 → 喂给 LLM 的历史缺 assistant 一侧。
-_WATCHED_MODULES = ("context_store", "vector_store", "redis_store", "log_tool", "llm_tool",
-                    "config_tool", "path_tool", "agent", "intent_router", "metadata_extractor")
-
-
-def check_module_duality():
-    """返回「同名两份实例」的模块名：`sys.modules` 里裸名与 `tools.` 前缀都存在且不同一。
-
-    只报告不报错：已知 `llm_tool` / `log_tool` 是幂等/缓存类，影响低；
-    但带可变状态的模块（`context_store` / `vector_store`）分裂会真的出错。
-    """
-    dup = []
-    for name in _WATCHED_MODULES:
-        bare, prefixed = sys.modules.get(name), sys.modules.get("tools." + name)
-        if bare is not None and prefixed is not None and bare is not prefixed:
-            dup.append(name)
-    return dup
+# 已随「全项目统一完整导入」消除（见 docs/project_detail.md §八）：此处不再需要守卫。
 
 
 def reset_trace(session_id: str) -> None:
@@ -222,7 +204,7 @@ def reset_trace(session_id: str) -> None:
     这里只会静默失效——真要长期依赖，应让 `trace_store` 提供一个公开的 reset。
     """
     try:
-        import trace_store
+        from tools import trace_store
 
         path = trace_store._path(session_id)
         if os.path.isfile(path):
@@ -237,7 +219,7 @@ def reset_trace(session_id: str) -> None:
 def read_last_turn(session_id: str) -> dict:
     """读某会话当天 trace 的最后一条记录（评测失败归因用）；读不到返回 `{}`。"""
     try:
-        import trace_store
+        from tools import trace_store
 
         last = {}
         with open(trace_store._path(session_id), encoding="utf-8") as f:
@@ -255,7 +237,7 @@ def read_last_turn(session_id: str) -> dict:
 
 __all__ = [
     "E2E", "reset", "run_tests", "summary", "stats", "e2e", "_skip", "disable_shadow",
-    "check_module_duality", "reset_trace", "read_last_turn",
+    "reset_trace", "read_last_turn",
     "_assert", "_assert_eq", "_assert_true", "_assert_false",
     "_assert_in", "_assert_not_in", "_assert_raises",
 ]

@@ -13,10 +13,10 @@ import os
 import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
-    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+    sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
-from _runner import *
+from test_scripts._runner import *
 import sops  # 触发 purchase/repair SOP 注册
 import sops.base
 

@@ -1,5 +1,5 @@
 import yaml
-from path_tool import get_abs_path
+from tools.path_tool import get_abs_path
 
 # 配置名 → 相对项目根目录的路径
 _CONFIG_PATHS = {

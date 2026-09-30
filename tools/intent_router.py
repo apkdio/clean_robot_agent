@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import random
 
-from log_tool import get_logger
+from tools.log_tool import get_logger
 
 logger = get_logger(name="intent_router")
 
@@ -28,7 +28,7 @@ def _get_emb():
     """懒加载 bge-m3 embedding 客户端（跨调用缓存复用）。"""
     global _emb
     if _emb is None:
-        from llm_tool import get_embedding_model
+        from tools.llm_tool import get_embedding_model
         _emb = get_embedding_model()
     return _emb
 
@@ -47,7 +47,7 @@ def _load_model():
         return _head, _labels
 
     import torch
-    from path_tool import get_abs_path
+    from tools.path_tool import get_abs_path
 
     head_path = get_abs_path(f"{_MODEL_DIR}/{_HEAD_FILE}")
     labels_path = get_abs_path(f"{_MODEL_DIR}/{_LABELS_FILE}")

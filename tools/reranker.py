@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from typing import Dict, List, Tuple
 
-from config_tool import load_config
+from tools.config_tool import load_config
 from langchain_core.documents import Document
-from log_tool import get_logger
+from tools.log_tool import get_logger
 
 logger = get_logger(name="reranker")
 

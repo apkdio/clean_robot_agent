@@ -1,6 +1,6 @@
-from log_tool import get_logger
-from path_tool import get_abs_path
-from config_tool import load_config
+from tools.log_tool import get_logger
+from tools.path_tool import get_abs_path
+from tools.config_tool import load_config
 
 prompts_config = load_config("prompts")
 logger = get_logger(name="prompts_tool")

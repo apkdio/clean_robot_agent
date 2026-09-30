@@ -33,9 +33,9 @@ import sys
 import time
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(_SCRIPT_DIR) not in sys.path:   # test_scripts/：供 `_runner` 导入
-    sys.path.insert(0, os.path.dirname(_SCRIPT_DIR))
-from _runner import *
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+    sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
+from test_scripts._runner import *
 
 _ROOT = os.path.dirname(os.path.dirname(_SCRIPT_DIR))   # 上两级：test_scripts/eval/ → 项目根
 _GOLDEN_FILE = os.path.join(_ROOT, "data", "eval", "context", "golden.jsonl")
@@ -280,7 +280,7 @@ def _trace_brief(record: dict) -> str:
 def _trace_version() -> str:
     """主链路 trace 的记录版本（`tools/trace_store.py::VERSION`），写进报告便于日后对齐。"""
     try:
-        import trace_store
+        from tools import trace_store
 
         return "v%s" % trace_store.VERSION
     except Exception:  # noqa: BLE001

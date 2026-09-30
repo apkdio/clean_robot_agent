@@ -19,9 +19,9 @@ for _p in (_SCRIPTS_DIR, os.path.join(_SCRIPTS_DIR, "eval")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from _runner import *
+from test_scripts._runner import *
 from tools import agent as agent_mod
-import test_context_eval as ctx_eval
+from test_scripts.eval import test_context_eval as ctx_eval
 
 
 def _capture(lines):
@@ -118,23 +118,20 @@ def test_disable_shadow_restores():
     _assert_true(agent_mod._shadow_probe is original, "复原回调把原探针放回去")
 
 
-def test_isolation_and_duality():
-    """导入侧的隐性坑：测试隔离目录真的生效、有状态的模块只有一份实例。"""
+def test_isolation_and_import_convention():
+    """导入侧的隐性坑：测试隔离目录真的生效、项目模块不再出现裸名实例。"""
     import tools.context_store as tc
 
     _assert_in("test_context", tc._CONTEXT_DIR.replace("\\", "/"),
                "会话目录指向测试隔离目录 data/test_context")
-    for name in ("context_store", "vector_store", "agent"):
-        bare, prefixed = sys.modules.get(name), sys.modules.get("tools." + name)
-        _assert(bare is None or prefixed is None or bare is prefixed,
-                f"{name} 只有一份实例（裸名与 tools. 前缀不同时存在）")
-    _assert("context_store" not in check_module_duality(),
-            "有状态的 context_store 不在「两份实例」名单里")
+    for name in ("context_store", "vector_store", "agent", "log_tool", "llm_tool"):
+        _assert_true(name not in sys.modules,
+                     f"{name} 未以裸名出现在 sys.modules（全项目统一完整导入）")
 
 
 def test_trace_record_schema():
     """主链路 trace：一轮一条、稳定核 + 开放层、落在隔离目录（评测侧消费它的前提）。"""
-    import trace_store
+    from tools import trace_store
 
     sid = "tracetest-schema"
     reset_trace(sid)
@@ -168,7 +165,7 @@ def test_trace_record_schema():
 
 def test_trace_best_effort():
     """trace 是旁路：没开轮次时各写入接口都静默返回、不抛异常（不能影响回答）。"""
-    import trace_store
+    from tools import trace_store
 
     try:
         trace_store.step("intent", intent="x")
@@ -185,7 +182,7 @@ def test_trace_best_effort():
 
 def test_trace_report_flags():
     """逐轮读数器（`test_scripts/trace_report.py`）的启发式标记与行渲染，纯函数直接测。"""
-    import trace_report
+    from test_scripts import trace_report
 
     _assert_in("aborted 未跑完", trace_report._flags({"aborted": True}), "未跑完的轮会被标出")
     _assert_in("0 召回/兜底", trace_report._flags({"tag": "no_answer_fallback", "steps": {}}),
@@ -213,7 +210,7 @@ TESTS = [
     test_check_case_soft_tag_hint,
     test_accepted_tags_cover_mapping,
     test_disable_shadow_restores,
-    test_isolation_and_duality,
+    test_isolation_and_import_convention,
     test_trace_record_schema,
     test_trace_best_effort,
     test_trace_report_flags,

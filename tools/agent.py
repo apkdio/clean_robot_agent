@@ -12,12 +12,12 @@ import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from config_tool import load_config
+from tools.config_tool import load_config
 from tools import pending_store
-from llm_tool import get_chat_model_name, stream_chat
-from log_tool import clear_log_session, get_logger, set_log_session
-import trace_store
-from prompts_tool import load_main_prompts
+from tools.llm_tool import get_chat_model_name, stream_chat
+from tools.log_tool import clear_log_session, get_logger, set_log_session
+from tools import trace_store
+from tools.prompts_tool import load_main_prompts
 from config.word_dict_config import (DOMAIN_MAP, EMOTION_MILD, EMOTION_STRONG, EXIT_WORDS,
                                      NO_ANSWER_REPLIES, domain_files_of)
 
@@ -34,7 +34,7 @@ def _get_retriever():
     """懒加载双路召回器（稠密 + 稀疏 → RRF）。"""
     global _hybrid_retriever
     if _hybrid_retriever is None:
-        from hybrid_retriever import HybridRetriever
+        from tools.hybrid_retriever import HybridRetriever
         _hybrid_retriever = HybridRetriever()
         _hybrid_retriever.ensure_sparse_index()
     return _hybrid_retriever
@@ -337,7 +337,7 @@ def _select_history_turns(session_id: str, query: str) -> list:
         return []
 
     try:
-        from llm_tool import get_embedding_model
+        from tools.llm_tool import get_embedding_model
 
         vecs = get_embedding_model().embed_documents([query] + users)
     except Exception as e:
@@ -367,7 +367,7 @@ def _validate_rewrite(text: str, query: str, grounding: str, max_chars: int) -> 
 
 def _llm_rewrite(query: str, history_block: str) -> str | None:
     """用小模型把追问改写成自足 query（输出受约束，校验不过即放弃）。"""
-    from llm_tool import get_small_model_name, stream_chat
+    from tools.llm_tool import get_small_model_name, stream_chat
 
     max_chars = int(_rewrite_cfg().get("max_chars", 80) or 80)
     prompt = (
@@ -442,7 +442,7 @@ def _resolve_date_filter(query: str) -> dict | None:
     if not _TIME_HINT_RE.search(query):
         return None
     try:
-        from llm_tool import chat_with_tools
+        from tools.llm_tool import chat_with_tools
         resp = chat_with_tools(
             [HumanMessage(content=query)],
             [DATE_TOOL_SCHEMA],
@@ -487,7 +487,7 @@ def _resolve_model_query(session_id: str, query: str):
         from function_tools.model_tool import (
             MODEL_TOOL_SCHEMA, MODEL_TOOL_MODEL, search_models_by_names,
         )
-        from llm_tool import chat_with_tools
+        from tools.llm_tool import chat_with_tools
         from sops.base import _format_models
         # 拼最近对话历史，让 LLM 理解指代（"这两个"指谁）
         history_block = _history_block(session_id)
@@ -761,7 +761,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             yield _ENTER_CONFIRM.format(sop=sop_name)
             return
 
-    from intent_router import route_intent_with_margin, get_guess_hint
+    from tools.intent_router import route_intent_with_margin, get_guess_hint
     intent, margin = route_intent_with_margin(query)
     trace_store.step("intent", intent=intent, margin=margin)
 
@@ -890,7 +890,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
 
     hr = _get_retriever()
     _shadow_probe(query, session_id, "kb_search", "RAG 检索")
-    from metadata_extractor import resolve_budget_filter
+    from tools.metadata_extractor import resolve_budget_filter
     metadata_filter = resolve_budget_filter(query)
 
     # 解析日期表达（"最近半年"/"2025年三月"）→ 日期过滤
@@ -909,7 +909,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
 
     # 结构化查询：按 metadata 枚举所有匹配型号（绕过 top-k，避免漏掉条目）
     if metadata_filter is not None:
-        from metadata_extractor import enumerate_models, format_model_line
+        from tools.metadata_extractor import enumerate_models, format_model_line
         models = enumerate_models(metadata_filter)
         if models:
             lines = [format_model_line(m) for m in models]

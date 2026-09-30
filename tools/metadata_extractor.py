@@ -9,8 +9,8 @@ from __future__ import annotations
 import re
 from typing import Dict, Optional
 
-from llm_tool import get_small_model_name
-from log_tool import get_logger
+from tools.llm_tool import get_small_model_name
+from tools.log_tool import get_logger
 
 logger = get_logger(name="metadata_extractor")
 
@@ -110,7 +110,7 @@ def extract_spec_metadata(text: str) -> Dict:
 def param_inventory() -> Dict:
     """从**已入库的 metadata** 派生参数清单（键 → 值枚举 / 数值区间 / 覆盖条数）。
     """
-    from vector_store import get_vector_store   # 函数内导入：vector_store 依赖本模块，避免循环导入
+    from tools.vector_store import get_vector_store  # 函数内导入：vector_store 依赖本模块，避免循环导入
 
     metas = get_vector_store()._collection.get(include=["metadatas"])["metadatas"]
     inv: Dict = {}
@@ -263,7 +263,7 @@ def _match_model_filter(info: Dict, f: dict) -> bool:
 
 def _enumerate_models_from_store(filter: dict, require_field: str) -> list[Dict]:
     """底层：从 Chroma 读全量 + 提取 + 去重（不带缓存，重建用）。"""
-    from vector_store import search_by_filter
+    from tools.vector_store import search_by_filter
     docs = search_by_filter(filter)
     models, seen = [], set()
     for c in docs:
@@ -277,7 +277,7 @@ def _enumerate_models_from_store(filter: dict, require_field: str) -> list[Dict]
 def get_all_model_records() -> list[Dict]:
     """全量型号记录：`extract_model_info` 的字段 + 该 chunk 的全部 `param_*`（通用规格）。
     """
-    from vector_store import search_by_filter
+    from tools.vector_store import search_by_filter
 
     out, seen = [], set()
     for c in search_by_filter({"file_name": {"$ne": "__never__"}}):
@@ -297,8 +297,8 @@ def get_all_models() -> list[Dict]:
     """
     import os
     import pickle
-    from path_tool import get_abs_path
-    from vector_store import get_vector_store
+    from tools.path_tool import get_abs_path
+    from tools.vector_store import get_vector_store
 
     path = get_abs_path(_MODELS_CACHE_FILE)
     fingerprint = get_vector_store()._collection.count()
@@ -482,7 +482,7 @@ def resolve_budget_filter(query: str) -> Optional[Dict]:
     # 3. LLM function calling 兜底
     try:
         from function_tools.budget_tool import BUDGET_TOOL_SCHEMA, budget_args_to_filter
-        from llm_tool import chat_with_tools
+        from tools.llm_tool import chat_with_tools
         from langchain_core.messages import HumanMessage
         resp = chat_with_tools(
             [HumanMessage(content=query)],

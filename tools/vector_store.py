@@ -10,11 +10,11 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from config_tool import load_config
-from file_tools import extract_file, get_file_md5_hex
-from llm_tool import get_embedding_model
-from log_tool import get_logger
-from path_tool import get_abs_path
+from tools.config_tool import load_config
+from tools.file_tools import extract_file, get_file_md5_hex
+from tools.llm_tool import get_embedding_model
+from tools.log_tool import get_logger
+from tools.path_tool import get_abs_path
 
 logger = get_logger(name="vector_store")
 
@@ -80,7 +80,7 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
         return {"status": "error", "file": file_path, "message": "Extraction returned no content."}
 
     # 分块：优先用编号条目切分器，失败则回退到通用字符切分
-    from entry_splitter import split_numbered_entries
+    from tools.entry_splitter import split_numbered_entries
     file_name = os.path.basename(file_path)
     tag = source_tag or file_name
 
@@ -106,8 +106,7 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
         return {"status": "error", "file": file_path, "message": "Splitting returned no chunks."}
 
     # 给每个 chunk 打上结构化 metadata（价格、发布时间、通用规格参数）
-    from metadata_extractor import (extract_price_metadata, extract_publish_date,
-                                    extract_spec_metadata)
+    from tools.metadata_extractor import extract_price_metadata, extract_publish_date, extract_spec_metadata
     for chunk in chunks:
         chunk.metadata.setdefault("source", tag)
         chunk.metadata.setdefault("file_name", file_name)
@@ -147,7 +146,7 @@ def ingest_directory(dir_path: str) -> list[dict]:
 def ingest_data_dir(data_dir: str = None) -> list[dict]:
     """把知识库目录下所有支持的文件入库，返回每个文件一条结果 dict。"""
     if data_dir is None:
-        from config_tool import get_data_dir
+        from tools.config_tool import get_data_dir
         data_dir = get_data_dir()
     if not os.path.isdir(data_dir):
         logger.error(f"[IngestDataDir] {data_dir} is not a directory.")
@@ -209,7 +208,7 @@ def build_hybrid_index(sparse_retriever=None) -> int:
     需在稠密入库完成后调用，保证两路拥有同一份 chunk 集合。
     """
     if sparse_retriever is None:
-        from sparse_retriever import SparseRetriever
+        from tools.sparse_retriever import SparseRetriever
         sparse_retriever = SparseRetriever()
 
     # 先尝试从 pickle 缓存恢复（避免重启后重建）

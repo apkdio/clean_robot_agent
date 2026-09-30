@@ -20,12 +20,12 @@ from datetime import datetime
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
-for _p in (_ROOT, os.path.join(_ROOT, "tools")):
+for _p in (_ROOT,):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 # 刻意不 import `_runner`：它会设 TRACE_DIR 等测试隔离变量，而这里读的是真实 trace（--dir 可覆盖）。
-import trace_store  # noqa: E402
+from tools import trace_store  # noqa: E402
 
 _SLOW_MS = 30000   # 单轮超过这个耗时就在摘要里标「慢」
 

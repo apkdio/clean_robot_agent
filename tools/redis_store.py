@@ -8,7 +8,7 @@ key 约定：
 
 import json
 
-from log_tool import get_logger
+from tools.log_tool import get_logger
 
 logger = get_logger(name="redis_store")
 
@@ -17,7 +17,7 @@ _enabled = None  # None=未探测，True/False=是否可用
 
 
 def _load_config() -> dict:
-    from config_tool import load_config
+    from tools.config_tool import load_config
     try:
         return load_config("redis")
     except Exception:

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Dict, List, Optional
 
-from log_tool import get_logger
+from tools.log_tool import get_logger
 
 logger = get_logger(name="orchestrator")
 
@@ -122,7 +122,7 @@ def decide(query: str, effective_query: str = "", history_block: str = "",
     """
     from function_tools.model_tool import validate_find_models_args
     from function_tools.registry import build_tool_schemas, tool_names
-    from llm_tool import chat_with_tools, get_chat_model_name
+    from tools.llm_tool import chat_with_tools, get_chat_model_name
 
     extra = ""
     if history_block:

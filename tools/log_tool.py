@@ -5,15 +5,11 @@ import logging.handlers
 import os
 import sys
 
-from path_tool import get_abs_path
+from tools.path_tool import get_abs_path
 
 # ── 会话标记 ──────────────────────────────────────────────────────────────
 # 回答期间把会话 id（前 8 位，够 grep）打进当前线程的日志，便于按会话捞轨迹。
-# 状态挂到 logging 上做全进程单例：本模块会被裸导入与包导入各加载一份，模块级状态会分裂。
-_session_var = getattr(logging, "_cr_session_var", None)
-if _session_var is None:
-    _session_var = contextvars.ContextVar("log_session", default="-")
-    logging._cr_session_var = _session_var
+_session_var = contextvars.ContextVar("log_session", default="-")
 
 
 def set_log_session(session_id: str) -> None:
@@ -78,7 +74,7 @@ def _resolve_file_level() -> int:
     if env_level:
         return getattr(logging, env_level, logging.INFO)
     try:
-        from config_tool import load_config
+        from tools.config_tool import load_config
         verbose = bool(load_config("agent").get("behavior", {}).get("verbose_log", False))
     except Exception:
         verbose = False

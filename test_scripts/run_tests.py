@@ -4,18 +4,17 @@ import os
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-for _sub in (_HERE, os.path.join(_HERE, "eval")):
-    sys.path.insert(0, _sub)
+sys.path.insert(0, os.path.dirname(_HERE))   # 项目根
 
-from _runner import E2E, check_module_duality, disable_shadow  # noqa: E402
+from test_scripts._runner import E2E, disable_shadow  # noqa: E402
 
 # ── tag 契约自检（纯规则，先跑：判据错了后面的评测跑得再久也没意义）──────
-import test_behavior_tags    # noqa: E402
+from test_scripts.eval import test_behavior_tags  # noqa: E402
 
 # ── 数据集评测轨（eval/）─────────────────────────────────────────
-import test_retrieval_eval   # noqa: E402
-import test_context_eval     # noqa: E402
-import test_intent_eval      # noqa: E402
+from test_scripts.eval import test_retrieval_eval  # noqa: E402
+from test_scripts.eval import test_context_eval  # noqa: E402
+from test_scripts.eval import test_intent_eval  # noqa: E402
 
 
 MODULES = [
@@ -40,11 +39,6 @@ def main():
         grand_p += p
         grand_t += t
         grand_s += s
-
-    dup = check_module_duality()
-    if dup:
-        print(f"\n⚠ 同名模块两份实例（裸名 + `tools.` 前缀）：{'、'.join(dup)}")
-        print("  幂等/缓存类影响低；带可变状态的模块分裂会真的出错——新增模块时统一用 `tools.` 前缀。")
 
     print()
     print("#" * 72)

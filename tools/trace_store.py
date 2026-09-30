@@ -2,34 +2,21 @@
 """
 
 import json
-import logging
 import os
-import sys
 import threading
 import time
 from datetime import datetime
 
-from log_tool import log_path
+from tools.log_tool import log_path
 
 VERSION = 2
 # 本轮记录形如 {v, ts, session_id, turn_index, query, retry, tag, tags, detail, steps, ms, aborted, error}
 
-# 本模块会被裸导入（agent.py 的 import trace_store）与包导入（from tools import trace_store）
-# 各加载一份，两份各持自己的状态，后者的写入会全丢——best-effort 吞掉，连异常都没有。
-# 后加载的那份直接借用先加载那份的状态，导入写法怎么写都不分裂。
-_twin = next((m for n, m in list(sys.modules.items())
-              if n in ("trace_store", "tools.trace_store") and m is not sys.modules.get(__name__)
-              and hasattr(m, "_local")), None)
-if _twin is not None:
-    logging.getLogger(__name__).warning(
-        "trace_store 被加载了第二份（裸导入 + 包导入），已借用第一份的状态；请统一导入写法")
-    _local, _t0, _seq, _last, _lock = _twin._local, _twin._t0, _twin._seq, _twin._last, _twin._lock
-else:
-    _local = threading.local()   # 当前线程正在处理的那一轮（ask_stream 的 wrapper 开/收）
-    _t0 = threading.local()      # 本轮起点，只用于算 ms.total
-    _seq = {}                    # (session_id, 日期) -> 已写轮数，进程内首次从文件行数种入
-    _last = {}                   # session_id -> 上一条记录（判「重新回答」用，首次从文件末行种入）
-    _lock = threading.Lock()
+_local = threading.local()   # 当前线程正在处理的那一轮（ask_stream 的 wrapper 开/收）
+_t0 = threading.local()      # 本轮起点，只用于算 ms.total
+_seq = {}                    # (session_id, 日期) -> 已写轮数，进程内首次从文件行数种入
+_last = {}                   # session_id -> 上一条记录（判「重新回答」用，首次从文件末行种入）
+_lock = threading.Lock()
 
 
 def _today() -> str:

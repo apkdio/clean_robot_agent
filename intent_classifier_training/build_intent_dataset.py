@@ -15,7 +15,6 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 
 from tools.config_tool import get_data_dir
 from tools.entry_splitter import split_numbered_entries

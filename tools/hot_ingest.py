@@ -11,7 +11,7 @@ import os
 import threading
 import time
 
-from log_tool import get_logger
+from tools.log_tool import get_logger
 
 logger = get_logger(name="hot_ingest")
 
@@ -30,13 +30,13 @@ _SUPPORTED_EXTS = (".txt", ".md", ".pdf", ".csv", ".docx", ".pptx", ".xlsx")
 # ──────────────────────────────────────────────────────────────────────────
 
 def _snapshot_path() -> str:
-    from path_tool import get_abs_path
+    from tools.path_tool import get_abs_path
     return get_abs_path(_SNAPSHOT_FILE)
 
 
 def _knowledge_path() -> str:
     """知识库源目录（rag.yaml 的 data_dir，默认 data/knowledge）。"""
-    from config_tool import get_data_dir
+    from tools.config_tool import get_data_dir
     return get_data_dir()
 
 
@@ -74,7 +74,7 @@ def invalidate_snapshot() -> None:
 
 def scan_files(data_dir: str) -> dict:
     """递归扫描 data_dir → {相对路径: md5}。"""
-    from file_tools import get_file_md5_hex
+    from tools.file_tools import get_file_md5_hex
 
     result = {}
     for root, dirs, files in os.walk(data_dir):
@@ -103,7 +103,7 @@ def diff_snapshot(old: dict, new: dict):
 
 def apply_changes(data_dir: str, added: dict, changed: dict, removed: list) -> dict:
     """根据文件差异增量同步 Chroma。"""
-    from vector_store import get_vector_store, ingest_file
+    from tools.vector_store import get_vector_store, ingest_file
 
     store = get_vector_store()
     results = {"added": 0, "changed": 0, "removed": 0}
@@ -133,18 +133,18 @@ def apply_changes(data_dir: str, added: dict, changed: dict, removed: list) -> d
 
 def _rebuild_sparse_index() -> None:
     """强制重建 BM25 索引（丢弃缓存，避免复用陈旧的 pickle）。"""
-    from path_tool import get_abs_path
+    from tools.path_tool import get_abs_path
     # 同步失效型号元数据缓存（models.pkl）——知识库变更后型号数据已过期
     for cache_name in ("data/pkl/bm25_index.pkl", "data/pkl/models.pkl"):
         cache = get_abs_path(cache_name)
         if os.path.isfile(cache):
             os.remove(cache)
-    from vector_store import build_hybrid_index
+    from tools.vector_store import build_hybrid_index
     build_hybrid_index()
 
     # 重置 agent 的惰性检索器单例，使下一次查询重新加载
     try:
-        import agent
+        from tools import agent
         agent._hybrid_retriever = None
     except Exception:
         pass
@@ -162,7 +162,7 @@ def run_once(data_dir: str = None) -> bool:
         return False
 
     # 摄入锁：Redis 分布式锁（多实例只有一个摄入），不可用回退本地；被占用则跳过本次周期
-    from redis_store import acquire_lock, release_lock
+    from tools.redis_store import acquire_lock, release_lock
     if not acquire_lock("lock:ingest"):
         logger.info("[HotIngest] another ingest in progress, skip this cycle")
         return False

@@ -29,7 +29,7 @@ def _choice_prompt(candidates: list) -> str:
 def _extract_city_by_llm(text: str) -> list:
     """整句没识出城市 → 让 LLM 按网点工具的 schema 抽一次（沿用原有兜底）。"""
     from langchain_core.messages import HumanMessage
-    from llm_tool import chat_with_tools
+    from tools.llm_tool import chat_with_tools
     from function_tools.service_point_tool import (
         geocode_city, SERVICE_POINT_TOOL_SCHEMA, SERVICE_POINT_TOOL_MODEL,
     )

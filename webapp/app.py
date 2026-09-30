@@ -11,14 +11,10 @@ import sys
 
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
-# 确保项目根目录和 tools/ 位于 sys.path 中。
-# 需要 tools/ 是因为其中的模块使用了裸导入
-# （例如 `from log_tool import`）而非包相对导入。
+# 确保项目根目录位于 sys.path 中（tools.* / sops.* 等包导入依赖它）。
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_TOOLS_DIR = os.path.join(_PROJECT_ROOT, "tools")
-for _p in (_PROJECT_ROOT, _TOOLS_DIR):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 from tools.agent import ask_stream
 from tools.config_tool import load_config
@@ -30,24 +26,6 @@ from tools.vector_store import (
     list_collections_info,
     reset_collection,
 )
-
-# 统一「裸导入」与「包导入」的模块身份。
-# tools 内部模块用裸导入（from xxx import），webapp 用包导入（from tools.xxx import），
-# 同一文件会被加载两次、模块级状态分裂（如 agent._hybrid_retriever 单例、redis_store 锁）。
-# 这里把所有 tools 模块统一按包加载，并把裸模块名指向包实例，后续裸 import 命中同一实例。
-import importlib as _importlib
-_TOOL_MODULES = (
-    "agent", "config_tool", "log_tool", "context_store", "metadata_extractor",
-    "redis_store", "vector_store", "llm_tool", "prompts_tool", "hot_ingest",
-    "hybrid_retriever", "sparse_retriever", "rrf_fusion", "reranker", "entry_splitter",
-    "file_tools", "path_tool", "intent_router",
-)
-for _name in _TOOL_MODULES:
-    try:
-        _pkg_module = _importlib.import_module(f"tools.{_name}")
-        sys.modules[_name] = _pkg_module
-    except ImportError:
-        pass
 
 logger = get_logger(name="webapp")
 
