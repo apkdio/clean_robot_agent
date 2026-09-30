@@ -1,0 +1,63 @@
+sops/service_point.py
+  s_40681318f5a20b::t_d7b9774ff22425 1-7,9-10,91-120
+  s_40681318f5a20b::t_32977ba2154205 59-60
+  h_26b9a38f4942dd 84
+  s_40681318f5a20b::t_1f21bf37efead9 8
+  s_40681318f5a20b::t_336fad2e0d6750 11-58,61-83,85-89
+  s_40681318f5a20b::t_e12737cc2cc79d 90
+tools/pending_store.py
+  s_40681318f5a20b::t_6d68f3b6b3ae64 4
+  s_40681318f5a20b::t_e12737cc2cc79d 20
+test_scripts/unit/test_service_point_sop.py
+  s_40681318f5a20b::t_1cfb10ec9fa7a1 1-61,67-172,191-197,199-209
+  s_40681318f5a20b::t_98c559eb79b85d 62-66
+  s_40681318f5a20b::t_c899bc2a726782 173-190,198
+sops/base.py
+  s_40681318f5a20b::t_28ffe00bf49e74 192-193,195-200,213,215-217,223,239-240
+  s_40681318f5a20b::t_d305c56268ff0e 58
+  s_40681318f5a20b::t_1f21bf37efead9 163-164,166,168-176
+  s_40681318f5a20b::t_f793a4fd176881 95-99,270
+  h_26b9a38f4942dd 194,214,255-258
+  s_40681318f5a20b::t_e12737cc2cc79d 15-17,59
+sops/__init__.py
+  s_40681318f5a20b::t_f793a4fd176881 14
+  s_40681318f5a20b::t_28ffe00bf49e74 21-22
+  s_40681318f5a20b::t_97550475b14a19 25
+sops/purchase.py
+  s_40681318f5a20b::t_e12737cc2cc79d 53
+tools/test_hooks.py
+  s_40681318f5a20b::t_6d68f3b6b3ae64 53
+sops/repair.py
+  s_40681318f5a20b::t_e12737cc2cc79d 81
+tools/agent.py
+  s_40681318f5a20b::t_98c559eb79b85d 824
+  s_40681318f5a20b::t_61c0148222ce91 163,822-823,826-828,830-831,833-834
+  s_40681318f5a20b::t_f793a4fd176881 554-556,559-563
+  s_40681318f5a20b::t_404848a55c9b98 536-543,832,852,864
+  s_40681318f5a20b::t_038b5ca3a6ce0b 748
+  s_40681318f5a20b::t_6d68f3b6b3ae64 553,564-565,670,731
+tools/trace_store.py
+  s_40681318f5a20b::t_e12737cc2cc79d 15
+  s_40681318f5a20b::t_f793a4fd176881 143-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.45-trip",
+  "base_commit_sha": "68198acc0129429f63ba52f470f2305437460c38",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
