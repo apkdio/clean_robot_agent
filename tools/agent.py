@@ -7,6 +7,7 @@
     → 结构化预算直出 或 RAG 生成                  # 输出答案
 """
 
+import os
 import re
 import time
 
@@ -571,7 +572,7 @@ def _shadow_probe(query: str, session_id: str, chain_category: str, chain_detail
     """影子模式：让模型并行做一次决策，与链路实际走的类目对照，只落日志、不改行为。
     """
     from function_tools.registry import orchestration_mode, shadow_sample
-    from tools.orchestrator import chain_fc_eligible, decide, shadow_line
+    from tools.orchestrator import chain_fc_eligible, decide, shadow_line, shadow_record
 
     if orchestration_mode() != "shadow" or not chain_fc_eligible(chain_category):
         return
@@ -579,6 +580,12 @@ def _shadow_probe(query: str, session_id: str, chain_category: str, chain_detail
 
     if random.random() > shadow_sample():
         return
+
+    # 轮次信息必须在主线程同步取：影子跑在 daemon 线程，拿不到本轮 turn
+    ctx = trace_store.current_turn()
+    shadow_path = trace_store._path(session_id, trace_store.SHADOW_KIND, create=True)
+    trace_store.step("shadow", chain=chain_category, detail=chain_detail,
+                     log=os.path.basename(shadow_path) if shadow_path else "")
 
     def _work():
         try:
@@ -588,6 +595,7 @@ def _shadow_probe(query: str, session_id: str, chain_category: str, chain_detail
             domain_hint = scores[0][0] if scores and scores[0][0] in DOMAIN_FILES else None
             decision = decide(query, history_block=_history_block(session_id), domain_hint=domain_hint)
             logger.info(shadow_line(decision, query, chain_category, chain_detail))
+            trace_store.shadow_turn(ctx, shadow_record(decision, query, chain_category, chain_detail))
         except Exception as e:  # noqa: BLE001
             logger.warning("[Shadow] probe failed: %s", e)
 
@@ -889,7 +897,6 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         yield get_guess_hint() + "\n\n"
 
     hr = _get_retriever()
-    _shadow_probe(query, session_id, "kb_search", "RAG 检索")
     from tools.metadata_extractor import resolve_budget_filter
     metadata_filter = resolve_budget_filter(query)
 
@@ -912,6 +919,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         from tools.metadata_extractor import enumerate_models, format_model_line
         models = enumerate_models(metadata_filter)
         if models:
+            _shadow_probe(query, session_id, "model_query", "预算/时间筛选")
             lines = [format_model_line(m) for m in models]
             prefix = {
                 "budget": f"在您预算内的机器人有 {len(models)} 款：",
@@ -925,6 +933,8 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         logger.warning("[Agent] Structured filter matched no models, falling back to RAG")
 
     # 普通 RAG：双路召回（按知识域定向，识别不准则全库兜底）
+    # 探针放在结构化筛选之后：走到这里才是真的 kb_search
+    _shadow_probe(query, session_id, "kb_search", "RAG 检索")
     # 低置信追问 / unknown：先按上文把 query 补成自足形式再检索（记录仍是原文）
     _t_rewrite = time.perf_counter()
     if low_conf or intent == "unknown":
@@ -939,15 +949,22 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     # 两域分数相似时 _domain_filter 会返回两个域（$in）。
     _t_retrieve = time.perf_counter()
     domain_value, domain_via = _domain_filter(effective_query)
-    chunks = hr.search(effective_query, filter={"file_name": domain_value} if domain_value else None)
+    ranked = hr.search_with_scores(
+        effective_query, filter={"file_name": domain_value} if domain_value else None)
+    chunks = [doc for doc, _score, _meta in ranked]
     trace_store.add_ms("retrieve", _t_retrieve)
     trace_store.step("retrieve", domain=domain_value, via=domain_via, n_chunks=len(chunks),
-                     chunks=trace_store.chunk_brief(chunks))
+                     chunks=trace_store.chunk_brief(ranked))
 
     # 保底 ②：改写后 0 命中 → 用原 query 在全库再检一次（把误改的代价降到多一次检索）
     if not chunks and effective_query != query and _rewrite_cfg().get("retry_with_origin", True):
         logger.info("[Rewrite] no hit via %s, retry with origin over full KB: %s", rewrite_via, query[:40])
-        chunks = hr.search(query, filter=None)
+        ranked = hr.search_with_scores(query, filter=None)
+        chunks = [doc for doc, _score, _meta in ranked]
+        trace_store.step("retrieve", retried=True, n_chunks=len(chunks),
+                         chunks=trace_store.chunk_brief(ranked))
+    # 召回片段正文落旁路文件（trace 行只留指路字段）
+    trace_store.chunks(ranked)
 
     # 拼接最近对话历史，供 LLM 自主消解指代（如"它怎么样"指代上文型号）
     history_block = _history_block(session_id)

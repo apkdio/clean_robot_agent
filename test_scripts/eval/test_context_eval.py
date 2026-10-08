@@ -97,20 +97,106 @@ _ACCEPTED_TAGS = {
 _DANGER_PLACEHOLDER = "（漏电告警轮：原始用户消息未落盘）"
 
 
+_SESS_DIR = os.path.join(os.path.dirname(_GOLDEN_FILE), "sessions")   # 评测集自带的（手工/合成）会话
+
+
+_CONTEXT_ROOT = None      # 真实会话目录（惰性解析，见 _real_context_root）
+
+
+def _real_context_root() -> str:
+    """真实会话目录。**不能用 `context_store._CONTEXT_DIR`**：评测进程里 `_runner` 为隔离被测写入
+    把它指到了 `data/test_context`，而评测集要读的是**真实**会话（契约测试会当场报出读不到）。
+    """
+    global _CONTEXT_ROOT
+    if _CONTEXT_ROOT is None:
+        from tools.path_tool import get_abs_path   # 与 `context_store` 同一个路径助手，但不读 CONTEXT_DIR
+
+        _CONTEXT_ROOT = get_abs_path("data/context")
+    return _CONTEXT_ROOT
+
+
+def _session_file(session_id: str) -> str:
+    """按 session_id 找会话文件：评测集自带的 `sessions/` 优先，再在真实会话目录里找。
+
+    目录布局与命名都兼容：`<day>/<stem>.jsonl` 与根下 `<stem>.jsonl`；stem 有 `<sid>`（旧）
+    与 `<sid>_<YYYYMMDD>_<HHMM>`（新）两种。
+    """
+    own = os.path.join(_SESS_DIR, "%s.jsonl" % session_id)
+    if os.path.isfile(own):
+        return own
+    root = _real_context_root()
+    if not os.path.isdir(root):
+        return ""
+
+    def _match(stem: str) -> bool:
+        return stem == session_id or stem.startswith(session_id + "_")
+
+    for entry in sorted(os.listdir(root)):
+        full = os.path.join(root, entry)
+        if os.path.isdir(full):
+            for fn in sorted(os.listdir(full)):
+                if fn.endswith(".jsonl") and _match(fn[:-6]):
+                    return os.path.join(full, fn)
+        elif entry.endswith(".jsonl") and _match(entry[:-6]):
+            return full
+    return ""
+
+
+def _turns_of(row: dict) -> list:
+    """会话消息：老行自带 `turns` 就用它，否则按 session_id 现读会话文件（行里不再内嵌上下文）。"""
+    if row.get("turns"):
+        return row["turns"]
+    path = _session_file(row.get("session_id") or "")
+    if not path:
+        return []
+    msgs = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    msgs.append(json.loads(line))
+                except ValueError:
+                    continue
+    return msgs
+
+
 def _load_golden():
-    """读评测集：兼容严格 JSONL（一行一条）与缩进拼接的多对象 JSON。"""
+    """读评测集：**一行一条 case**，按 `session_id` 分组返回（回放按会话走）。
+
+    兼容两种行形态：新形态只带 `session_id` + `query_index`（上下文按 session_id 现取，行里不内嵌）；
+    旧形态（迁移前，见 `golden.prev.jsonl`）一行一个会话，自带 `turns` 与 `cases[]`。
+    """
     with open(_GOLDEN_FILE, encoding="utf-8") as f:
         text = f.read()
     decoder = json.JSONDecoder()
-    rows, idx = [], 0
+    groups, order, idx = {}, [], 0
     while idx < len(text):
         while idx < len(text) and text[idx].isspace():
             idx += 1
         if idx >= len(text):
             break
         obj, idx = decoder.raw_decode(text, idx)
-        rows.append(obj)
-    return rows
+        sid = obj.get("session_id")
+        cases = obj["cases"] if "cases" in obj else [obj]
+        if sid not in groups:
+            groups[sid] = {"session_id": sid, "turns": obj.get("turns") or [], "cases": []}
+            order.append(sid)
+        groups[sid]["cases"].extend(cases)
+    return [groups[s] for s in order]
+
+
+def _validate_golden(rows) -> None:
+    """评测集自检：归因取值、`fixed` 语义、会话上下文可达——写错当场报出来，别等跑完 20 分钟。"""
+    from config.word_dict_config import FEEDBACK_REASON_KEYS
+
+    cases = [c for row in rows for c in row["cases"]]
+    bad = [c["id"] for c in cases if (c.get("type") or "") and c["type"] not in FEEDBACK_REASON_KEYS]
+    _assert(not bad, "归因 type 取值都在 FEEDBACK_REASONS 内" + (f"（越界：{bad}）" if bad else ""))
+    bad = [c["id"] for c in cases if c.get("fixed") and c.get("verdict") != "fail"]
+    _assert(not bad, "fixed（曾坏已修）的条目 verdict 都是 fail" + (f"（越界：{bad}）" if bad else ""))
+    missing = [row.get("session_id") for row in rows if not _turns_of(row)]
+    _assert(not missing, "每条 case 的会话上下文都可取" + (f"（缺：{missing}）" if missing else ""))
 
 
 class _BehaviourCapture(logging.Handler):
@@ -222,7 +308,13 @@ def _run_row(row: dict) -> list:
     # 上一次运行若被中断，会话文件会留在盘上（收尾才删）——开头也删一次，让中断后的重跑自愈。
     delete_session(sid)
 
-    turns = row["turns"]
+    turns = _turns_of(row)
+    if not turns:
+        # 取不到上下文就别回放（否则等于换了另一个用例）；逐条报出来
+        return [{"case": c, "reply": "<NO SESSION>",
+                 "problems": ["找不到会话文件，无法回放上下文"],
+                 "hard": c["expect"].get("behaviour") in _HARD_BEHAVIOURS,
+                 "must_pass": False, "tags": [], "trace": ""} for c in row["cases"]]
     results = []
     replayed = 0
     for case in sorted(row["cases"], key=lambda c: c["query_index"]):
@@ -241,7 +333,7 @@ def _run_row(row: dict) -> list:
             # 评测里正常不会出现（生成器必被消费完）；真出现说明这轮被截断，行为判定不可信
             problems.append("本轮 trace 标记 aborted（回答未跑完，判定不可信）")
         hard = case["expect"].get("behaviour") in _HARD_BEHAVIOURS
-        must_pass = hard and ((case.get("verdict") == "pass") or (case.get("type") == "regression_fixed"))
+        must_pass = hard and ((case.get("verdict") == "pass") or bool(case.get("fixed")))
         # 有问题的条目附上本轮 trace 摘要（主链路落的结构化环节记录），省得回头 grep 日志
         results.append({"case": case, "reply": reply, "problems": problems,
                         "hard": hard, "must_pass": must_pass, "tags": tags,
@@ -252,6 +344,18 @@ def _run_row(row: dict) -> list:
     clear_pending(sid)
     sops.base._sessions = {}
     return results
+
+
+def _reason_text(key) -> str:
+    """归因展示：`wrong_route「答非所问」`；空值 = 正例基线。与前端 feedback 同一套 key。"""
+    if not key:
+        return "正例"
+    try:
+        from config.word_dict_config import FEEDBACK_REASON_LABELS
+
+        return "%s「%s」" % (key, FEEDBACK_REASON_LABELS.get(key, ""))
+    except Exception:  # noqa: BLE001
+        return str(key)
 
 
 def _trace_brief(record: dict) -> str:
@@ -296,7 +400,7 @@ def _print_detail(results):
         else:
             mark = "REGRESS" if r["must_pass"] else "xfail"
         kind = "必过" if r["must_pass"] else "badcase"
-        print(f"  [{mark:<7}] {c['id']} ({kind}/{c.get('type')}) {c['query']}"
+        print(f"  [{mark:<7}] {c['id']} ({kind}/{_reason_text(c.get('type'))}) {c['query']}"
               f"   [{_tag_text(r['tags'])}]")
         if r["problems"]:
             print(f"              ↳ {'；'.join(r['problems'])}")
@@ -312,7 +416,7 @@ def _print_detail(results):
             mark = "✓已转通过"
         else:
             mark = "· 未偏离"
-        print(f"  [{mark:<7}] {c['id']} ({c.get('type')}) {c['query']}"
+        print(f"  [{mark:<7}] {c['id']} ({_reason_text(c.get('type'))}) {c['query']}"
               f"   [{_tag_text(r['tags'])}]")
         if r["problems"]:
             print(f"              ↳ {'；'.join(r['problems'])}")
@@ -361,7 +465,7 @@ def _write_review(rows, results, hard_results, soft_results, must_pass, regressi
             mark = "✓ 已转通过"
         else:
             mark = "· 未偏离"
-        out += [f"## {mark} {c['id']}（{c.get('type')}）", "",
+        out += [f"## {mark} {c['id']}（{_reason_text(c.get('type'))}）", "",
                 f"- 用户：{c['query']}",
                 f"- 期望行为：{exp.get('behaviour')}",
                 f"- 实际 tag：{_tag_text(r['tags'])}",
@@ -390,6 +494,7 @@ def run():
 
     rows = _load_golden()
     _assert(len(rows) > 0, f"评测集加载成功（{len(rows)} 个会话）")
+    _validate_golden(rows)
 
     # 影子探针在这条轨上是纯开销：多跑一次 FC（实测每轮 +75~125s），且它只落日志、不改被测行为。
     # 跑用例期间关掉，算力让给被测主链路；跑完即恢复（run_tests 同进程还会跑后面的模块）。
@@ -418,6 +523,12 @@ def run():
 
     print(f"  会话 {len(rows)} 个 / 标注 {len(results)} 条（硬行为 {len(hard_results)} · 软行为 {len(soft_results)}）")
     print(f"  trace 记录版本：{_trace_version()}（失败归因取自它；逐轮时间线用 test_scripts/trace_report.py 看）")
+    from collections import Counter
+
+    by_reason = Counter((r["case"].get("type") or "") for r in hard_results if r["problems"])
+    if by_reason:
+        print("  失败归因分布（第一个出错环节）："
+              + "、".join(f"{_reason_text(k)}×{v}" for k, v in by_reason.most_common()))
     print(f"  【硬行为·回归门】必过 {len(must_pass) - len(regressions)}/{len(must_pass)} 通过"
           f"；未修 badcase 仍失败 {len(xfail)}、已转通过 {len(xpass)}")
     if xpass:

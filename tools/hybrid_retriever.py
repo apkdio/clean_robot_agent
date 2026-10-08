@@ -79,6 +79,15 @@ class HybridRetriever:
     def search(self, query: str, filter: dict | None = None) -> List[Document]:
         """双路召回 + RRF + 精排，返回 Document 列表（数量由 retrieval.final_top_k 控制）。
 
+        同上，只要文档；需要分数与来源时用 `search_with_scores()`。
+        """
+        return [doc for doc, _score, _meta in self.search_with_scores(query, filter=filter)]
+
+    def search_with_scores(
+        self, query: str, filter: dict | None = None
+    ) -> List[Tuple[Document, float, Dict]]:
+        """与 `search()` 同一条链路，额外返回每条的分数与来源 meta（供 trace 记录片段）。
+
         `filter` 按**软约束**处理：带 filter 召回后若精排 top1 低于
         `rerank.score_threshold`，则撤掉 filter 再召回一次全库，两池交给 `_merge_pools`
         合并。这条路径不再按绝对阈值砍分。filter 为 None 时只有一遍召回，硬阈值照旧挡领域外。
@@ -115,9 +124,9 @@ class HybridRetriever:
                 before, len(ranked), threshold,
             )
 
-        documents = [doc for doc, _score, _meta in ranked[:final_top_k]]
-        logger.info("[Hybrid] query='%s' → %d result(s)", query[:40], len(documents))
-        return documents
+        top = ranked[:final_top_k]
+        logger.info("[Hybrid] query='%s' → %d result(s)", query[:40], len(top))
+        return top
 
     @staticmethod
     def _merge_pools(

@@ -14,10 +14,8 @@ import sys
 import time
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_SCRIPTS_DIR = os.path.dirname(_SCRIPT_DIR)
-for _p in (_SCRIPTS_DIR, os.path.join(_SCRIPTS_DIR, "eval")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+    sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
 from tools import agent as agent_mod
@@ -158,6 +156,10 @@ def test_trace_record_schema():
     path = trace_store._path(sid).replace("\\", "/")
     _assert_in("trace_test", path, "trace 落在隔离目录（不污染真实 logs/trace/）")
     _assert("data/context" not in path, "trace 不写进 data/context（会被当会话读）")
+    _assert_true(path.split("/")[-2].startswith(sid + "_"),
+                 "目录名 = 会话 ID + 时间（与 context 命名一致）")
+    _assert_true(path.split("/")[-1].startswith(sid + "_") and path.endswith(".jsonl"),
+                 "文件名 = 会话 ID + 时间（与 context 命名一致）")
 
     reset_trace(sid)
     _assert_eq(read_last_turn(sid), {}, "reset_trace 之后读不到（文件与进程内计数都清了）")
@@ -196,9 +198,47 @@ def test_trace_report_flags():
     _assert_in("意图=casual(0.900)", line, "带意图与 margin")
 
 
+def test_golden_schema_and_context():
+    """评测集自身的自检：一行一条 case、归因取枚举、fixed 语义、上下文可达。
+
+    放这里是为了**免跑 20 分钟才发现写错**（带 --e2e 的实跑很贵）。评测集是本地数据，缺失时跳过。
+    """
+    if not os.path.isfile(ctx_eval._GOLDEN_FILE):
+        return
+    rows = ctx_eval._load_golden()
+    cases = [c for row in rows for c in row["cases"]]
+    _assert_true(rows and cases, "评测集能读出会话与标注（%d 会话 / %d 条）" % (len(rows), len(cases)))
+    bad = [(c.get("id"), f) for c in cases for f in ("id", "session_id", "query_index", "query",
+                                                      "expect", "verdict") if f not in c]
+    _assert_eq(bad, [], "每条 case 都有必需字段（id/session_id/query_index/query/expect/verdict）")
+
+    from config.word_dict_config import FEEDBACK_REASON_KEYS
+
+    bad = [c["id"] for c in cases if (c.get("type") or "") and c["type"] not in FEEDBACK_REASON_KEYS]
+    _assert_eq(bad, [], "归因 type 都在 FEEDBACK_REASONS 内（与前端标注同一套 key）")
+    bad = [c["id"] for c in cases if c.get("fixed") and c.get("verdict") != "fail"]
+    _assert_eq(bad, [], "fixed（曾坏已修）的条目 verdict 都是 fail")
+    missing = [row.get("session_id") for row in rows if not ctx_eval._turns_of(row)]
+    _assert_eq(missing, [], "每个会话的上下文都取得到（真实会话或评测集自带 sessions/）")
+
+
 def test_tag_text():
     _assert_eq(ctx_eval._tag_text(["carry_safety"]), "tag=carry_safety", "有 tag → 摘要")
     _assert_in("未捕获", ctx_eval._tag_text([]), "无 tag → 明说未捕获而非留空")
+
+
+def test_feedback_reason_enum():
+    """前端「无用」原因枚举的自检：键唯一、都带标签与归因层、保留兜底类「其他」且在末尾。"""
+    from config.word_dict_config import (FEEDBACK_REASONS, FEEDBACK_REASON_KEYS,
+                                         FEEDBACK_REASON_LABELS, FEEDBACK_REASON_LAYERS)
+
+    keys = [r["key"] for r in FEEDBACK_REASONS]
+    _assert_eq(len(keys), len(set(keys)), "枚举键唯一（存的是键，重复会让统计串味）")
+    _assert_true(all(r.get("label") and r.get("layer") for r in FEEDBACK_REASONS),
+                 "每条都有中文标签与归因层（标完即知往哪一层修）")
+    _assert_eq(FEEDBACK_REASON_KEYS[-1], "other", "兜底类「其他」保留且排在末尾（新增类追加在它之前）")
+    _assert_eq(set(FEEDBACK_REASON_LABELS), set(keys), "标签表与枚举一致")
+    _assert_eq(set(FEEDBACK_REASON_LAYERS), set(keys), "归因层表与枚举一致")
 
 
 TESTS = [
@@ -214,7 +254,9 @@ TESTS = [
     test_trace_record_schema,
     test_trace_best_effort,
     test_trace_report_flags,
+    test_golden_schema_and_context,
     test_tag_text,
+    test_feedback_reason_enum,
 ]
 
 

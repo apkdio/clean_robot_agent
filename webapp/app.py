@@ -71,7 +71,47 @@ def _clear_stop(session_id: str):
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    from config.word_dict_config import FEEDBACK_REASONS
+    return render_template("index.html", feedback_reasons=FEEDBACK_REASONS)
+
+
+@app.route("/api/feedback", methods=["POST"])
+def feedback():
+    """记录用户对某轮回复的「有用/无用」标注，落到 trace 旁路文件 <sid>.feedback.jsonl。"""
+    data = request.get_json(silent=True) or {}
+    session_id = ensure_session_id(data.get("session_id", ""))
+    query = (data.get("query") or "").strip()
+    rating = data.get("rating")
+    if rating not in ("useful", "useless"):
+        return jsonify({"status": "error", "message": "rating 必须是 useful / useless"}), 400
+    if not query:
+        return jsonify({"status": "error", "message": "缺少 query（用于定位轮次）"}), 400
+
+    from config.word_dict_config import FEEDBACK_REASON_KEYS
+    reason = (data.get("reason") or "").strip()
+    if rating == "useless":
+        # 无用必须给一个枚举原因（含 other）：否则标完没法聚类；有用不带原因
+        if reason not in FEEDBACK_REASON_KEYS:
+            return jsonify({"status": "error",
+                            "message": "无用原因必须是 %s 之一" % "/".join(FEEDBACK_REASON_KEYS)}), 400
+    else:
+        reason = ""
+
+    from tools import trace_store
+    ctx = trace_store.find_turn(session_id, query)
+    if not ctx:
+        # 没对上轮次：标注没地方落，如实告诉前端（也提醒可能是跨天/轮次已过久）
+        logger.warning("[Feedback] no matching turn: session=%s query=%s", session_id, query[:40])
+        return jsonify({"status": "no_turn", "message": "没找到对应的轮次（可能已超出回看天数）"}), 404
+    trace_store.feedback_turn(
+        ctx, rating=rating,
+        reason=reason[:40],
+        note=(data.get("note") or "")[:200],
+    )
+    logger.info("[Feedback] turn=%s/%s rating=%s reason=%s session=%s",
+                ctx.get("date"), ctx.get("turn_index"), rating,
+                reason or "-", session_id)
+    return jsonify({"status": "ok", "date": ctx.get("date"), "turn_index": ctx.get("turn_index")})
 
 
 @app.route("/api/stats", methods=["GET"])

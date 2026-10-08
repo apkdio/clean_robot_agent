@@ -234,3 +234,19 @@ NO_ANSWER_REPLIES = [
     "抱歉呀，无尘暂时没找到跟这个相关的资料。可以再具体描述一下吗？比如具体型号、具体现象。",
     "这个问题无尘暂时还没有查到，建议联系官方售后（400-860-1314）进一步确认～",
 ]
+
+
+
+# 只存键不存文案：改 label 不用动前端与读写侧；新增一类请追加在 other 之前。
+FEEDBACK_REASONS = [
+    {"key": "retrieval_miss", "label": "没找到/召回错", "layer": "检索侧（阈值、改写、域路由）"},
+    {"key": "kb_gap", "label": "知识库没有", "layer": "输入端 → 补知识库"},
+    {"key": "wrong_route", "label": "答非所问", "layer": "前置判断（意图、规则）"},
+    {"key": "wrong_content", "label": "答错了", "layer": "生成、校验"},
+    {"key": "incomplete", "label": "答得不全", "layer": "检索宽度、生成"},
+    {"key": "verbose_format", "label": "太啰嗦/格式乱", "layer": "生成 prompt"},
+    {"key": "other", "label": "其他", "layer": "待聚类（配合补充说明）"},
+]
+FEEDBACK_REASON_KEYS = tuple(r["key"] for r in FEEDBACK_REASONS)
+FEEDBACK_REASON_LABELS = {r["key"]: r["label"] for r in FEEDBACK_REASONS}
+FEEDBACK_REASON_LAYERS = {r["key"]: r["layer"] for r in FEEDBACK_REASONS}

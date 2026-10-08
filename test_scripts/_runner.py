@@ -206,9 +206,13 @@ def reset_trace(session_id: str) -> None:
     try:
         from tools import trace_store
 
-        path = trace_store._path(session_id)
-        if os.path.isfile(path):
-            os.remove(path)
+        for kind in ("", trace_store.CHUNK_KIND, trace_store.SHADOW_KIND, trace_store.FEEDBACK_KIND):
+            path = trace_store._path(session_id, kind)
+            if os.path.isfile(path):
+                os.remove(path)
+        session_dir = trace_store._session_dir(session_id)
+        if session_dir and os.path.isdir(session_dir) and not os.listdir(session_dir):
+            os.rmdir(session_dir)          # 文件删空就连目录收掉：别留空壳（读数器会按目录名解析日期）
         for key in [k for k in list(trace_store._seq) if k[0] == session_id]:
             trace_store._seq.pop(key, None)
         trace_store._last.pop(session_id, None)

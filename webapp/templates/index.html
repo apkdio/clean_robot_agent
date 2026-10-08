@@ -85,6 +85,28 @@
     }
     .retry-btn:hover { color: #409eff; border-color: #409eff; background: #ecf5ff; }
 
+    /* ── 回复评价（有用/无用 + 无用理由，落 trace 旁路文件）── */
+    .feedback-bar { font-size: 12px; color: #909399; margin: 6px 0 0 46px; user-select: none; }
+    .feedback-bar .fb-btn {
+      display: inline-block; padding: 3px 10px; margin-right: 6px; cursor: pointer;
+      border: 1px solid #e4e7ed; border-radius: 12px; transition: .15s;
+    }
+    .feedback-bar .fb-btn:hover { color: #409eff; border-color: #409eff; background: #ecf5ff; }
+    .feedback-bar .fb-reasons { margin-top: 6px; }
+    .feedback-bar .fb-chip {
+      display: inline-block; padding: 2px 10px; margin: 0 6px 6px 0; cursor: pointer;
+      border: 1px solid #e4e7ed; border-radius: 12px; transition: .15s;
+    }
+    .feedback-bar .fb-chip:hover, .feedback-bar .fb-chip.on { color: #f56c6c; border-color: #f56c6c; background: #fef0f0; }
+    .feedback-bar input {
+      border: 1px solid #e4e7ed; border-radius: 10px; padding: 3px 10px;
+      font-size: 12px; width: 200px; margin-right: 6px; outline: none;
+    }
+    .feedback-bar .fb-submit { color: #409eff; cursor: pointer; }
+    .feedback-bar .fb-cancel { color: #c0c4cc; cursor: pointer; margin-left: 8px; }
+    .feedback-bar .fb-done { color: #67c23a; }
+    .feedback-bar .fb-fail { color: #f56c6c; }
+
     /* ── Typing indicator ── */
     .typing { display: none; }   /* replaced by in-bubble dots */
     .dot {
@@ -509,7 +531,7 @@
     // 「重新回答」按钮是 .msg 的兄弟节点，必须一起清掉：否则切换会话后它会被
     // 新插入的历史消息挤到最上面，而且点击它会把上一轮的问题发到当前会话
     // （它的回调仍指向已被移除的气泡）。
-    document.querySelectorAll('#chatMessages .msg, #chatMessages .retry-btn')
+    document.querySelectorAll('#chatMessages .msg, #chatMessages .retry-btn, #chatMessages .feedback-bar')
       .forEach(el => el.remove());
     welcome.style.display = 'block';
   }
@@ -519,8 +541,16 @@
       const r = await fetch('/api/sessions/' + encodeURIComponent(sid) + '/messages');
       const data = await r.json();
       welcome.style.display = 'none';
+      let lastUser = '';
       (data.messages || []).forEach(m => {
-        appendMessage(m.role === 'user' ? 'user' : 'bot', m.content || '');
+        if (m.role === 'user') {
+          lastUser = m.content || '';
+          appendMessage('user', lastUser);
+          return;
+        }
+        const div = appendMessage('bot', m.content || '');
+        // 历史消息同样可标：标注按 query 定位到轮次，落同一份 feedback 文件
+        if (div && lastUser) div.after(makeFeedbackBar(lastUser));
       });
     } catch (e) { /* 忽略加载失败 */ }
   }
@@ -701,6 +731,8 @@
     }
 
     if (retry) retry.style.display = '';
+    // 回答完成后挂评价条（被停止的轮次在 trace 里是 aborted，不挂）
+    if (!stoppedByUser && retry) retry.after(makeFeedbackBar(query));
   }
 
   function setSendBtn(streaming) {
@@ -771,6 +803,64 @@
     chatMessages.insertBefore(div, typing);
     scrollBottom();
     div.addEventListener('click', () => { if (role === 'bot') chatInput.focus(); });
+    return div;
+  }
+
+  // ── 回复评价：有用/无用（+理由），后端按 query 定位轮次后落 trace ──
+  const FEEDBACK_REASONS = {{ feedback_reasons | tojson }};
+
+  function makeFeedbackBar(query) {
+    const bar = document.createElement('div');
+    bar.className = 'feedback-bar';
+    const buttons = document.createElement('div');
+    buttons.innerHTML = '<span class="fb-btn fb-up">👍 有用</span><span class="fb-btn fb-down">👎 无用</span>';
+    buttons.querySelector('.fb-up').addEventListener('click', () => submitFeedback(bar, query, 'useful', '', ''));
+    buttons.querySelector('.fb-down').addEventListener('click', () => {
+      const panel = document.createElement('div');
+      panel.className = 'fb-reasons';
+      // 单选：原因要唯一才能归因到「第一个出错的环节」；hover 看它指向哪一层修
+      panel.innerHTML = FEEDBACK_REASONS.map(r =>
+        `<span class="fb-chip" data-key="${r.key}" title="${r.layer}">${r.label}</span>`).join('')
+        + '<input type="text" placeholder="补充说明（可选）" maxlength="100">'
+        + '<span class="fb-submit">提交</span><span class="fb-cancel">取消</span>';
+      const chips = [...panel.querySelectorAll('.fb-chip')];
+      chips.forEach(ch => ch.addEventListener('click', () => {
+        chips.forEach(o => o.classList.remove('on'));
+        ch.classList.add('on');
+      }));
+      panel.querySelector('.fb-submit').addEventListener('click', () => {
+        const picked = panel.querySelector('.fb-chip.on');
+        if (!picked) {   // 必选一个（含「其他」），否则标注没法聚类
+          panel.querySelector('.fb-submit').textContent = '先选一个原因';
+          setTimeout(() => { panel.querySelector('.fb-submit').textContent = '提交'; }, 1500);
+          return;
+        }
+        submitFeedback(bar, query, 'useless', picked.dataset.key,
+                       panel.querySelector('input').value.trim());
+      });
+      panel.querySelector('.fb-cancel').addEventListener('click', () => panel.remove());
+      bar.appendChild(panel);
+    });
+    bar.appendChild(buttons);
+    return bar;
+  }
+
+  async function submitFeedback(bar, query, rating, reason, note) {
+    try {
+      const r = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, query, rating, reason, note })
+      });
+      const d = await r.json();
+      if (d.status === 'ok') {
+        bar.innerHTML = `<span class="fb-done">已记录，谢谢反馈 ✓（${d.date} 第 ${d.turn_index} 轮）</span>`;
+      } else {
+        bar.innerHTML = `<span class="fb-fail">未记录：${d.message || '找不到对应轮次'}</span>`;
+      }
+    } catch (e) {
+      bar.innerHTML = '<span class="fb-fail">提交失败，稍后再试</span>';
+    }
   }
 
   // 用 marked 渲染 markdown（本地 vendor），渲染前转义 < > 防 XSS

@@ -177,6 +177,19 @@ def decide(query: str, effective_query: str = "", history_block: str = "",
     return decision
 
 
+def shadow_record(decision: Decision, origin: str, chain_category: str,
+                  chain_detail: str = "") -> dict:
+    """影子决策的结构化对照（与 `shadow_line` 同一口径，供 trace 旁路文件落盘）。"""
+    rec = dict(decision.to_log())
+    rec.update({
+        "query": origin,
+        "chain": chain_category,
+        "chain_detail": chain_detail or "",
+        "agree": decision.category == chain_category,
+    })
+    return rec
+
+
 def shadow_line(decision: Decision, origin: str, chain_category: str,
                 chain_detail: str = "") -> str:
     """影子/离线对照的一行日志：链路怎么判、FC 会怎么判、是否一致。
