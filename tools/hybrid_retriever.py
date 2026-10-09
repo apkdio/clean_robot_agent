@@ -46,10 +46,12 @@ class HybridRetriever:
     # 检索
     # ------------------------------------------------------------------
 
-    def _retrieve(self, query: str, filter: dict | None) -> List[Tuple[Document, float, Dict]]:
+    def _retrieve(self, query: str, filter: dict | None,
+                  facts: dict | None = None) -> List[Tuple[Document, float, Dict]]:
         """一次召回：双路 → RRF → 精排，返回**未按阈值过滤**的有序候选。
 
-        返回 [(doc, score, meta), ...]（分数降序），交给 search() 决定怎么用。
+        返回 [(doc, score, meta), ...]（分数降序），交给 search() 决定怎么用；
+        传入 `facts` 时把这一遍的各路条数与精排进出写进去（trace 用，不改行为）。
         """
         retrieval_cfg = _rag_cfg.get("retrieval", {})
         rerank_cfg = _rag_cfg.get("rerank", {})
@@ -70,11 +72,18 @@ class HybridRetriever:
         # 4. 精排：把「排名融合」升级为「语义相关性排序」
         reranked = rerank(query, fused) if rerank_on else None
         if reranked is not None:
-            return reranked
-        # 4'. 融合侧兜底（精排未启用或不可用）：丢弃无稠密支撑的候选。
-        #     稠密侧已按阈值过滤，「不在稠密结果里」等价于「稠密相关性低于阈值」；
-        #     不丢弃的话，领域外 query 会靠 BM25 的字面命中把噪声带进 Prompt。
-        return self._drop_without_dense_support(fused, dense_results)
+            out, degraded = reranked, False
+        else:
+            # 4'. 融合侧兜底（精排未启用或不可用）：丢弃无稠密支撑的候选。
+            #     稠密侧已按阈值过滤，「不在稠密结果里」等价于「稠密相关性低于阈值」；
+            #     不丢弃的话，领域外 query 会靠 BM25 的字面命中把噪声带进 Prompt。
+            out, degraded = self._drop_without_dense_support(fused, dense_results), rerank_on
+        if facts is not None:
+            facts.update(filter=filter, dense=len(dense_results), sparse=len(sparse_results),
+                         fused=len(fused),
+                         rerank={"model": rerank_cfg.get("model") if rerank_on else None,
+                                 "in": len(fused), "out": len(out), "degraded": degraded})
+        return out
 
     def search(self, query: str, filter: dict | None = None) -> List[Document]:
         """双路召回 + RRF + 精排，返回 Document 列表（数量由 retrieval.final_top_k 控制）。
@@ -84,13 +93,14 @@ class HybridRetriever:
         return [doc for doc, _score, _meta in self.search_with_scores(query, filter=filter)]
 
     def search_with_scores(
-        self, query: str, filter: dict | None = None
+        self, query: str, filter: dict | None = None, trace_out: dict | None = None
     ) -> List[Tuple[Document, float, Dict]]:
         """与 `search()` 同一条链路，额外返回每条的分数与来源 meta（供 trace 记录片段）。
 
         `filter` 按**软约束**处理：带 filter 召回后若精排 top1 低于
         `rerank.score_threshold`，则撤掉 filter 再召回一次全库，两池交给 `_merge_pools`
         合并。这条路径不再按绝对阈值砍分。filter 为 None 时只有一遍召回，硬阈值照旧挡领域外。
+        传入 `trace_out` 时把两遍召回与最终候选的来源分布写进去（trace 用，不改行为）。
         选型依据（两个直觉写法为何被否决）见 notes/project_detail.md 的决策记录。
         """
         if not self.sparse.is_ready:
@@ -102,7 +112,10 @@ class HybridRetriever:
         rerank_on = bool(rerank_cfg.get("enabled", False))
         threshold = rerank_cfg.get("score_threshold", 0) or 0
 
-        ranked = self._retrieve(query, filter)
+        facts = {}
+        ranked = self._retrieve(query, filter, facts)
+        facts["pass"] = 1
+        passes = [facts]
         top1 = ranked[0][1] if ranked else 0.0
 
         # 阈值只在精排启用时才有意义：关闭精排时 top1 是 RRF 分，量纲不同
@@ -111,11 +124,19 @@ class HybridRetriever:
                 "[Hybrid] in-domain top1=%.4f < threshold=%.2f → second pass over full KB",
                 top1, threshold,
             )
-            ranked = self._merge_pools(ranked, self._retrieve(query, None), final_top_k)
+            first_keys = {doc.page_content for doc, _s, _m in ranked}
+            facts2 = {}
+            fallback = self._retrieve(query, None, facts2)
+            facts2["pass"] = 2
+            passes.append(facts2)
+            ranked = self._merge_pools(ranked, fallback, final_top_k)
             logger.info(
                 "[Hybrid] merged pools → %d candidate(s) (fallback quota=%d, no absolute cut), top score=%.4f",
                 len(ranked), (final_top_k + 1) // 2, ranked[0][1] if ranked else 0.0,
             )
+            twice = {"active": True,
+                     "kept": sum(1 for doc, _s, _m in ranked if doc.page_content not in first_keys),
+                     "trigger": {"top1": round(top1, 4), "threshold": threshold}}
         elif rerank_on and threshold > 0:
             before = len(ranked)
             ranked = [item for item in ranked if item[1] >= threshold]
@@ -123,10 +144,33 @@ class HybridRetriever:
                 "[Hybrid] threshold cut %d → %d candidate(s) (threshold=%.2f)",
                 before, len(ranked), threshold,
             )
+            twice = {"active": False, "kept": 0}
+        else:
+            twice = {"active": False, "kept": 0}
 
         top = ranked[:final_top_k]
+        if trace_out is not None:
+            trace_out.update(passes=passes, merge=self._source_mix(top), source="first",
+                             twice_retrieval=twice)
         logger.info("[Hybrid] query='%s' → %d result(s)", query[:40], len(top))
         return top
+
+    @staticmethod
+    def _source_mix(items) -> dict:
+        """最终候选按来源计数：只有稠密 / 只有 BM25 / 两路都有。"""
+        dense_only = sparse_only = both = 0
+        for _doc, _score, meta in items:
+            meta = meta or {}
+            has_dense = meta.get("dense_rank") is not None
+            has_sparse = meta.get("sparse_rank") is not None
+            if has_dense and has_sparse:
+                both += 1
+            elif has_dense:
+                dense_only += 1
+            elif has_sparse:
+                sparse_only += 1
+        return {"dense_only": dense_only, "sparse_only": sparse_only, "both": both,
+                "final": len(items)}
 
     @staticmethod
     def _merge_pools(

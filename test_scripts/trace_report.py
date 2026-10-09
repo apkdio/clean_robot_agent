@@ -15,6 +15,11 @@ trace 由 `tools/trace_store.py` 落盘（默认 `logs/trace/<session_id>/<sessi
     python test_scripts/trace_report.py --session <session_id> --feedback
     # 只看某一天 / 指定目录（评测跑出来的 trace 在 temp/trace_test）
     python test_scripts/trace_report.py --session abc12345 --date 2026-09-29 --dir temp/trace_test
+    # 按平铺形态打印
+    python test_scripts/trace_report.py --session abc12345 --flat
+
+默认按分层视图打印：进门判断 / 有序路径 / 检索各遍与来源分布 / SOP 动作链 / 出口；
+没有分层块的记录自动回退到平铺视图。字段含义见 notes/TRACE.md。
 """
 import argparse
 import json
@@ -66,6 +71,11 @@ def _flags(rec: dict) -> list:
         out.append("retry 重答")
     if retrieve.get("n_chunks") == 0 or rec.get("tag") == "no_answer_fallback":
         out.append("0 召回/兜底")
+    ret = rec.get("retrieval") or {}
+    if (ret.get("twice_retrieval") or {}).get("active"):
+        out.append("撤域二遍召回")
+    if any((p.get("rerank") or {}).get("degraded") for p in ret.get("passes") or []):
+        out.append("精排降级")
     if isinstance(ms.get("total"), int) and ms["total"] >= _SLOW_MS:
         out.append("慢 %ds" % round(ms["total"] / 1000))
     return out
@@ -95,6 +105,133 @@ def _turn_lines(rec: dict) -> list:
     if rec.get("tags") and len(rec["tags"]) > 1:
         line += "\n      行为序列: %s" % "→".join(rec["tags"])
     return [line]
+
+
+def _dur(v) -> str:
+    """耗时（毫秒）→ 人看的写法。"""
+    if not isinstance(v, (int, float)):
+        return "-"
+    return "%dms" % v if v < 1000 else "%.1fs" % (v / 1000.0)
+
+
+def _fmt(v) -> str:
+    if isinstance(v, bool):
+        return "是" if v else "否"
+    if isinstance(v, float):
+        return ("%.3f" % v).rstrip("0").rstrip(".")
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, ensure_ascii=False)
+    return str(v)
+
+
+def _kv(d) -> str:
+    if not isinstance(d, dict) or not d:
+        return ""
+    return "(" + " ".join("%s=%s" % (k, _fmt(v)) for k, v in d.items()) + ")"
+
+
+def _turn_lines_nested(rec: dict, labels: dict) -> list:
+    """分层视图：进门判断 / 有序路径 / 检索各遍与分布 / SOP 动作链 / 出口。"""
+    out = ["  #%s  %s" % (rec.get("turn_index"), rec.get("query") or "")]
+    head = ["tag=%s" % (rec.get("tag") or "-")]
+    if rec.get("branch"):
+        head.append("出口=%s" % rec["branch"])
+    head.append("耗时=%s" % _dur((rec.get("ms") or {}).get("total")))
+    out.append("      " + "  ".join(head))
+
+    route = rec.get("route") or {}
+    gate = "  ".join("%s%s" % (labels.get("route.%s" % k, k),
+                                 "命中" if (route.get(k) or {}).get("hit") else "无")
+                     for k in ("inject", "danger", "emotion"))
+    intent = route.get("intent") or {}
+    if intent:
+        gate += "  |  %s=%s" % (labels.get("route.intent", "意图"), intent.get("label"))
+        if isinstance(intent.get("margin"), (int, float)):
+            gate += "(%.3f)" % intent["margin"]
+        if intent.get("downgrade"):
+            gate += "→%s" % intent["downgrade"]
+    out.append("      进门: " + gate)
+
+    path = rec.get("path") or []
+    if path:
+        steps = []
+        for n in path:
+            bit = labels.get(n.get("node"), n.get("node"))
+            if n.get("status") == "skipped":
+                bit += "·跳过(%s)" % (n.get("by") or "-")
+            if n.get("ms"):
+                bit += " %s" % _dur(n["ms"])
+            steps.append(bit)
+        out.append("      路径: " + " → ".join(steps))
+        facts = ["%s%s" % (labels.get(n["node"], n["node"]), _kv(n.get("out")))
+                 for n in path if n.get("out") and not n["node"].startswith("route.")]
+        if facts:
+            out.append("      事实: " + " ｜ ".join(facts))
+
+    ret = rec.get("retrieval") or {}
+    if ret:
+        bits = []
+        dom = ret.get("domain") or {}
+        if dom:
+            bits.append("域=%s（路由 %s）" % (_fmt(dom.get("value")) if dom.get("value") else "全库",
+                                             dom.get("via") or "-"))
+        rw = ret.get("rewrite") or {}
+        if rw.get("via") not in (None, "none"):
+            bits.append("改写=%s→「%s」" % (rw.get("via"), rw.get("effective_query")))
+        if bits:
+            out.append("      检索: " + "  ".join(bits))
+        for p in ret.get("passes") or []:
+            rk = p.get("rerank") or {}
+            out.append("            pass%s: 稠密%s/稀疏%s → 融合%s → 精排%s→%s%s" % (
+                p.get("pass"), p.get("dense"), p.get("sparse"), p.get("fused"),
+                rk.get("in"), rk.get("out"), "（降级，未精排）" if rk.get("degraded") else ""))
+        twice = ret.get("twice_retrieval") or {}
+        if twice.get("active"):
+            trig = twice.get("trigger") or {}
+            out.append("            二次召回: 域内 top1=%s < 阈值%s → 撤域全库，兜底池进 %s 条" % (
+                trig.get("top1"), trig.get("threshold"), twice.get("kept")))
+        mix = ret.get("merge") or {}
+        if mix:
+            tail = ""
+            if ret.get("evidence"):
+                tail = "  证据=%s" % (ret["evidence"] or {}).get("file")
+            if ret.get("source") == "retry":
+                tail += "  （重检：%s）" % _kv(ret.get("retry"))
+            out.append("            最终: %s 条（两路都有 %s / 只稠密 %s / 只 BM25 %s）%s" % (
+                mix.get("final"), mix.get("both"), mix.get("dense_only"), mix.get("sparse_only"), tail))
+
+    sop = rec.get("sop") or {}
+    if sop:
+        flow = " → ".join("%s%s=%s" % (f.get("type"), "(%s)" % f["slot"] if f.get("slot") else "",
+                                       f.get("outcome")) for f in (sop.get("flow") or []))
+        out.append("      SOP: %s 第%s步 ｜ 槽位 %s ｜ %s%s" % (
+            sop.get("id"), sop.get("step"), sop.get("n_slots"), flow or "-",
+            " ｜ 已收尾" if sop.get("done") else ""))
+    if rec.get("sop_gate"):
+        out.append("      SOP 门: %s" % json.dumps(rec["sop_gate"], ensure_ascii=False))
+
+    ans = rec.get("answer") or {}
+    if ans:
+        out.append("      出口: %s ｜ 模型 %s ｜ %s 字" % (
+            ans.get("kind") or "-", ans.get("model") or "-", ans.get("chars")))
+    shadow = rec.get("shadow") or {}
+    if shadow:
+        out.append("      影子: chain=%s ｜ 证据=%s" % (
+            shadow.get("chain") or "-", (shadow.get("evidence") or {}).get("file") or "-"))
+    flags = _flags(rec)
+    if flags:
+        out.append("      ⚠ " + "、".join(flags))
+    if rec.get("tags") and len(rec["tags"]) > 1:
+        out.append("      行为序列: %s" % "→".join(rec["tags"]))
+    return out
+
+
+def _render_turn(rec: dict, flat: bool = False) -> list:
+    """默认走分层视图；没有分层块或 `--flat` 时走平铺。"""
+    if flat or not (rec.get("branch") or rec.get("path")):
+        return _turn_lines(rec)
+    from config.word_dict_config import TRACE_NODE_LABELS
+    return _turn_lines_nested(rec, TRACE_NODE_LABELS)
 
 
 def _session_dir(root: str, session_id: str) -> str:
@@ -136,7 +273,7 @@ def _session_files(root: str, session_id: str, kind: str = "", date: str = "") -
     return out
 
 
-def _print_session(session_id: str, paths: list) -> None:
+def _print_session(session_id: str, paths: list, flat: bool = False) -> None:
     """打印该会话的 trace；`paths` 按日期升序，一天一段。"""
     total = 0
     for path in paths:
@@ -150,7 +287,7 @@ def _print_session(session_id: str, paths: list) -> None:
                                           rows[-1].get("ts")))
         print("=" * 72)
         for rec in rows:
-            print("\n".join(_turn_lines(rec)))
+            print("\n".join(_render_turn(rec, flat)))
         flagged = [r.get("turn_index") for r in rows if _flags(r)]
         if flagged:
             print("\n值得先看的轮次：%s" % "、".join("#%s" % t for t in flagged))
@@ -240,14 +377,20 @@ def _print_feedback(session_id: str, path: str) -> None:
     from config.word_dict_config import FEEDBACK_REASON_LABELS, FEEDBACK_REASON_LAYERS
 
     rows = _load(path)
+    # 同一轮可能有多条（用户改过标注）：生效的是最后一条
+    effective, times = {}, Counter()
+    for rec in rows:
+        effective[rec.get("turn_index")] = rec
+        times[rec.get("turn_index")] += 1
     print("=" * 72)
-    print("会话 %s  |  %d 条评价  |  %s" % (session_id, len(rows), path))
+    print("会话 %s  |  %d 条评价 / %d 轮  |  %s" % (session_id, len(rows), len(effective), path))
     print("=" * 72)
-    useless = Counter(r.get("reason") or "-" for r in rows if r.get("rating") == "useless")
+    useless = Counter(r.get("reason") or "-" for r in effective.values()
+                      if r.get("rating") == "useless")
     if useless:
         print("\n无用原因分布：%s" % "、".join(
             "%s×%d" % (FEEDBACK_REASON_LABELS.get(k, k), n) for k, n in useless.most_common()))
-    for rec in rows:
+    for rec in effective.values():
         mark = "👍有用" if rec.get("rating") == "useful" else "👎无用"
         print("\n#%s  %s  %s" % (rec.get("turn_index"), mark, rec.get("query") or ""))
         bits = ["tag=%s" % (rec.get("tag") or "-")]
@@ -259,6 +402,8 @@ def _print_feedback(session_id: str, path: str) -> None:
                                        "（事后回填）" if rec.get("reason_backfill") else ""))
         if rec.get("note"):
             bits.append("补充=%s" % rec["note"])
+        if times.get(rec.get("turn_index"), 1) > 1:
+            bits.append("（该轮共 %d 条，按最后一条）" % times[rec.get("turn_index")])
         print("   %s  %s" % ("  ".join(bits), rec.get("ts")))
 
 
@@ -272,6 +417,7 @@ def main() -> None:
     ap.add_argument("--date", default=None,
                     help="只看某天（YYYY-MM-DD）；默认：--list 看今天，--session 看全部")
     ap.add_argument("--dir", default=None, help="trace 根目录，默认 logs/trace（或 TRACE_DIR）")
+    ap.add_argument("--flat", action="store_true", help="按平铺形态打印")
     args = ap.parse_args()
 
     root = _root_dir(args.dir)
@@ -299,7 +445,7 @@ def main() -> None:
     if not paths:
         print("没有该会话的 trace：%s/%s" % (root, args.session))
         sys.exit(1)
-    _print_session(args.session, paths)
+    _print_session(args.session, paths, flat=args.flat)
 
 
 if __name__ == "__main__":

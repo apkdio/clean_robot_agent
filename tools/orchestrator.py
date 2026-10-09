@@ -22,7 +22,6 @@ from tools.log_tool import get_logger
 
 logger = get_logger(name="orchestrator")
 
-# ── 类目表（对照统计的口径，指标定义归 test-agent）─────────────────────
 # 为什么分两张表：“要不要检索 / 要不要拒答”**不由 FC 决定**——那是砸词表硬规则（危险/注入）
 # 与意图分类（含低置信承接）的活（A 类主路）。FC 只在**已经确定要走检索或结构化筛选**的轮次里参与，
 # 贡献的是“用哪个工具 + 填什么参数”，其中 `search_kb` 的实际价值是 `query_summarization`（检索式）

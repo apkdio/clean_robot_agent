@@ -1,33 +1,32 @@
 """多轮对话上下文评测：回放真实会话前缀 → 断言当前轮的出口行为（P0-3；评测集 data/eval/context/golden.jsonl）。
 
-评测集 `data/eval/context/golden.jsonl`（**本地数据，已 gitignore**；由 dev-agent 从真实会话整理，
-结构与用法见同目录 `README.md`）。一行 = 一个会话：`turns`（全部消息）+ `cases`（标注条目）。
+评测集 `data/eval/context/golden.jsonl`（**本地数据，已 gitignore**；从真实会话整理，
+结构与用法见同目录 `README.md`）。一行 = 一条标注（case），上下文按 `session_id` 现取。
 
-harness 对每条 case：回放 `turns[:query_index]` 重建上下文与 SOP 状态，再发 `case.query`，
-按 `expect.behaviour`（出口行为，读主链路的 `[Behavior]` tag）判定。
-数据里的 `must_contain_any` / `must_not_contain` 保留不动但**暂不参与判定**（2026-09-29）：
+harness 对每条 case：回放前缀重建上下文与 SOP 状态，再发 `case.query`，
+按 `expect.behaviour`（出口行为）判定——读主链路 trace 记录的 `branch`（本轮唯一出口）。
+数据里的 `must_contain_any` / `must_not_contain` 保留不动但**暂不参与判定**：
 话术断言会随文案漂移，而「行为对不对」与「话里有没有某个词」是两回事——后者属内容级，归检索轨与人工复核。
 
-出口行为的判定方式（2026-09-28 起）：**不解析话术**，改读主链路的 `[Behavior]` tag
-（`tools/agent.py::_log_behavior`，每个出口一行）——harness 用一个 logging handler 在**进程内**收集，
-判「tag 映射出的行为」是否等于 `expect.behaviour`。话术会随文案漂移，tag 是契约。
+判定口径：`branch` 是记录侧按 `config/word_dict_config.py::BEHAVIOR_BY_TAG` 折算出的**唯一出口**
+（`[Behavior]` tag → 行为），取值构成闭集、可断言。不按日志行判定：一轮可能有多个 tag，
+真正结束这一轮的是最后一个出口。
 
-两类断言的分工（2026-09-24 明确）：
-  - **硬行为**（`safety_alert` / `safety_carry` / `refuse` / `no_answer_fallback` / `structured` / `answer`，
-    都有对应的 `[Behavior]` tag）→ 进**回归门**。
+两类断言的分工：
+  - **硬行为**（`safety_alert` / `safety_carry` / `refuse` / `no_answer_fallback` / `structured` / `answer`）
+    → 进**回归门**。
   - **软行为**（`chitchat` / `clarify` / `slot_filled` / `scope_guard`）→ **一律不判失败**：它们本来就没有
     唯一正确答案（“闲聊该怎么回”），所以只输出「软行为复核清单」（本次回复 + 偏离点）交人工 / LLM 复核；
-    `[Behavior]` tag 与期望行为对不上时也列进清单（同一份复核，依旧不判失败）。
+    `branch` 与期望行为对不上时也列进清单（同一份复核，依旧不判失败）。
 
 通过语义（xfail 风格，仅对硬行为生效）：
-  - `verdict=pass` 或 `type=regression_fixed` → **必过**；失败 = 回归（硬失败）。
+  - `verdict=pass` 或 `fixed: true` → **必过**；失败 = 回归（硬失败）。
   - 其余（未修 badcase）→ 通过记 xpass（已修复），失败记 xfail（仍存在）；都不算回归。
 
 运行（需 Ollama + Chroma）：
   .venv\\Scripts\\python.exe test_scripts/eval/test_context_eval.py --e2e
 """
 import json
-import logging
 import os
 import sys
 import time
@@ -36,6 +35,7 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 from test_scripts._runner import *
+from config.word_dict_config import BEHAVIOR_BY_TAG, TRACE_NODE_LABELS
 
 _ROOT = os.path.dirname(os.path.dirname(_SCRIPT_DIR))   # 上两级：test_scripts/eval/ → 项目根
 _GOLDEN_FILE = os.path.join(_ROOT, "data", "eval", "context", "golden.jsonl")
@@ -44,54 +44,23 @@ _REVIEW_DIR = os.path.join(_ROOT, "data", "eval", "output")   # 复核文件：<
 # 唯一还靠文本的地方：回放「孤儿危险告警轮」时用它认出那条 assistant 回复（见 _replay_prefix）
 _DANGER_ALERT_MARK = "请立即停止使用"
 
-# 行为观测点：主链路每个出口记一行 `[Behavior] <tag> [k=v ...]`（tools/agent.py::_log_behavior）
-_BEHAVIOR_PREFIX = "[Behavior] "
+# 出口行为闭集 = 记录侧 trace 的 `branch` 取值（含流程类的 4 个），在 config/word_dict_config.py 登记。
+# 行为轨只认这一份表，不再自带副本——两处各存一张是会漂移的。
+_BEHAVIOURS = set(BEHAVIOR_BY_TAG.values())
 
-# `[Behavior]` tag → 本评测集的出口行为闭集（expect.behaviour 的取值）。
-# 软行为侧没有专属 tag 的（slot_filled / scope_guard）只从期望侧出现，不会被映射到。
-_TAG_TO_BEHAVIOUR = {
-    "stop_use_safety": "safety_alert",
-    "carry_safety": "safety_carry",
-    "refuse_offtopic": "refuse",
-    "no_answer_fallback": "no_answer_fallback",
-    "structured_answer": "structured",
-    "retrieve_answer": "answer",
-    "chitchat": "chitchat",
-    "ask_clarify": "clarify",
-    # 下面三个不折算成别的行为：它们既不是「检索作答」也不是「闲聊」，
-    # 出现即说明这一轮走了流程，不该被任何期望值悄悄满足。
-    "start_sop": "start_sop",
-    "sop_step": "sop_step",
-    "exit_sop": "exit_sop",
-    "block_inject": "block_inject",
-}
-
-# 有 tag 可判定的硬行为 → 断言「映射出的行为 == 期望行为」
+# 有唯一正确出口的硬行为 → 断言「本轮 branch == 期望行为」
 _HARD_BEHAVIOURS = {"safety_alert", "safety_carry", "refuse",
                     "no_answer_fallback", "structured", "answer"}
-# 文本无法可靠区分的软行为 → 不做行为判定，只由 must / must_not + 下面的 tag 提示进复核
+# 没有唯一正确答案的软行为 → 不判失败；branch 对不上只进复核清单
+# （`scope_guard` / `slot_filled` 两个期望没有专属 branch，只从期望侧出现）
 _SOFT_BEHAVIOURS = {"chitchat", "clarify", "slot_filled", "scope_guard"}
 
-# 期望行为 → 可接受的 tag（软行为的「行为对得上吗」提示用；硬行为判定走 _TAG_TO_BEHAVIOUR）。
-# 两条无专属 tag 的按 project_detail.md §4.15「与存量 behaviour 的映射」折算：
+# 期望行为 → 可接受的 branch（软行为的「行为对得上吗」提示用；硬行为判定是相等比较）。
+# 两个没有专属 branch 的期望按 project_detail.md §4.13「与存量 behaviour 的映射」折算：
 # 越界应由拒答分支接住（scope_guard）；槽位提取的证据是流程内推进或预算直出（slot_filled）。
-_ACCEPTED_TAGS = {
-    "safety_alert": {"stop_use_safety"},
-    "safety_carry": {"carry_safety"},
-    "refuse": {"refuse_offtopic"},
-    "no_answer_fallback": {"no_answer_fallback"},
-    "structured": {"structured_answer"},
-    "answer": {"retrieve_answer"},
-    "chitchat": {"chitchat"},
-    "clarify": {"ask_clarify"},
-    "scope_guard": {"refuse_offtopic"},
-    "slot_filled": {"sop_step", "structured_answer"},
-    # 流程类：没有对应的旧标签（行为轨用例会直接用这些期望值），一对一同名
-    "start_sop": {"start_sop"},
-    "sop_step": {"sop_step"},
-    "exit_sop": {"exit_sop"},
-    "block_inject": {"block_inject"},
-}
+_ACCEPTED_BRANCHES = {b: {b} for b in _BEHAVIOURS}
+_ACCEPTED_BRANCHES["scope_guard"] = {"refuse"}
+_ACCEPTED_BRANCHES["slot_filled"] = {"sop_step", "structured"}
 
 # 缺触发轮时的危险占位消息（含危险词，供 agent._window_danger_word 取词）
 _DANGER_PLACEHOLDER = "（漏电告警轮：原始用户消息未落盘）"
@@ -199,29 +168,13 @@ def _validate_golden(rows) -> None:
     _assert(not missing, "每条 case 的会话上下文都可取" + (f"（缺：{missing}）" if missing else ""))
 
 
-class _BehaviourCapture(logging.Handler):
-    """收集本轮主链路发出的 `[Behavior]` 行（行为观测点），供断言直接读 tag。"""
-
-    def __init__(self):
-        super().__init__(level=logging.INFO)
-        self.tags = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            msg = record.getMessage()
-        except Exception:  # noqa: BLE001 - 观测点解析失败不该打断评测
-            return
-        if msg.startswith(_BEHAVIOR_PREFIX):
-            self.tags.append(msg[len(_BEHAVIOR_PREFIX):].split(" ", 1)[0])
+def _branch_text(branch) -> str:
+    """给人看的出口摘要；没记到 branch 是要报出来的事实，不是空白。"""
+    return "branch=" + (branch or "未记")
 
 
-def _tag_text(tags: list) -> str:
-    """给人看的 tag 摘要；一轮没有 tag 是要报出来的事实，不是空白。"""
-    return "tag=" + "/".join(tags) if tags else "tag=未捕获"
-
-
-def _check_case(expect: dict, tags: list) -> list:
-    """返回问题清单（空 = 通过）。**判据只有出口行为**（读 `[Behavior]` tag）。
+def _check_case(expect: dict, branch, tag=None) -> list:
+    """返回问题清单（空 = 通过）。**判据只有出口行为**（读 trace 的 `branch`）。
 
     `must_contain_any` / `must_not_contain` 暂不参与判定：它们判的是“话里有没有某个词”，
     与“这一轮被处置成哪类行为”是两回事（内容级问题归检索轨与人工复核）。
@@ -229,44 +182,35 @@ def _check_case(expect: dict, tags: list) -> list:
     problems = []
     beh = expect.get("behaviour")
     if beh in _HARD_BEHAVIOURS:
-        if not tags:
-            problems.append(f"本轮未捕获 [Behavior] 行（期望出口行为 {beh}）")
-        else:
-            unknown = [t for t in tags if t not in _TAG_TO_BEHAVIOUR]
-            got = {_TAG_TO_BEHAVIOUR[t] for t in tags if t in _TAG_TO_BEHAVIOUR}
-            if unknown:
-                problems.append("未登记的 [Behavior] tag：" + " / ".join(unknown))
-            elif beh not in got:
-                problems.append(f"出口行为应为 {beh}，实际 {_tag_text(tags)}"
-                                f"（→ {' / '.join(sorted(got))}）")
-        # 任一 tag 命中即算对：`exit_sop via=exit_word_with_request` 之后本轮还会继续
-        # 处理这一句（拿它当新问题重新理解），两种期望都算这一轮做对了。
-    elif beh and tags:
-        # 软行为（chitchat / clarify / slot_filled / scope_guard）不判对错，但「行为对不上」
-        # 是有价值的复核信号——例如期望 slot_filled 却停在 ask_clarify：槽位并没提取，
-        # 只是被进入确认门挡在了前面。只列进复核清单，不参与失败判定。
-        accepted = _ACCEPTED_TAGS.get(beh) or set()
-        if accepted and not (set(tags) & accepted):
-            problems.append(f"期望行为 {beh}，实际 {_tag_text(tags)}（软行为，仅供复核参考）")
+        if not branch:
+            # 两种缺法要分开报：没记 tag = 出口漏了观测点；有 tag 但折不出 branch = tag 没登记
+            problems.append("本轮 trace 未记出口："
+                            + ("tag=%s 未登记在 BEHAVIOR_BY_TAG" % tag if tag
+                               else "本轮无 [Behavior] 观测（出口漏了观测点）"))
+        elif branch not in _BEHAVIOURS:
+            problems.append(f"未登记的出口 branch={branch}（应在 BEHAVIOR_BY_TAG 内登记）")
+        elif branch != beh:
+            problems.append(f"出口行为应为 {beh}，实际 {_branch_text(branch)}")
+    elif beh:
+        # 软行为不判对错，但「行为对不上」是有价值的复核信号：只列进复核清单，不参与失败判定。
+        accepted = _ACCEPTED_BRANCHES.get(beh) or set()
+        if not branch:
+            problems.append(f"期望行为 {beh}，本轮未记出口（软行为，仅供复核参考）")
+        elif branch not in accepted:
+            problems.append(f"期望行为 {beh}，实际 {_branch_text(branch)}（软行为，仅供复核参考）")
     return problems
 
 
 def _ask(sid: str, query: str):
-    """发一轮，返回 (回复, 本轮 [Behavior] tag 列表)。
+    """发一轮，返回 (回复, 本轮 trace 记录)。
 
-    handler 挂在 `tools.agent.logger` 上（`get_logger` 走 `logging.getLogger(name)`，全局同名），
-    因此与主链路是同一个 logger 实例，不受模块双重导入影响。
+    判定读记录里的 `branch`（唯一出口），失败归因读 `path` / `route` / `retrieval`——同一份记录，
+    不再是两处证据。`end_turn()` 在本轮生成器消费完时落盘，所以返回时记录已在。
     """
-    from tools import agent as agent_module
     from tools.agent import ask_stream
 
-    capture = _BehaviourCapture()
-    agent_module.logger.addHandler(capture)
-    try:
-        reply = "".join(ask_stream(query, sid)).strip()
-    finally:
-        agent_module.logger.removeHandler(capture)
-    return reply, list(capture.tags)
+    reply = "".join(ask_stream(query, sid)).strip()
+    return reply, read_last_turn(sid)
 
 
 def _replay_prefix(sid: str, turns: list, lo: int, hi: int):
@@ -283,7 +227,7 @@ def _replay_prefix(sid: str, turns: list, lo: int, hi: int):
     for idx in range(lo, hi):
         t = turns[idx]
         if t["role"] == "user":
-            reply, _tags = _ask(sid, t["content"])
+            reply, _record = _ask(sid, t["content"])
             append_message(sid, "assistant", reply)
             continue
         prev_is_user = idx > 0 and turns[idx - 1]["role"] == "user"
@@ -299,7 +243,7 @@ def _run_row(row: dict) -> list:
 
     sid = "ctxeval-" + row["session_id"]
     sops.base._sessions = {}
-    # 待确认状态（退出确认门 / 网点问城市等）2026-09-28 起统一在 pending_store：
+    # 待确认状态统一在 pending_store：
     # Redis 键 + 内存降级都要清，否则同一 sid 上一行的残留会污染下一行。
     clear_pending(sid)
     # 主链路 trace（tools/trace_store.py）也按 sid 落盘，同一 sid 跨行复用——先清掉上轮的落盘与
@@ -314,21 +258,20 @@ def _run_row(row: dict) -> list:
         return [{"case": c, "reply": "<NO SESSION>",
                  "problems": ["找不到会话文件，无法回放上下文"],
                  "hard": c["expect"].get("behaviour") in _HARD_BEHAVIOURS,
-                 "must_pass": False, "tags": [], "trace": ""} for c in row["cases"]]
+                 "must_pass": False, "branch": None, "tag": None, "trace": ""} for c in row["cases"]]
     results = []
     replayed = 0
     for case in sorted(row["cases"], key=lambda c: c["query_index"]):
         qi = case["query_index"]
         try:
             _replay_prefix(sid, turns, replayed, qi)
-            reply, tags = _ask(sid, case["query"])
+            reply, record = _ask(sid, case["query"])
             append_message(sid, "assistant", reply)
-            problems = _check_case(case["expect"], tags)
+            problems = _check_case(case["expect"], record.get("branch"), record.get("tag"))
         except Exception as exc:  # noqa: BLE001
             reply = f"<EXCEPTION {type(exc).__name__}: {exc}>"
-            tags = []
+            record = {}
             problems = [f"执行异常：{type(exc).__name__}: {exc}"]
-        record = read_last_turn(sid)
         if record.get("aborted"):
             # 评测里正常不会出现（生成器必被消费完）；真出现说明这轮被截断，行为判定不可信
             problems.append("本轮 trace 标记 aborted（回答未跑完，判定不可信）")
@@ -336,7 +279,8 @@ def _run_row(row: dict) -> list:
         must_pass = hard and ((case.get("verdict") == "pass") or bool(case.get("fixed")))
         # 有问题的条目附上本轮 trace 摘要（主链路落的结构化环节记录），省得回头 grep 日志
         results.append({"case": case, "reply": reply, "problems": problems,
-                        "hard": hard, "must_pass": must_pass, "tags": tags,
+                        "hard": hard, "must_pass": must_pass,
+                        "branch": record.get("branch"), "tag": record.get("tag"),
                         "trace": _trace_brief(record) if problems else ""})
         replayed = qi + 1
 
@@ -359,26 +303,47 @@ def _reason_text(key) -> str:
 
 
 def _trace_brief(record: dict) -> str:
-    """把一条 trace 记录压成一行人读摘要（失败归因用）；没有 trace 返回空串。"""
+    """把一条 trace 记录压成一行人读摘要（失败归因用）；没有 trace 返回空串。
+
+    主读 v3 分层块（`route` / `retrieval` / `path`），缺失时回落到 v2 投影 `steps`——
+    存量 v2 记录也看得懂。
+    """
     if not record:
         return ""
     steps = record.get("steps") or {}
+    retrieval = record.get("retrieval") or {}
     bits = []
-    intent = steps.get("intent") or {}
-    if intent:
+    old_intent = steps.get("intent") or {}
+    intent = record.get("route", {}).get("intent") or {
+        "label": old_intent.get("intent"), "margin": old_intent.get("margin")}
+    if intent.get("label"):
         margin = intent.get("margin")
-        bits.append("意图=%s%s" % (intent.get("intent"),
+        bits.append("意图=%s%s" % (intent["label"],
                                   "(%.3f)" % float(margin) if isinstance(margin, (int, float)) else ""))
-    rewrite = steps.get("rewrite") or {}
+    rewrite = retrieval.get("rewrite") or steps.get("rewrite") or {}
     if rewrite and rewrite.get("via") not in (None, "none"):
         bits.append("改写=%s→「%s」" % (rewrite.get("via"), rewrite.get("effective_query")))
-    retrieve = steps.get("retrieve") or {}
-    if retrieve:
-        bits.append("检索=%s/%s条" % (retrieve.get("domain") or "全库", retrieve.get("n_chunks")))
+    domain = retrieval.get("domain")
+    domain = domain.get("value") if isinstance(domain, dict) else (steps.get("retrieve") or {}).get("domain")
+    n_chunks = (steps.get("retrieve") or {}).get("n_chunks")
+    if domain or n_chunks is not None:
+        bits.append("检索=%s/%s条" % (domain or "全库", n_chunks if n_chunks is not None else "?"))
+    if len(retrieval.get("passes") or []) > 1:
+        bits.append("两遍召回")
+    if record.get("path"):
+        bits.append("路径=" + "→".join(_node_text(n) for n in record["path"][-4:]))
     ms = record.get("ms") or {}
     if ms:
         bits.append("耗时ms=" + "/".join("%s:%s" % (k, v) for k, v in sorted(ms.items())))
     return " · ".join(bits)
+
+
+def _node_text(node: dict) -> str:
+    """路径节点渲染：登记表里的中文名 + 非默认状态（命中 / 跳过一眼可读）。"""
+    name = node.get("node") or "?"
+    label = TRACE_NODE_LABELS.get(name, name)
+    status = node.get("status") or "ok"
+    return label if status == "ok" else "%s[%s]" % (label, status)
 
 
 def _trace_version() -> str:
@@ -392,7 +357,7 @@ def _trace_version() -> str:
 
 
 def _print_detail(results):
-    print("── 硬行为（有 [Behavior] tag 可判定 → 进回归门）──")
+    print("── 硬行为（有 branch 可判定 → 进回归门）──")
     for r in (x for x in results if x["hard"]):
         c = r["case"]
         if not r["problems"]:
@@ -401,7 +366,7 @@ def _print_detail(results):
             mark = "REGRESS" if r["must_pass"] else "xfail"
         kind = "必过" if r["must_pass"] else "badcase"
         print(f"  [{mark:<7}] {c['id']} ({kind}/{_reason_text(c.get('type'))}) {c['query']}"
-              f"   [{_tag_text(r['tags'])}]")
+              f"   [{_branch_text(r['branch'])}]")
         if r["problems"]:
             print(f"              ↳ {'；'.join(r['problems'])}")
             if r.get("trace"):
@@ -417,7 +382,7 @@ def _print_detail(results):
         else:
             mark = "· 未偏离"
         print(f"  [{mark:<7}] {c['id']} ({_reason_text(c.get('type'))}) {c['query']}"
-              f"   [{_tag_text(r['tags'])}]")
+              f"   [{_branch_text(r['branch'])}]")
         if r["problems"]:
             print(f"              ↳ {'；'.join(r['problems'])}")
             if r.get("trace"):
@@ -440,7 +405,7 @@ def _review_path():
 def _write_review(rows, results, hard_results, soft_results, must_pass, regressions):
     """把**软行为复核清单**落盘——复核是人工 / LLM 的活，得能拿出去看。
 
-    软行为没有唯一正确答案，所以文件里只摆事实：期望行为 + 实际 tag + 本次回复 + 偏离点 + 归档判据。
+    软行为没有唯一正确答案，所以文件里只摆事实：期望行为 + 实际 branch + 本次回复 + 偏离点 + 归档判据。
     """
     need_review = [r for r in soft_results if r["problems"]]
     out = [
@@ -468,7 +433,7 @@ def _write_review(rows, results, hard_results, soft_results, must_pass, regressi
         out += [f"## {mark} {c['id']}（{_reason_text(c.get('type'))}）", "",
                 f"- 用户：{c['query']}",
                 f"- 期望行为：{exp.get('behaviour')}",
-                f"- 实际 tag：{_tag_text(r['tags'])}",
+                f"- 实际 branch：{_branch_text(r['branch'])}",
                 f"- 本次回复：{r['reply']}"]
         if r["problems"]:
             out.append(f"- 偏离点：{'；'.join(r['problems'])}")

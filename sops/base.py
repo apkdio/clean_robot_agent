@@ -4,6 +4,7 @@
 步骤类型：ask（提问收集槽位）、action（执行动作，如按预算检索）、reply（输出结果并结束）。
 """
 import re
+from tools import trace_store
 from tools.log_tool import get_logger
 from config.word_dict_config import (
     AFTERSALES_WORDS,BUY_WORDS, CONSULT_WORDS, BRAND_WORDS,
@@ -206,6 +207,7 @@ def _run(session_id: str, user_input: str):
     sop = SOPS[session["sop_id"]]
     steps = sop["steps"]
     ended = False  # 是否已结束（reply/异常防御里 _end 置 True）
+    flow = []      # 本轮走到的动作链（进 trace）
 
     try:
         while session["step"] < len(steps):
@@ -213,6 +215,7 @@ def _run(session_id: str, user_input: str):
             ctx = {**session["slots"], **session.get("result", {})}
             # 针对网点的结果，如果结果只有一个，跳过反问澄清环节
             if step.get("when") and not step["when"](ctx):
+                flow.append({"i": session["step"], "type": step["type"], "outcome": "skipped"})
                 session["step"] += 1
                 continue
 
@@ -220,6 +223,8 @@ def _run(session_id: str, user_input: str):
                 # 有用户输入 → 尝试提取槽位；否则 → 问问题
                 if user_input is None:
                     logger.info("[SOP] %s ask slot=%s", sop["id"], step.get("slot"))
+                    flow.append({"i": session["step"], "type": "ask",
+                                 "slot": step.get("slot"), "outcome": "asked"})
                     return _ask_text(step, "ask", ctx), False
                 value = step["extract"](user_input, session["slots"])
                 if value is None:
@@ -231,12 +236,18 @@ def _run(session_id: str, user_input: str):
                         session["retry_count"] = 0
                         user_input = None
                         logger.warning("[SOP] %s slot %s abandoned after retries", sop["id"], step["slot"])
+                        flow.append({"i": session["step"] - 1, "type": "ask",
+                                     "slot": step.get("slot"), "outcome": "abandoned"})
                         continue
                     # 首轮提取失败（retry_count==1）→ 用 ask 话术（还没问过用户）
                     # 后续提取失败（retry_count≥2）→ 用 retry 话术（重问）
                     logger.info("[SOP] %s slot %s extract failed (retry=%d)", sop["id"], step["slot"], session["retry_count"])
                     if session["retry_count"] == 1:
+                        flow.append({"i": session["step"], "type": "ask",
+                                     "slot": step.get("slot"), "outcome": "asked"})
                         return _ask_text(step, "ask", ctx), False
+                    flow.append({"i": session["step"], "type": "ask",
+                                 "slot": step.get("slot"), "outcome": "retry"})
                     return _ask_text(step, "retry", ctx), False
                 # 提取成功，重置重试计数
                 session["slots"][step["slot"]] = value
@@ -244,16 +255,20 @@ def _run(session_id: str, user_input: str):
                 session["retry_count"] = 0
                 user_input = None
                 logger.info("[SOP] %s slot %s = %s", sop["id"], step["slot"], value)
+                flow.append({"i": session["step"] - 1, "type": "ask",
+                             "slot": step.get("slot"), "outcome": "filled"})
                 continue
 
             elif step["type"] == "action":
                 # 执行 skill，结果存入 result；若含结构化型号列表则保存供追问
                 result = step["action"](session["slots"])
                 session["result"] = result
+                n_models = len(result.get("models") or []) if isinstance(result, dict) else 0
+                flow.append({"i": session["step"], "type": "action", "outcome": "ok",
+                             "n_models": n_models})
                 if isinstance(result, dict) and "models" in result:
                     save_recommend(session_id, result["models"])
-                    model_cnt = len(result.get("models", [])) if isinstance(result, dict) else 0
-                    logger.info("[SOP] %s action executed (%d models)", sop["id"], model_cnt)
+                    logger.info("[SOP] %s action executed (%d models)", sop["id"], n_models)
                 else:
                     logger.info("[SOP] %s action executed",sop["id"])
                 session["step"] += 1
@@ -262,6 +277,7 @@ def _run(session_id: str, user_input: str):
             elif step["type"] == "reply":
                 # 输出结果并结束
                 ctx = {**session["slots"], **session.get("result", {})}
+                flow.append({"i": session["step"], "type": "reply", "outcome": "done"})
                 try:
                     reply = step["template"].format(**ctx)
                 except (KeyError, IndexError):
@@ -278,6 +294,7 @@ def _run(session_id: str, user_input: str):
         logger.warning("[SOP] %s ended without reply", sop["id"])
         return "", True
     finally:
+        trace_store.step("sop", flow=flow)
         # 会话未结束（停在 ask 等下一轮）→ 保存最新状态
         if not ended:
             _save_session(session_id, session)
@@ -295,7 +312,7 @@ _REL_SUPER = {"cheaper": "最便宜", "pricier": "最贵", "newer": "最新", "o
 
 
 def _rel_header(rels: list) -> str:
-    """相对追问的回复头（多维度时并列，如「更便宜、更新」）。"""
+    """相对追问的回复头（多维度时并列）。"""
     return "比刚才那几款%s的有：" % "、".join(_REL_LABEL[r] for r in rels)
 
 
@@ -307,7 +324,7 @@ def _rel_none_msg(rels: list) -> str:
 
 
 def _publish_key(model: dict) -> int:
-    """型号发布时间 → int YYYYMMDD（记录里可能是文本，如 2026-03-15）。"""
+    """型号发布时间 → int YYYYMMDD（记录里可能是文本）。"""
     digits = re.sub(r"\D", "", str(model.get("publish_date") or ""))
     return int(digits) if len(digits) >= 8 else 0
 

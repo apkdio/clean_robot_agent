@@ -609,15 +609,18 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     trace_store.begin_turn(session_id, query)
     set_log_session(session_id)
     completed = False
+    reply_parts = []
     try:
-        yield from _ask_stream(query, session_id, lng, lat)
+        for piece in _ask_stream(query, session_id, lng, lat):
+            reply_parts.append(piece)
+            yield piece
         completed = True
     except Exception as exc:  # noqa: BLE001
         trace_store.note_error(exc)
         raise
     finally:
         # 用户点「停止」时生成器被 close()，completed 仍是 False
-        trace_store.end_turn(aborted=not completed)
+        trace_store.end_turn(aborted=not completed, reply="".join(reply_parts))
         clear_log_session()
 
 
@@ -635,19 +638,24 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     # 既破坏喂给 LLM 的上下文结构，也让这轮在文件里无从复盘。
     # blocked 项在拼对话历史时被跳过，不会回灌给 LLM。
     if _INJECT_RE.search(query):
-        append_message(session_id, "user", query, blocked="inject")
+        append_message(session_id, "user", query, blocked="inject", trace=trace_store.turn_anchor())
         logger.warning("[Guard] injection blocked: %s", query[:60])
         _log_behavior("block_inject")
         yield "我是扫地机器人助手，只能帮你解答扫地机器人相关的问题，无法扮演其他角色哦～"
         return
 
+    trace_store.route("inject", hit=False)
+    trace_store.node("route.inject", out={"hit": False})
+
     # 危险现象：安全优先，在一切改写/路由之前拦截，立即停机联系售后
     from config.word_dict_config import DANGER_WORDS
     danger_hit = next((w for w in DANGER_WORDS if w in query), None)
     if danger_hit:
+        trace_store.route("danger", hit=True, word=danger_hit)
+        trace_store.node("route.danger", status="hit", out={"word": danger_hit})
         # danger 标记供后续判断"近期是否发生过安全告警"；该轮是正常对话的一部分，
         # 照常进入对话历史（区别于 injection）
-        append_message(session_id, "user", query, danger=True)
+        append_message(session_id, "user", query, danger=True, trace=trace_store.turn_anchor())
         logger.warning("[Guard] danger word hit: %s | %s", danger_hit, query[:60])
         # 已升级为停机 + 联系售后，继续故障排查流程自相矛盾 → 结束 SOP 及其待答子状态
         from sops import end_sop
@@ -658,11 +666,17 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
                "不要自行拆机或继续充电，请马上联系官方售后（400-860-1314）处理。")
         return
 
+    trace_store.route("danger", hit=False)
+    trace_store.node("route.danger", out={"hit": False})
+
     # 上下文：记录用户消息（对话历史持久化，供 RAG 生成拼接，由 LLM 自主消解指代）
-    append_message(session_id, "user", query)
+    # 带 trace 锚点（日期 + 轮次）：历史回看时能精确回标到该轮，不靠 query 猜
+    append_message(session_id, "user", query, trace=trace_store.turn_anchor())
 
     # 负面情绪：先安抚一句，再继续正常流程（只安抚、不拦截）
     emotion_reply = detect_emotion(query)
+    trace_store.route("emotion", hit=bool(emotion_reply))
+    trace_store.node("route.emotion", out={"hit": bool(emotion_reply)})
     if emotion_reply:
         yield emotion_reply + "\n\n"
         query = _strip_emotion(query)  # 剥离情绪词，避免 LLM 把抱怨当独立问题
@@ -675,6 +689,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     if has_active_sop(session_id):
         sop_id = get_active_sop_id(session_id)
         sop_name = _sop_name(sop_id)
+        trace_store.node("sop.active", status="hit", in_={"sop": sop_id})
         _note_sop(session_id, sop_id)
         # 状态A：退出确认门 —— 上一轮问了「是要退出「X」环节吗」
         pending = pending_store.get(session_id)
@@ -743,6 +758,8 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
                 return
 
     pending = pending_store.get(session_id)
+    if pending:
+        trace_store.node("sop.pending", in_={"kind": pending.get("kind")})
 
     # 进入侧确认门：上一轮问了「要不要走一遍引导」，这一轮等「是 / 不是」
     if pending and pending.get("kind") == "confirm_enter":
@@ -787,7 +804,12 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
                 intent, margin, danger_word or "-",
             )
             _log_behavior("carry_safety", danger=danger_word or "-")
-            yield _SAFETY_CARRY.format(danger=f"「{danger_word}」" if danger_word else "情况")
+            reply = _SAFETY_CARRY.format(danger=f"「{danger_word}」" if danger_word else "情况")
+            trace_store.node("guard.safety_carry", status="hit",
+                             in_={"count": _recent_carry_count(session_id), "max": max_carry,
+                                  "need_margin": high_conf_margin, "margin": round(margin, 3)},
+                             out={"chars": len(reply)})
+            yield reply
             return
 
     # 低置信的 other 不硬拒答
@@ -796,6 +818,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         if _window_domain(session_id):
             logger.info("[Intent] low-confidence other (margin=%.3f) + 可承接话题 → 降级为 unknown", margin)
             intent = "unknown"
+            trace_store.route("intent", downgrade="unknown")
         else:
             logger.info("[Intent] low-confidence other (margin=%.3f) 无可承接话题 → 维持拒答", margin)
 
@@ -804,6 +827,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         from sops import handle_followup
         followup_reply = handle_followup(session_id, query)
         if followup_reply:
+            trace_store.node("followup", status="hit")
             _shadow_probe(query, session_id, "model_query", "追问筛选")
             _log_behavior("structured_answer", kind="followup")
             yield followup_reply
@@ -813,6 +837,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     if intent in ("robot", "unknown"):
         model_reply = _resolve_model_query(session_id, query)
         if model_reply:
+            trace_store.node("model_query", status="hit")
             _shadow_probe(query, session_id, "model_query", "型号/对比兜底")
             _log_behavior("structured_answer", kind="model_detail")
             yield model_reply
@@ -822,6 +847,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     if intent in ("robot", "unknown"):
         series_reply = _resolve_series_query(query)
         if series_reply:
+            trace_store.node("series_query", status="hit")
             _shadow_probe(query, session_id, "model_query", "系列枚举")
             _log_behavior("structured_answer", kind="series")
             yield series_reply
@@ -830,8 +856,11 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     # 售后网点：网点词信号强，不依赖 intent（"离我最近的维修点"可能被分类器误判 other）
     # 前端有坐标 → 直接作答；否则交给网点 SOP 问城市（重名再问一次序号）
     if match_sop(query, "service_point"):
+        has_coords = lng is not None and lat is not None
+        trace_store.node("service_point", status="hit",
+                         out={"mode": "coords" if has_coords else "sop"})
         _shadow_probe(query, session_id, "service_point", "网点查询")
-        if lng is not None and lat is not None:
+        if has_coords:
             from function_tools.service_point_tool import search_service_points, format_service_points
             points, origin = search_service_points(lng=lng, lat=lat)
             _log_behavior("structured_answer", kind="service_point")
@@ -845,8 +874,11 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     # SOP 触发：robot/unknown 意图 + 命中场景 trigger（guards 已由 match_sop 评估）
     if intent in ("robot", "unknown"):
         sop_id = match_sop(query)
+        weak = bool(sop_id) and sop_needs_enter_confirm(sop_id, query)
+        if sop_id:
+            trace_store.node("sop.match", status="hit", out={"sop": sop_id, "weak": weak})
         # 弱触发：先问一句要不要走引导；用户拒绝过且这次仍是弱信号 → 不打扰，走正常作答
-        if sop_id and sop_needs_enter_confirm(sop_id, query):
+        if sop_id and weak:
             if is_enter_declined(session_id):
                 logger.info("[SOP] enter declined before, skip gate: %s", sop_id)
                 trace_store.step("sop_gate", skipped="declined", sop=sop_id)
@@ -906,6 +938,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         date_filter = None
     else:
         date_filter = _resolve_date_filter(query)
+    trace_store.node("date", out={"hit": date_filter is not None})
     filter_kind = "budget" if metadata_filter is not None else ""
     if metadata_filter is not None and date_filter is not None:
         metadata_filter = {"$and": [metadata_filter, date_filter]}
@@ -918,6 +951,8 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     if metadata_filter is not None:
         from tools.metadata_extractor import enumerate_models, format_model_line
         models = enumerate_models(metadata_filter)
+        trace_store.node("filter", status="hit" if models else "ok",
+                         in_={"kind": filter_kind}, out={"n": len(models)})
         if models:
             _shadow_probe(query, session_id, "model_query", "预算/时间筛选")
             lines = [format_model_line(m) for m in models]
@@ -949,10 +984,13 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
     # 两域分数相似时 _domain_filter 会返回两个域（$in）。
     _t_retrieve = time.perf_counter()
     domain_value, domain_via = _domain_filter(effective_query)
+    retrieve_facts = {}
     ranked = hr.search_with_scores(
-        effective_query, filter={"file_name": domain_value} if domain_value else None)
+        effective_query, filter={"file_name": domain_value} if domain_value else None,
+        trace_out=retrieve_facts)
     chunks = [doc for doc, _score, _meta in ranked]
     trace_store.add_ms("retrieve", _t_retrieve)
+    trace_store.retrieval(**retrieve_facts)
     trace_store.step("retrieve", domain=domain_value, via=domain_via, n_chunks=len(chunks),
                      chunks=trace_store.chunk_brief(ranked))
 
@@ -961,6 +999,8 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         logger.info("[Rewrite] no hit via %s, retry with origin over full KB: %s", rewrite_via, query[:40])
         ranked = hr.search_with_scores(query, filter=None)
         chunks = [doc for doc, _score, _meta in ranked]
+        trace_store.retrieval(source="retry",
+                              retry={"rewrite_via": rewrite_via, "n_chunks": len(chunks)})
         trace_store.step("retrieve", retried=True, n_chunks=len(chunks),
                          chunks=trace_store.chunk_brief(ranked))
     # 召回片段正文落旁路文件（trace 行只留指路字段）

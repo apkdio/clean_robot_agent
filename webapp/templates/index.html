@@ -540,17 +540,19 @@
     try {
       const r = await fetch('/api/sessions/' + encodeURIComponent(sid) + '/messages');
       const data = await r.json();
+      if (sid !== sessionId) return;   // 过期响应：期间已切到别的会话
       welcome.style.display = 'none';
-      let lastUser = '';
+      let lastUser = '', lastAnchor = null;
       (data.messages || []).forEach(m => {
         if (m.role === 'user') {
           lastUser = m.content || '';
+          lastAnchor = m.trace || null;   // 该轮的 trace 锚点：回标时直接定位，不靠 query 猜
           appendMessage('user', lastUser);
           return;
         }
         const div = appendMessage('bot', m.content || '');
-        // 历史消息同样可标：标注按 query 定位到轮次，落同一份 feedback 文件
-        if (div && lastUser) div.after(makeFeedbackBar(lastUser));
+        // 历史消息同样可标；栏上带创建时的会话与锚点，切走后再点也不会打到别的会话/别的轮次上
+        if (div && lastUser) div.after(makeFeedbackBar(lastUser, sid, lastAnchor));
       });
     } catch (e) { /* 忽略加载失败 */ }
   }
@@ -665,6 +667,7 @@
   const typing = document.getElementById('typing');
   const welcome = chatMessages.querySelector('.welcome');
   let isStreaming = false;   // 是否正在流式回答（阻止按钮 + enter 重复发送）
+  let streamingSid = null;   // 当前流的会话：切会话后「停止」仍要打到发起它的那个会话
 
   function handleKey(e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
@@ -675,6 +678,7 @@
   });
 
   async function streamAnswer(query, botDiv, bubble, retry) {
+    const sidAtSend = sessionId;   // 本轮属于哪个会话：回答期间可能被切走
     // Show loading dots, clear previous content
     bubble.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
     if (retry) retry.style.display = 'none';
@@ -730,9 +734,11 @@
       bubble.innerHTML = md('抱歉，连接失败，请检查服务是否启动。');
     }
 
+    // 回答期间切了会话：旧气泡已不在页面上，别再往里挂东西
+    if (sidAtSend !== sessionId) return;
     if (retry) retry.style.display = '';
     // 回答完成后挂评价条（被停止的轮次在 trace 里是 aborted，不挂）
-    if (!stoppedByUser && retry) retry.after(makeFeedbackBar(query));
+    if (!stoppedByUser && retry) retry.after(makeFeedbackBar(query, sidAtSend));
   }
 
   function setSendBtn(streaming) {
@@ -745,7 +751,7 @@
     fetch('/api/chat/stop', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId })
+      body: JSON.stringify({ session_id: streamingSid || sessionId })
     });
   }
 
@@ -768,6 +774,7 @@
     chatInput.value = '';
     chatInput.style.height = 'auto';
     isStreaming = true;
+    streamingSid = sessionId;
     setSendBtn(true);
 
     // Create bot bubble with loading dots
@@ -790,6 +797,7 @@
       loadSessions();
     } finally {
       isStreaming = false;
+      streamingSid = null;
       setSendBtn(false);
       chatInput.focus();
     }
@@ -809,12 +817,12 @@
   // ── 回复评价：有用/无用（+理由），后端按 query 定位轮次后落 trace ──
   const FEEDBACK_REASONS = {{ feedback_reasons | tojson }};
 
-  function makeFeedbackBar(query) {
+  function makeFeedbackBar(query, sid, anchor) {
     const bar = document.createElement('div');
     bar.className = 'feedback-bar';
     const buttons = document.createElement('div');
     buttons.innerHTML = '<span class="fb-btn fb-up">👍 有用</span><span class="fb-btn fb-down">👎 无用</span>';
-    buttons.querySelector('.fb-up').addEventListener('click', () => submitFeedback(bar, query, 'useful', '', ''));
+    buttons.querySelector('.fb-up').addEventListener('click', () => submitFeedback(bar, sid, query, 'useful', '', '', anchor));
     buttons.querySelector('.fb-down').addEventListener('click', () => {
       const panel = document.createElement('div');
       panel.className = 'fb-reasons';
@@ -835,8 +843,8 @@
           setTimeout(() => { panel.querySelector('.fb-submit').textContent = '提交'; }, 1500);
           return;
         }
-        submitFeedback(bar, query, 'useless', picked.dataset.key,
-                       panel.querySelector('input').value.trim());
+        submitFeedback(bar, sid, query, 'useless', picked.dataset.key,
+                       panel.querySelector('input').value.trim(), anchor);
       });
       panel.querySelector('.fb-cancel').addEventListener('click', () => panel.remove());
       bar.appendChild(panel);
@@ -845,16 +853,30 @@
     return bar;
   }
 
-  async function submitFeedback(bar, query, rating, reason, note) {
+  // 标错了可以改：把栏恢复成可点的样子（不刷新页面也能重标，后端追加一条、以最后一条为准）
+  function reopenFeedbackBar(bar, sid, query, anchor) {
+    const fresh = makeFeedbackBar(query, sid, anchor);
+    bar.innerHTML = '';
+    Array.from(fresh.childNodes).forEach(n => bar.appendChild(n));
+    delete bar.dataset.busy;
+  }
+
+  async function submitFeedback(bar, sid, query, rating, reason, note, anchor) {
+    if (bar.dataset.busy) return;   // 防手快双击：一条栏只发一次
+    bar.dataset.busy = '1';
     try {
       const r = await fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, query, rating, reason, note })
+        body: JSON.stringify({ session_id: sid, query, rating, reason, note,
+                               trace: anchor || undefined })
       });
       const d = await r.json();
       if (d.status === 'ok') {
-        bar.innerHTML = `<span class="fb-done">已记录，谢谢反馈 ✓（${d.date} 第 ${d.turn_index} 轮）</span>`;
+        bar.innerHTML = `<span class="fb-done">${d.updated ? '已更新标注' : '已记录'}，谢谢反馈 ✓`
+                      + `（${d.date} 第 ${d.turn_index} 轮）</span>`
+                      + '<span class="fb-submit fb-again">改</span>';
+        bar.querySelector('.fb-again').addEventListener('click', () => reopenFeedbackBar(bar, sid, query, anchor));
       } else {
         bar.innerHTML = `<span class="fb-fail">未记录：${d.message || '找不到对应轮次'}</span>`;
       }

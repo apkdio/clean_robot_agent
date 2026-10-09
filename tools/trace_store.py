@@ -8,6 +8,9 @@
 一个会话一个目录，目录名与文件名都带时间（与 `data/context/` 命名一致；目录时间 = 该会话首条 trace，
 文件名时间 = 写入当天）；一天一份，跨天换新文件。
 trace 行里只留指路字段（`steps.retrieve.chunks_log` / `steps.shadow.log`），正文不进 trace。
+
+记录与执行同构：`route` 进门判断、`branch` 本轮唯一出口、`path[]` 有序节点、`retrieval` 召回过程、
+`sop` 流程进度、`answer` 出口；字段值只存事实（数字 / 布尔 / 枚举 / 标识符），人话由读侧渲染。
 """
 
 import json
@@ -16,10 +19,13 @@ import threading
 import time
 from datetime import datetime, timedelta
 
+from config.word_dict_config import BEHAVIOR_BY_TAG
 from tools.log_tool import log_path
 
-VERSION = 2
-# 本轮记录形如 {v, ts, session_id, turn_index, query, retry, tag, tags, detail, steps, ms, aborted, error}
+VERSION = 3
+# 本轮记录 = 稳定核 {v, ts, session_id, turn_index, query, retry, tag, tags, detail, aborted, error}
+#   + 分层块 {route, branch, path, retrieval, sop, sop_gate, shadow, answer} + ms
+#   + 兼容投影 {steps}（老读侧仍按它取数）
 SIDE_VERSION = 1
 # 旁路证据形如 {v, ts, session_id, turn_index, query, ...}
 CHUNK_KIND = "chunks"
@@ -216,6 +222,14 @@ def begin_turn(session_id: str, query: str) -> None:
             "tag": None,
             "tags": [],
             "detail": {},
+            "route": {},
+            "branch": None,
+            "path": [],
+            "retrieval": {},
+            "sop": {},
+            "sop_gate": {},
+            "shadow": {},
+            "answer": {},
             "steps": {},
             "ms": {},
             "aborted": False,
@@ -226,12 +240,100 @@ def begin_turn(session_id: str, query: str) -> None:
 
 
 def step(name: str, **fields) -> None:
-    """记一个环节的输入输出（加环节＝加一个 key）。"""
+    """记一个环节（`steps` 加一个 key），并同步到分层块。"""
     turn = getattr(_local, "turn", None)
     if not turn:
         return
     try:
         turn["steps"].setdefault(name, {}).update(fields)
+        _mirror_step(turn, name, fields)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# 环节 → 节点名（耗时同步到对应的路径节点用）
+_NODE_OF_STEP = {"intent": "route.intent", "rewrite": "rewrite",
+                 "retrieve": "retrieve", "generate": "generate"}
+
+
+def _scalars(obj) -> dict:
+    """只留标量（数字 / 布尔 / 字符串 / 空）——对象与列表不进分层块。"""
+    if not isinstance(obj, dict):
+        return {}
+    return {k: v for k, v in obj.items()
+            if v is None or isinstance(v, (str, int, float, bool))}
+
+
+def _mirror_step(turn: dict, name: str, fields: dict) -> None:
+    """把环节按映射搬到分层位置，并顺带落一个路径节点。"""
+    if name == "intent":
+        turn["route"]["intent"] = {"label": fields.get("intent"),
+                                   "margin": _num(fields.get("margin"), 6)}
+        node("route.intent", out=turn["route"]["intent"])
+    elif name == "rewrite":
+        turn["retrieval"]["rewrite"] = {"via": fields.get("via"),
+                                         "effective_query": fields.get("effective_query")}
+        node("rewrite", out={"via": fields.get("via")})
+    elif name == "retrieve":
+        if fields.get("domain") is not None or fields.get("via") is not None:
+            turn["retrieval"]["domain"] = {"value": fields.get("domain"),
+                                           "via": fields.get("via")}
+        node("retrieve", out={"domain": fields.get("domain"), "via": fields.get("via"),
+                              "n": fields.get("n_chunks")})
+    elif name == "generate":
+        turn["answer"]["model"] = fields.get("model")
+        node("generate", out={"model": fields.get("model")})
+    elif name == "sop":
+        turn["sop"].update(_scalars(fields))
+        if fields.get("flow"):
+            turn["sop"]["flow"] = fields["flow"]
+    elif name == "sop_gate":
+        turn["sop_gate"].update(_scalars(fields))
+        node("sop.gate", status="skipped", by=fields.get("skipped"),
+             in_={"sop": fields.get("sop")})
+    elif name == "shadow":
+        turn["shadow"] = {"chain": fields.get("chain"),
+                          "evidence": {"file": fields.get("log")}}
+
+
+def route(name: str, **facts) -> None:
+    """记一条「进门判断」的结论。"""
+    turn = getattr(_local, "turn", None)
+    if not turn:
+        return
+    try:
+        turn["route"].setdefault(name, {}).update(_scalars(facts))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def node(name: str, status: str = "ok", by: str = None, in_: dict = None, out: dict = None) -> None:
+    """按执行顺序记一个节点：走到哪一步、结果如何、带哪些事实。"""
+    turn = getattr(_local, "turn", None)
+    if not turn:
+        return
+    try:
+        rec = {"node": name, "status": status}
+        if by:
+            rec["by"] = by
+        if in_:
+            rec["in"] = _scalars(in_)
+        if out:
+            rec["out"] = _scalars(out)
+        if name in turn["ms"]:
+            rec["ms"] = turn["ms"][name]
+        turn["path"].append(rec)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def retrieval(**facts) -> None:
+    """记检索这一段的控制流事实。"""
+    turn = getattr(_local, "turn", None)
+    if not turn:
+        return
+    try:
+        turn["retrieval"].update(facts)
     except Exception:  # noqa: BLE001
         pass
 
@@ -251,12 +353,18 @@ def note_behavior(tag: str, detail: dict = None) -> None:
 
 
 def add_ms(name: str, started_at: float) -> None:
-    """记某个环节耗时（传入 start 时的 time.perf_counter()）。"""
+    """记某个环节耗时（传入 start 时的 time.perf_counter()），同时落到对应的路径节点上。"""
     turn = getattr(_local, "turn", None)
     if not turn:
         return
     try:
-        turn["ms"][name] = int((time.perf_counter() - started_at) * 1000)
+        spent = int((time.perf_counter() - started_at) * 1000)
+        turn["ms"][name] = spent
+        target = _NODE_OF_STEP.get(name, name)
+        for rec in reversed(turn["path"]):
+            if rec.get("node") == target:
+                rec["ms"] = spent
+                break
     except Exception:  # noqa: BLE001
         pass
 
@@ -354,6 +462,36 @@ def current_turn() -> dict:
     return {"session_id": turn.get("session_id"), "turn_index": turn.get("turn_index")}
 
 
+def turn_anchor() -> dict:
+    """当前轮的锚点 `{date, turn_index}`（不在轮次里时为空）——写进上下文消息，供日后精确回标。"""
+    turn = getattr(_local, "turn", None) or {}
+    if turn.get("turn_index") is None:
+        return {}
+    return {"date": (turn.get("ts") or "")[:10], "turn_index": turn.get("turn_index")}
+
+
+def find_turn_by_index(session_id: str, date: str, turn_index) -> dict:
+    """按锚点直接取该轮（不用 query 猜轮次）；找不到返回空。"""
+    if not session_id or not date or turn_index is None:
+        return {}
+    try:
+        with open(_path(session_id, day=date), encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if rec.get("turn_index") == turn_index:
+                    return {"session_id": session_id, "date": date, "turn_index": turn_index,
+                            "query": rec.get("query"), "tag": rec.get("tag")}
+    except OSError:
+        pass
+    return {}
+
+
 def shadow_turn(ctx: dict, record: dict) -> None:
     """影子决策落盘。
     """
@@ -412,10 +550,53 @@ def feedback_turn(ctx: dict, rating: str, reason: str = "", note: str = "") -> N
     _append(_path(sid, FEEDBACK_KIND, day=ctx.get("date"), create=True), rec)
 
 
-def end_turn(aborted: bool = False) -> None:
+def feedback_of(session_id: str, date: str, turn_index: int) -> dict:
+    """该轮已有的标注（同一轮只认一条，重复提交靠它挡）；没有返回空。"""
+    path = _path(session_id, FEEDBACK_KIND, day=date)
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if rec.get("turn_index") == turn_index:
+                    return rec
+    except OSError:
+        pass
+    return {}
+
+
+def effective_feedbacks(session_id: str, date: str = "") -> dict:
+    """该会话（某天）每轮的**生效**标注：同一轮有多条时取最后一条（改过以后写的为准）。"""
+    out = {}
+    want = date.replace("-", "")
+    for day, path in day_files(session_id, FEEDBACK_KIND):
+        if want and day != want:
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    out[rec.get("turn_index")] = rec
+        except OSError:
+            continue
+    return out
+
+
+def end_turn(aborted: bool = False, reply: str = "") -> None:
     """收尾并落盘（幂等）；写失败只吞掉。
 
-    召回片段正文写旁路文件，trace 行只留指路字段（`steps.retrieve.chunks_log`）。
+    召回片段正文写旁路文件，trace 行只留指路字段（`steps.retrieve.chunks_log` / `retrieval.evidence`）。
     """
     turn = getattr(_local, "turn", None)
     if not turn:
@@ -432,6 +613,8 @@ def end_turn(aborted: bool = False) -> None:
             retrieve = turn["steps"].setdefault("retrieve", {})
             chunks_path = _path(sid, CHUNK_KIND, create=True)
             retrieve["chunks_log"] = os.path.basename(chunks_path) if chunks_path else ""
+            if chunks_path:
+                turn["retrieval"]["evidence"] = {"file": os.path.basename(chunks_path)}
             _append(chunks_path, {
                 "v": SIDE_VERSION,
                 "ts": turn["ts"],
@@ -443,7 +626,22 @@ def end_turn(aborted: bool = False) -> None:
                 "n_chunks": len(chunk_list),
                 "chunks": chunk_list,
             })
+        _finalize(turn, reply)
         _append(_path(sid, create=True), turn)
         _last[sid] = turn
     except Exception:  # noqa: BLE001
         pass
+
+
+def _finalize(turn: dict, reply: str) -> None:
+    """收尾补齐出口信息：折算唯一出口、补 `answer`；本轮没检索就补一条 skipped 节点。"""
+    tag = turn.get("tag")
+    if tag:
+        turn["branch"] = BEHAVIOR_BY_TAG.get(tag)
+    if turn["branch"]:
+        turn["answer"] = {"kind": turn["branch"],
+                          "model": (turn.get("answer") or {}).get("model"),
+                          "chars": len(reply or "")}
+        if not turn.get("retrieval"):
+            turn["path"].append({"node": "retrieve", "status": "skipped",
+                                 "by": turn["branch"]})

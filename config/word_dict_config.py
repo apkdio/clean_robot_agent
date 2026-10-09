@@ -83,7 +83,7 @@ def validate_knowledge_domains(data_dir: str) -> list:
 
 # ── 领域路由关键词 ───────────────────────────────────────────────
 # 故障关键词（路由到 repair 域）。三张表是「基础 → 强词 → 触发」的叠加关系，
-# 用组合定义，避免同一批词抄三遍（2026-09-24 收敛；三张表的集合与收敛前逐一相等）。
+# 用组合定义，避免同一批词抄三遍。
 REPAIR_BASE_WORDS = ["故障", "坏了", "不动", "漏水", "异响", "不充电", "充不进电", "充不上电", "异常", "失灵",
                      "不好使", "出问题", "趴窝", "卡住", "噪音", "维修"]
 REPAIR_WORDS = list(REPAIR_BASE_WORDS)
@@ -110,8 +110,8 @@ CONSULT_WORDS = ["问题", "技巧", "知识", "要点", "建议", "事项", "�
                  "须知", "诀窍", "门道", "参数", "指标", "怎么选", "如何选", "注意什么",
                  "有什么讲究", "怎么看", "考虑什么", "留意", "注意哪些", "避坑", "挑选技巧",
                  "指南", "攻略", "手册", "清单", "建议清单",
-                 # 「注意」类补全（2026-09-24）：「选购机器人有什么需要注意的地方」这种写法
-                 # 不匹配"注意什么/注意哪些"，会让 is_consulting 漏判、误触发选购 SOP。
+                 # 「注意」类补全：只写"注意什么/注意哪些"时，「有什么需要注意的地方」这种写法
+                 # 匹配不上，会让 is_consulting 漏判、误触发选购 SOP。
                  "注意", "注意事项", "注意点"]
 
 # ── SOP 触发词 ───────────────────────────────────────────────────
@@ -250,3 +250,46 @@ FEEDBACK_REASONS = [
 FEEDBACK_REASON_KEYS = tuple(r["key"] for r in FEEDBACK_REASONS)
 FEEDBACK_REASON_LABELS = {r["key"]: r["label"] for r in FEEDBACK_REASONS}
 FEEDBACK_REASON_LAYERS = {r["key"]: r["layer"] for r in FEEDBACK_REASONS}
+
+# ── trace 闭集（记录侧只存键，渲染侧查中文；见 notes/TRACE.md）─────
+# 行为闭集：`[Behavior]` tag → 本轮唯一出口。评测轨与 trace 的 branch 共用这一张表。
+BEHAVIOR_BY_TAG = {
+    "stop_use_safety": "safety_alert",
+    "carry_safety": "safety_carry",
+    "refuse_offtopic": "refuse",
+    "no_answer_fallback": "no_answer_fallback",
+    "structured_answer": "structured",
+    "retrieve_answer": "answer",
+    "chitchat": "chitchat",
+    "ask_clarify": "clarify",
+    # 下面四个不折算成别的行为：出现即说明这一轮走了流程，不该被任何期望值悄悄满足。
+    "start_sop": "start_sop",
+    "sop_step": "sop_step",
+    "exit_sop": "exit_sop",
+    "block_inject": "block_inject",
+}
+
+# trace 路径节点 → 渲染名；新增节点必须先登记（契约测试断言 path[].node 在表内）。
+TRACE_NODE_LABELS = {
+    "route.inject": "注入检测",
+    "route.danger": "危险现象",
+    "route.emotion": "情绪安抚",
+    "route.intent": "意图分类",
+    "sop.active": "活跃 SOP",
+    "sop.pending": "待确认状态",
+    "guard.safety_carry": "安全承接",
+    "followup": "追问筛选",
+    "model_query": "型号查询",
+    "series_query": "系列枚举",
+    "service_point": "售后网点",
+    "sop.match": "SOP 触发",
+    "sop.gate": "进入确认门",
+    "rewrite": "query 改写",
+    "date": "日期解析",
+    "filter": "结构化筛选",
+    "retrieve": "向量检索",
+    "generate": "LLM 生成",
+}
+
+# 节点状态：ok=执行 / hit=命中并出口 / skipped=走到但未执行 / degraded=降级执行 / error=异常
+TRACE_NODE_STATUSES = ("ok", "hit", "skipped", "degraded", "error")

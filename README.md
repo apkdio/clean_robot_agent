@@ -20,7 +20,7 @@
 - **多轮友好**：领域外问题礼貌拒答，模糊问题软引导，闲聊自然回应
 - **低置信追问承接**：追问句的指代在上文时分类头会判不准；命中「低置信或判成闲聊 + 上文有可承接话题」就不硬拒答——安全话题（冒烟/漏电/火星/焦味等）直接承接并复述处理方式，其余先用上文改写 query 再检索；检索确实无果时给兜底话术，不凭自身知识作答
 - **多会话与上下文**：按会话（session_id）隔离多轮对话，对话持久化到本地（jsonl + meta），支持新建/切换/删除历史会话，首轮回答后自动生成 LLM 语义标题与更新时间；自由指代通过拼接历史由 LLM 自主消解
-- **回复评价（标注回流）**：每条机器人回复下方可点「👍 有用 / 👎 无用」；无用需选一个原因（没找到/召回错、知识库没有、答非所问、答错了、答得不全、太啰嗦/格式乱、其他），可再补一句说明。原因按「第一个出错的环节」收敛、各带归因层，标注按 query 定位到轮次，与该轮的召回片段、行为标签一起落 trace，可直接聚类成 badcase 与修复项
+- **回复评价（标注回流）**：每条机器人回复下方可点「👍 有用 / 👎 无用」；无用需选一个原因（没找到/召回错、知识库没有、答非所问、答错了、答得不全、太啰嗦/格式乱、其他），可再补一句说明。原因按「第一个出错的环节」收敛、各带归因层，标注按 query 定位到轮次，与该轮的召回片段、行为标签一起落 trace，可直接聚类成 badcase 与修复项；**标错了可以改**（重新标注以最后一次为准，历史保留、不覆盖）
 
 ## 技术栈
 
@@ -84,9 +84,9 @@ clean_robot_agent/
 │   │   ├── test_agent_guards.py # Agent 前置防护（情绪/注入/危险/退出意图）
 │   │   └── test_dialogue.py     # 多轮实战对话（正常 + 非人类，需 --e2e）
 │   └── eval/                    # 评测轨（留出集 + 基线，评测入口默认跑这些；多数需 --e2e）
-│       ├── test_behavior_tags.py   # 行为观测点 tag 契约自检（纯规则，不依赖模型）
+│       ├── test_behavior_tags.py   # 行为闭集（branch）与 trace 记录契约自检（纯规则，不依赖模型）
 │       ├── test_retrieval_eval.py  # 检索质量评测（hit@k/MRR；评测集 data/eval/retrieval）
-│       ├── test_context_eval.py    # 多轮行为评测（按行为观测 tag 判出口行为；评测集 data/eval/context）
+│       ├── test_context_eval.py    # 多轮行为评测（按 trace 的 branch 判出口行为；评测集 data/eval/context）
 │       └── test_intent_eval.py     # 意图分类评测（留出集；口径见 data/datasets/README.md）
 ├── intent_classifier_training/  # 意图分类模型训练工具
 │   ├── build_intent_dataset.py  # 数据集构建（从知识库抽取 + 规则改写）
@@ -123,7 +123,7 @@ clean_robot_agent/
 | `redis_store.py` | Redis 连接封装 + 互斥锁（SET NX）+ 降级回退：无 Redis 时自动回退本地内存 |
 | `pending_store.py` | 统一待确认状态（SOP 退出确认 / 网点问城市 / 选序号）：Redis `sop:pending:{sid}` + TTL，无 Redis 降级内存并校验时间戳 |
 | `test_hooks.py` | **仅供测试/评测**的状态注入助手（danger 窗口 / 连续承接计数 / 活跃 SOP / 待确认状态）|
-| `trace_store.py` | 会话级 trace：每轮落一条结构化记录（`logs/trace/<会话ID>_<日期>_<时间>/<同名>.jsonl`，best-effort 不影响对话，`TRACE_DIR` 可改落点）；同一会话目录下另有三份旁路文件：召回片段全文、影子决策、用户评价 |
+| `trace_store.py` | 会话级 trace：每轮落一条结构化记录（`logs/trace/<会话ID>_<日期>_<时间>/<同名>.jsonl`，best-effort 不影响对话，`TRACE_DIR` 可改落点）；记录与执行同构：进门判断、本轮唯一出口、有序节点（含状态/耗时/进出事实）、两遍召回与各遍计数、最终候选的来源分布、SOP 动作链，另保留旧字段作兼容；同一会话目录下另有三份旁路文件：召回片段全文、影子决策、用户评价 |
 
 ## 工具调用模块（function_tools/）
 

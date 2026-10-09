@@ -98,20 +98,31 @@ def feedback():
         reason = ""
 
     from tools import trace_store
-    ctx = trace_store.find_turn(session_id, query)
+    anchor = data.get("trace") or {}
+    ctx = {}
+    if isinstance(anchor, dict):
+        # 上下文消息里带了该轮锚点：直接按（日期, 轮次）取，不再用 query 猜轮次
+        ctx = trace_store.find_turn_by_index(session_id, anchor.get("date"), anchor.get("turn_index"))
+        if ctx and ctx.get("query") != query:
+            ctx = {}          # 锚点与提交的问句对不上，不当锚点用
+    if not ctx:
+        ctx = trace_store.find_turn(session_id, query)
     if not ctx:
         # 没对上轮次：标注没地方落，如实告诉前端（也提醒可能是跨天/轮次已过久）
         logger.warning("[Feedback] no matching turn: session=%s query=%s", session_id, query[:40])
         return jsonify({"status": "no_turn", "message": "没找到对应的轮次（可能已超出回看天数）"}), 404
+    marked = trace_store.feedback_of(session_id, ctx.get("date"), ctx.get("turn_index"))
+    # 同一轮可以再来一次（改主意）：**追加**一条、不改历史，读侧按轮次取最后一条为准
     trace_store.feedback_turn(
         ctx, rating=rating,
         reason=reason[:40],
         note=(data.get("note") or "")[:200],
     )
-    logger.info("[Feedback] turn=%s/%s rating=%s reason=%s session=%s",
+    logger.info("[Feedback] turn=%s/%s rating=%s reason=%s session=%s%s",
                 ctx.get("date"), ctx.get("turn_index"), rating,
-                reason or "-", session_id)
-    return jsonify({"status": "ok", "date": ctx.get("date"), "turn_index": ctx.get("turn_index")})
+                reason or "-", session_id, " (revise)" if marked else "")
+    return jsonify({"status": "ok", "date": ctx.get("date"),
+                    "turn_index": ctx.get("turn_index"), "updated": bool(marked)})
 
 
 @app.route("/api/stats", methods=["GET"])
