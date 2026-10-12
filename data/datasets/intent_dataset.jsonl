@@ -790,3 +790,65 @@
 {"text": "我对你们的处理很不满意", "label": "casual", "source": "curated"}
 {"text": "再这样我就去投诉了", "label": "casual", "source": "curated"}
 {"text": "太气人了，我要个解释", "label": "casual", "source": "curated"}
+{"text": "那你说说，怎么使用机器人", "label": "robot", "source": "curated"}
+{"text": "那你讲讲，滤网多久换一次", "label": "robot", "source": "curated"}
+{"text": "你说一下，怎么把机器人连上 WiFi", "label": "robot", "source": "curated"}
+{"text": "那你教教我，尘盒怎么拆下来洗", "label": "robot", "source": "curated"}
+{"text": "说说看，机器人配网要怎么做", "label": "robot", "source": "curated"}
+{"text": "那你给我讲讲，定时清扫怎么设置", "label": "robot", "source": "curated"}
+{"text": "你来说说，拖布平时怎么清洗", "label": "robot", "source": "curated"}
+{"text": "那你讲讲看，怎么让机器人回充", "label": "robot", "source": "curated"}
+{"text": "官方APP在哪里下载", "label": "robot", "source": "curated"}
+{"text": "APP 从哪里下载安装", "label": "robot", "source": "curated"}
+{"text": "怎么给机器人配网", "label": "robot", "source": "curated"}
+{"text": "第一次配网怎么弄", "label": "robot", "source": "curated"}
+{"text": "机器人怎么连 2.4G 网络", "label": "robot", "source": "curated"}
+{"text": "怎么建图", "label": "robot", "source": "curated"}
+{"text": "首次建图怎么操作", "label": "robot", "source": "curated"}
+{"text": "怎么设置定时清扫", "label": "robot", "source": "curated"}
+{"text": "APP 里怎么给房间分区", "label": "robot", "source": "curated"}
+{"text": "多楼层地图怎么切换", "label": "robot", "source": "curated"}
+{"text": "怎么让机器人回充", "label": "robot", "source": "curated"}
+{"text": "吸力和水量怎么调", "label": "robot", "source": "curated"}
+{"text": "语音指令怎么说", "label": "robot", "source": "curated"}
+{"text": "儿童锁怎么开启", "label": "robot", "source": "curated"}
+{"text": "怎么查看耗材剩余", "label": "robot", "source": "curated"}
+{"text": "怎么设置勿扰模式", "label": "robot", "source": "curated"}
+{"text": "机身传感器怎么清理", "label": "robot", "source": "curated"}
+{"text": "长期不用机器人怎么存放", "label": "robot", "source": "curated"}
+{"text": "搬家后怎么重新配网", "label": "robot", "source": "curated"}
+{"text": "搬动机器人要注意什么", "label": "robot", "source": "curated"}
+{"text": "如果我买的时候有赠品，但是我想退货，赠品也要一块退回去吗", "label": "robot", "source": "multiturn_real"}
+{"text": "买完机器人后，发票怎么开", "label": "robot", "source": "multiturn_real"}
+{"text": "微信 APP 怎么更新", "label": "other", "source": "hard_negative"}
+{"text": "手机上怎么装支付宝", "label": "other", "source": "hard_negative"}
+{"text": "网易云音乐怎么下载歌曲", "label": "other", "source": "hard_negative"}
+{"text": "百度网盘 APP 怎么登录", "label": "other", "source": "hard_negative"}
+{"text": "美团 APP 怎么改收货地址", "label": "other", "source": "hard_negative"}
+{"text": "手机相册怎么备份到网盘", "label": "other", "source": "hard_negative"}
+{"text": "企业微信怎么加同事", "label": "other", "source": "hard_negative"}
+{"text": "蓝牙耳机怎么连接手机", "label": "other", "source": "hard_negative"}
+{"text": "Kindle 怎么连 WiFi", "label": "other", "source": "hard_negative"}
+{"text": "配网", "label": "unknown", "source": "hard_negative"}
+{"text": "建图", "label": "unknown", "source": "hard_negative"}
+{"text": "定时清扫", "label": "unknown", "source": "hard_negative"}
+{"text": "你说说，怎么把机器人连上手机", "label": "robot", "source": "curated"}
+{"text": "那你给我说说，滤网怎么换", "label": "robot", "source": "curated"}
+{"text": "你讲讲，扫地机器人怎么设置禁区", "label": "robot", "source": "curated"}
+{"text": "那你说一下，尘盒怎么倒", "label": "robot", "source": "curated"}
+{"text": "你说说看，机器人怎么调吸力", "label": "robot", "source": "curated"}
+{"text": "那你讲讲，拖布怎么烘干", "label": "robot", "source": "curated"}
+{"text": "你给我说说，机器人怎么升级固件", "label": "robot", "source": "curated"}
+{"text": "那你说说，怎么给机器人定个时间", "label": "robot", "source": "curated"}
+{"text": "不染一尘的 APP 叫什么", "label": "robot", "source": "curated"}
+{"text": "手机 APP 怎么绑定机器人", "label": "robot", "source": "curated"}
+{"text": "机器人怎么重新配网", "label": "robot", "source": "curated"}
+{"text": "配网的时候一直失败怎么办", "label": "robot", "source": "curated"}
+{"text": "怎么给机器人设置清扫顺序", "label": "robot", "source": "curated"}
+{"text": "怎么把地图删掉重建", "label": "robot", "source": "curated"}
+{"text": "机器人怎么连接家里的网络", "label": "robot", "source": "curated"}
+{"text": "怎么让机器人只扫客厅", "label": "robot", "source": "curated"}
+{"text": "APP 上的清扫记录在哪看", "label": "robot", "source": "curated"}
+{"text": "换路由器之后机器人连不上怎么办", "label": "robot", "source": "curated"}
+{"text": "抖音怎么保存别人的视频", "label": "other", "source": "hard_negative"}
+{"text": "微信怎么改群备注", "label": "other", "source": "hard_negative"}

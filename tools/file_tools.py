@@ -18,21 +18,21 @@ _DOC_EXTS = (
 )
 
 
-def get_file_md5_hex(file_path: str):
-    """计算文件 MD5 哈希。以二进制模式读取，不涉及编码。"""
+def get_file_sha256_hex(file_path: str):
+    """计算文件 SHA256 哈希（知识库版本、变更检测都用它）。以二进制模式读取，不涉及编码。"""
     if not os.path.isfile(file_path):
-        logger.error(f"[MD5 Module] File {file_path} not found.")
+        logger.error(f"[Hash Module] File {file_path} not found.")
         return None
-    md5_obj = hashlib.md5()
+    sha_obj = hashlib.sha256()
     chunk_size = 4096  # 4KB
     try:
         # 注意：二进制模式不能传入 encoding 参数
         with open(file_path, "rb") as f:
             while chunk := f.read(chunk_size):
-                md5_obj.update(chunk)
-        return md5_obj.hexdigest()
+                sha_obj.update(chunk)
+        return sha_obj.hexdigest()
     except Exception as e:
-        logger.error(f"[MD5 Module] Calculate MD5 failed. {e}")
+        logger.error(f"[Hash Module] Calculate SHA256 failed. {e}")
         return None
 
 

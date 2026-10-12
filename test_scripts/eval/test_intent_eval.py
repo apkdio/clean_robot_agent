@@ -151,8 +151,8 @@ def _print_metrics(m):
 # 环境快照与基线
 # ──────────────────────────────────────────────────────────────
 
-def _file_md5(path):
-    h = hashlib.md5()
+def _file_sha256(path):
+    h = hashlib.sha256()
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(1 << 16), b""):
             h.update(block)
@@ -162,7 +162,7 @@ def _file_md5(path):
 def _env_meta():
     """**本轨的关键环境就是「哪个分类头 + 哪版训练集」** —— 任一变化即应视为新基线。"""
     def short(path):
-        return _file_md5(path)[:8] if os.path.isfile(path) else "missing"
+        return _file_sha256(path)[:8] if os.path.isfile(path) else "missing"
     return {"created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "head": short(_HEAD_FILE), "dataset": short(_TRAIN_FILE), "golden": short(_GOLDEN_FILE)}
 

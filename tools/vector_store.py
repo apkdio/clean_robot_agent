@@ -11,7 +11,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from tools.config_tool import load_config
-from tools.file_tools import extract_file, get_file_md5_hex
+from tools.file_tools import extract_file, get_file_sha256_hex
 from tools.llm_tool import get_embedding_model
 from tools.log_tool import get_logger
 from tools.path_tool import get_abs_path
@@ -59,7 +59,7 @@ def get_vector_store() -> Chroma:
 
 
 def ingest_file(file_path: str, source_tag: str = "") -> dict:
-    """解析、分块并把单个文件向量化入库，返回 {status, file, chunks, md5, elapsed}。
+    """解析、分块并把单个文件向量化入库，返回 {status, file, chunks, sha256, elapsed}。
 
     不做「先删后插」——同一文件重复调用会叠加重复 chunk，去重由调用方负责。
     """
@@ -69,9 +69,9 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
         logger.error(f"[Ingest] File not found: {file_path}")
         return {"status": "error", "file": file_path, "message": "File not found."}
 
-    md5 = get_file_md5_hex(file_path)
-    if md5 is None:
-        return {"status": "error", "file": file_path, "message": "MD5 calculation failed."}
+    sha256 = get_file_sha256_hex(file_path)
+    if sha256 is None:
+        return {"status": "error", "file": file_path, "message": "SHA256 calculation failed."}
 
     start = time.time()
     logger.info(f"[Ingest] Extracting: {file_path}")
@@ -88,7 +88,7 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
     for doc in docs:
         entry_chunks = split_numbered_entries(
             doc.page_content,
-            metadata={**doc.metadata, "source": tag, "file_name": file_name, "file_md5": md5},
+            metadata={**doc.metadata, "source": tag, "file_name": file_name, "file_sha256": sha256},
         )
         chunks.extend(entry_chunks)
 
@@ -100,7 +100,7 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
         for chunk in chunks:
             chunk.metadata.setdefault("source", tag)
             chunk.metadata["file_name"] = file_name
-            chunk.metadata["file_md5"] = md5
+            chunk.metadata["file_sha256"] = sha256
 
     if not chunks:
         return {"status": "error", "file": file_path, "message": "Splitting returned no chunks."}
@@ -110,7 +110,7 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
     for chunk in chunks:
         chunk.metadata.setdefault("source", tag)
         chunk.metadata.setdefault("file_name", file_name)
-        chunk.metadata["file_md5"] = md5
+        chunk.metadata["file_sha256"] = sha256
         chunk.metadata.update(extract_price_metadata(chunk.page_content))
         chunk.metadata.update(extract_publish_date(chunk.page_content))
         # 规格行 → param_<键> / param_<键>_num（通用，不预设参数名）
@@ -127,7 +127,7 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
         "status": "ok",
         "file": file_name,
         "chunks": len(chunks),
-        "md5": md5,
+        "sha256": sha256,
         "elapsed": elapsed,
     }
 

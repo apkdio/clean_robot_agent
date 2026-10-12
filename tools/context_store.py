@@ -326,14 +326,41 @@ def get_last_models(session_id: str):
     return _get_meta_field(session_id, "last_models")
 
 
-def set_enter_declined(session_id: str, declined: bool = True):
-    """记下用户拒绝了「进入引导」（本会话不再问；用户明确要求时仍会直接进）。"""
-    _update_meta(session_id, sop_enter_declined=bool(declined))
+def _declined_sops(value) -> list:
+    """meta 值 → 拒绝过的 SOP 列表；旧格式（会话级 True）返回 ["*"]（等同全部）。"""
+    if value is True:
+        return ["*"]
+    if isinstance(value, (list, tuple)):
+        return [s for s in value if isinstance(s, str)]
+    return []
 
 
-def is_enter_declined(session_id: str) -> bool:
-    """用户是否已拒绝过进入引导。"""
-    return bool(_get_meta_field(session_id, "sop_enter_declined"))
+def set_enter_declined(session_id: str, declined: bool = True, sop_id: str = None):
+    """记下用户拒绝了「进入引导」，**按 SOP 记**：拒了选购不影响维修下次再问。
+
+    declined=False 撤标记（给 sop_id 只撤该条，不给则全撤）；declined=True 且不给 sop_id
+    记成会话级，与历史行为一致。
+    """
+    if declined and not sop_id:
+        _update_meta(session_id, sop_enter_declined=True)
+        return
+    kept = _declined_sops(_get_meta_field(session_id, "sop_enter_declined"))
+    if declined:
+        if sop_id not in kept:
+            kept.append(sop_id)
+    elif sop_id:
+        kept = [s for s in kept if s not in (sop_id, "*")]
+    else:
+        kept = []
+    _update_meta(session_id, sop_enter_declined=kept)
+
+
+def is_enter_declined(session_id: str, sop_id: str = None) -> bool:
+    """用户是否拒绝过进入引导（给了 sop_id 只看该 SOP；会话级旧记录算全拒）。"""
+    kept = _declined_sops(_get_meta_field(session_id, "sop_enter_declined"))
+    if "*" in kept:
+        return True
+    return sop_id in kept if sop_id else bool(kept)
 
 
 _UUID_RE = re.compile(

@@ -817,9 +817,12 @@
   // ── 回复评价：有用/无用（+理由），后端按 query 定位轮次后落 trace ──
   const FEEDBACK_REASONS = {{ feedback_reasons | tojson }};
 
-  function makeFeedbackBar(query, sid, anchor) {
-    const bar = document.createElement('div');
+  // 「改」走同一条路径重建内容：监听器闭包里的 bar 必须始终是**页面上**那个节点
+  //（早期版本把新建栏的子节点搬过来，闭包仍指向脱离文档的那个 → 提交成功但页面没反应、且防双击位被置上）
+  function makeFeedbackBar(query, sid, anchor, into) {
+    const bar = into || document.createElement('div');
     bar.className = 'feedback-bar';
+    bar.innerHTML = '';
     const buttons = document.createElement('div');
     buttons.innerHTML = '<span class="fb-btn fb-up">👍 有用</span><span class="fb-btn fb-down">👎 无用</span>';
     buttons.querySelector('.fb-up').addEventListener('click', () => submitFeedback(bar, sid, query, 'useful', '', '', anchor));
@@ -853,12 +856,10 @@
     return bar;
   }
 
-  // 标错了可以改：把栏恢复成可点的样子（不刷新页面也能重标，后端追加一条、以最后一条为准）
+  // 标错了可以改：就地把栏恢复成可点的样子（后端追加一条、以最后一条为准）
   function reopenFeedbackBar(bar, sid, query, anchor) {
-    const fresh = makeFeedbackBar(query, sid, anchor);
-    bar.innerHTML = '';
-    Array.from(fresh.childNodes).forEach(n => bar.appendChild(n));
     delete bar.dataset.busy;
+    makeFeedbackBar(query, sid, anchor, bar);
   }
 
   async function submitFeedback(bar, sid, query, rating, reason, note, anchor) {

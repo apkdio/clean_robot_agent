@@ -686,6 +686,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
                       get_active_sop_id, sop_needs_enter_confirm)
     from tools.context_store import is_enter_declined, set_enter_declined
     continue_after_exit = False  # 退出句里还带着诉求 → 本轮要继续往下走，重新理解这一句
+    enter_declined_turn = False  # 本轮刚拒过进入引导：只跳过本轮这道门，不记进会话（下次泛问还要能问）
     if has_active_sop(session_id):
         sop_id = get_active_sop_id(session_id)
         sop_name = _sop_name(sop_id)
@@ -776,7 +777,11 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             return
         if ans is False or retry >= 1:
             pending_store.clear(session_id)
-            set_enter_declined(session_id)
+            if sop_id != "repair":
+                set_enter_declined(session_id, sop_id=sop_id)
+            else:
+                # 维修不记拒绝：那句可能只是问渠道，下次提故障还得能进排查
+                enter_declined_turn = True
             logger.info("[SOP] enter declined: %s", sop_id)
             # 答「不是」= 不进引导、直接回答 → 用当初那句 query 继续（系统问的是是/不是，这一句本身没有信息量）
             query = pending.get("query") or query
@@ -872,14 +877,14 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         return
 
     # SOP 触发：robot/unknown 意图 + 命中场景 trigger（guards 已由 match_sop 评估）
-    if intent in ("robot", "unknown"):
+    if intent in ("robot", "unknown") and not enter_declined_turn:
         sop_id = match_sop(query)
         weak = bool(sop_id) and sop_needs_enter_confirm(sop_id, query)
         if sop_id:
             trace_store.node("sop.match", status="hit", out={"sop": sop_id, "weak": weak})
-        # 弱触发：先问一句要不要走引导；用户拒绝过且这次仍是弱信号 → 不打扰，走正常作答
+        # 弱触发：先问一句要不要走引导；用户拒绝过该 SOP 且这次仍是弱信号 → 不打扰，走正常作答
         if sop_id and weak:
-            if is_enter_declined(session_id):
+            if is_enter_declined(session_id, sop_id):
                 logger.info("[SOP] enter declined before, skip gate: %s", sop_id)
                 trace_store.step("sop_gate", skipped="declined", sop=sop_id)
                 sop_id = None

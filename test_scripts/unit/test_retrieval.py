@@ -127,8 +127,8 @@ def test_word_dict_integrity():
     from config.word_dict_config import DOMAIN_MAP, SYMPTOM_MAP, SYMPTOM_QUERY_MAP
     _assert_eq(
         set(DOMAIN_MAP.keys()),
-        {"brand", "consulting", "model", "repair", "aftersales", "maintain"},
-        "DOMAIN_MAP 六个域",
+        {"brand", "consulting", "model", "repair", "aftersales", "maintain", "operation"},
+        "DOMAIN_MAP 七个域",
     )
     _assert_eq(DOMAIN_MAP["maintain"], DOMAIN_MAP["repair"], "维护与维修同文件")
     _assert(len(SYMPTOM_MAP) > 0, "SYMPTOM_MAP 非空")

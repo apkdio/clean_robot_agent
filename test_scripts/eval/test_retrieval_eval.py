@@ -288,8 +288,8 @@ def _print_metrics(metrics):
 _CONFIG_FILES = ("config/rag.yaml", "config/chroma.yaml", "config/agent.yaml", "config/context.yaml")
 
 
-def _file_md5(path):
-    h = hashlib.md5()
+def _file_sha256(path):
+    h = hashlib.sha256()
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(1 << 16), b""):
             h.update(block)
@@ -297,7 +297,7 @@ def _file_md5(path):
 
 
 def _digest(pairs):
-    """把 (名称, md5) 序列折成一个短指纹 —— 任一项变化都会改变它。"""
+    """把 (名称, 哈希) 序列折成一个短指纹 —— 任一项变化都会改变它。"""
     text = "\n".join(f"{k}:{v}" for k, v in sorted(pairs))
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
 
@@ -326,21 +326,28 @@ def _code_meta():
 
 
 def _kb_meta():
-    """知识库内容指纹（复用热更新的 scan_files：逐文件 md5 汇总）。"""
+    """知识库版本：优先读热更新写的 `data/state/kb_metadata.jsonl` 最后一行（= 索引里现在是什么）；
+    没有该文件时回退到现场扫描（复用热更新的 `scan_files`，算法不漂）。"""
     from tools.config_tool import get_data_dir
-    from tools.hot_ingest import scan_files
+    from tools.hot_ingest import kb_fingerprint, load_kb_metadata, metadata_path, scan_files
 
     kb_dir = get_data_dir()
+    rel_dir = os.path.relpath(kb_dir, _ROOT).replace("\\", "/")
+    meta = load_kb_metadata()
+    if meta:
+        return {"dir": rel_dir, "files": len(meta.get("file_list") or {}),
+                "fingerprint": meta.get("fingerprint"), "ts": meta.get("ts"),
+                "source": os.path.relpath(metadata_path(), _ROOT).replace("\\", "/")}
     files = scan_files(kb_dir) if os.path.isdir(kb_dir) else {}
-    return {"dir": os.path.relpath(kb_dir, _ROOT).replace("\\", "/"),
-            "files": len(files), "fingerprint": _digest(files.items())}
+    return {"dir": rel_dir, "files": len(files), "fingerprint": kb_fingerprint(files),
+            "source": "现场扫描"}
 
 
 def _config_meta():
     """行为相关配置：指纹 + 关键旋钮现值（阈值/开关改一下，指标就变）。"""
     from tools.config_tool import load_config
 
-    pairs = [(rel, _file_md5(os.path.join(_ROOT, rel)))
+    pairs = [(rel, _file_sha256(os.path.join(_ROOT, rel)))
              for rel in _CONFIG_FILES if os.path.isfile(os.path.join(_ROOT, rel))]
     rag = load_config("rag")
     key = {"retrieval.score_threshold": rag["retrieval"]["score_threshold"],
@@ -354,21 +361,25 @@ def _config_meta():
 
 
 def _index_meta():
-    """索引有没跟上知识库：拿热更新的 md5 快照（data/state/ingest_snapshot.json）与当前知识库比。
+    """索引有没跟上知识库：拿热更新的版本记录（data/state/kb_metadata.jsonl = 索引里现在是什么）与当前目录比。
 
     不用文件 mtime —— Chroma 读一次也会动文件时间，mtime 判不出「索引落后」。
     """
     from tools.config_tool import get_data_dir
-    from tools.hot_ingest import diff_snapshot, load_snapshot, scan_files
+    from tools.hot_ingest import load_kb_metadata, scan_files
 
-    snapshot = load_snapshot()
-    if not snapshot:
-        return {"in_sync": None, "note": "无 ingest 快照（data/state/ingest_snapshot.json）"}
-    added, changed, removed = diff_snapshot(snapshot, scan_files(get_data_dir()))
+    meta = load_kb_metadata()
+    if not meta:
+        return {"in_sync": None, "note": "无版本记录（data/state/kb_metadata.jsonl）——等一次热更新"}
+    indexed = {rel: (v or {}).get("sha256") for rel, v in (meta.get("file_list") or {}).items()}
+    live = scan_files(get_data_dir())
+    added = sorted(set(live) - set(indexed))
+    removed = sorted(set(indexed) - set(live))
+    changed = sorted(k for k in set(live) & set(indexed) if live[k] != indexed[k])
     if not (added or changed or removed):
-        return {"in_sync": True}
-    return {"in_sync": False,
-            "pending": {"added": sorted(added), "changed": sorted(changed), "removed": sorted(removed)}}
+        return {"in_sync": True, "ts": meta.get("ts")}
+    return {"in_sync": False, "ts": meta.get("ts"),
+            "pending": {"added": added, "changed": changed, "removed": removed}}
 
 
 def _index_label(idx):
@@ -461,7 +472,7 @@ def _save_baseline(metrics, records):
     print(f"\n[基线] 已写入 {_BASELINE_FILE}（{ids[0]}–{ids[-1]}，{len(ids)} 条）")
     print(f"       环境：代码 {_code_label(env['code'])}；知识库 {env['kb']['files']} 文件"
           f" fp={env['kb']['fingerprint']}；配置 fp={env['config']['fingerprint']}")
-    print(f"       索引：{_index_label(env['index'])}（按 ingest 快照核对）")
+    print(f"       索引：{_index_label(env['index'])}（按 kb_metadata 版本记录核对）")
     if rotated:
         print(f"       上一版留存为 {_PREV_BASELINE_FILE}")
 
@@ -511,6 +522,27 @@ def _compare_baseline(metrics, records):
     _print_id_list("  未跑（基线有、本次没跑）", missing)
 
 
+def _kb_metadata_selfcheck():
+    """知识库版本记录自检：有记录就断言它对得上算法（短指纹能由 file_list 复算出来）。
+
+    这份记录是「索引里现在是什么」的唯一凭据，本轨的 `env.kb` 也直接读它；指纹算法改了却沿用旧记录时，
+    环境比对会静默失真——这里当场报出来。没有记录不算失败（等一次热更新即可）。
+    """
+    from tools.hot_ingest import METADATA_VERSION, kb_fingerprint, load_kb_metadata, metadata_path
+
+    rec = load_kb_metadata()
+    if not rec:
+        print(f"  [知识库版本] 无记录（{os.path.relpath(metadata_path(), _ROOT)}）——等一次热更新")
+        return
+    files = rec.get("file_list") or {}
+    _assert(rec.get("v") == METADATA_VERSION,
+            f"版本记录 v={rec.get('v')} 与 METADATA_VERSION={METADATA_VERSION} 一致")
+    _assert(rec.get("fingerprint") == kb_fingerprint(files),
+            f"版本记录短指纹可由 file_list 复算（记录值 {rec.get('fingerprint')}）")
+    bad = [k for k, v in files.items() if not (v or {}).get("sha256")]
+    _assert(not bad, "版本记录每个文件都带 sha256" + (f"（缺：{bad}）" if bad else ""))
+
+
 def run():
     reset()
     if not E2E:
@@ -528,6 +560,7 @@ def run():
     missing_id, dup_id = _validate_ids(entries)
     _assert(missing_id == 0, f"评测集每条都有 id（缺 {missing_id} 条）")
     _assert(not dup_id, f"评测集 id 唯一（重复：{'、'.join(dup_id) if dup_id else '无'}）")
+    _kb_metadata_selfcheck()
 
     # --only 只跑某段 id：批次回归用（如 --only R001-R070 只跑首批）
     only = _arg_value("--only")

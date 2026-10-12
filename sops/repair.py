@@ -1,7 +1,7 @@
 """故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤。"""
 
 from sops.base import register, is_aftersales
-from config.word_dict_config import SYMPTOM_MAP, REPAIR_TRIGGER
+from config.word_dict_config import SYMPTOM_MAP, REPAIR_TRIGGER, REPAIR_WEAK_TRIGGER
 
 from tools.llm_tool import get_small_model_name
 from tools.log_tool import get_logger
@@ -82,6 +82,8 @@ def _search_and_generate(slots: dict):
 REPAIR_SOP = {
     "id": "repair",
     "trigger": REPAIR_TRIGGER,
+    # 只说「维修/故障/坏了」这类泛问时，先进「进入确认门」问一句（与选购 SOP 同一机制）
+    "weak_trigger": REPAIR_WEAK_TRIGGER,
     "guards": [
         {"check": is_aftersales},
     ],

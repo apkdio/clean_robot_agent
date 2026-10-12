@@ -1,7 +1,8 @@
 """热更新：周期性扫描知识目录，把文件增删改增量同步到 Chroma，并重建 BM25 索引。
 
-比对依据是文件 MD5 快照（data/state/ingest_snapshot.json）。跑在守护线程上，
-不阻塞 Flask 请求循环。
+比对依据是文件 SHA256 快照（data/state/ingest_snapshot.json）；每次同步成功后，
+再把「索引里现在是什么」追加一行到 data/state/kb_metadata.jsonl（逐文件 sha256 + chunk 数，
+只增不改，历史即知识库版本记录，回归与环境核对直接读最后一行）。跑在守护线程上，不阻塞 Flask 请求循环。
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ logger = get_logger(name="hot_ingest")
 
 _SCAN_INTERVAL = 30 * 60          # 30 分钟
 _SNAPSHOT_FILE = "data/state/ingest_snapshot.json"
+_METADATA_FILE = "data/state/kb_metadata.jsonl"
+METADATA_VERSION = 1
 
 _SUPPORTED_EXTS = (".txt", ".md", ".pdf", ".csv", ".docx", ".pptx", ".xlsx")
 
@@ -69,12 +72,87 @@ def invalidate_snapshot() -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# 知识库版本记录（data/state/kb_metadata.jsonl，只增不改）
+# ──────────────────────────────────────────────────────────────────────────
+
+def metadata_path() -> str:
+    from tools.path_tool import get_abs_path
+    return get_abs_path(_METADATA_FILE)
+
+
+def kb_fingerprint(file_list: dict) -> str:
+    """短指纹：逐文件 sha256 + chunk 数排序后折成一个摘要，任一项变化都会改变它。"""
+    import hashlib
+    text = "\n".join("%s:%s:%s" % (k, (v or {}).get("sha256"), (v or {}).get("chunks"))
+                     for k, v in sorted(file_list.items()))
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
+
+
+def load_kb_metadata() -> dict:
+    """读最后一行（= 当前生效的知识库版本）；没有或读不动返回 {}。"""
+    path = metadata_path()
+    if not os.path.isfile(path):
+        return {}
+    last = {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    last = json.loads(line)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[HotIngest] Failed to load kb metadata: %s", e)
+        return {}
+    return last
+
+
+def append_kb_metadata(file_list: dict, ts: str = "") -> None:
+    """把「索引里现在是什么」追加一行（写失败只告警，不影响对话）。"""
+    if not file_list:
+        return
+    rec = {"v": METADATA_VERSION,
+           "ts": ts or time.strftime("%Y-%m-%dT%H:%M:%S"),
+           "fingerprint": kb_fingerprint(file_list),
+           "file_list": file_list}
+    try:
+        path = metadata_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        logger.info("[HotIngest] kb metadata → %s（%d 文件，fp=%s）",
+                    os.path.basename(path), len(file_list), rec["fingerprint"])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[HotIngest] Failed to append kb metadata: %s", e)
+
+
+def chunks_by_file(names) -> dict:
+    """从 Chroma 数每个文件的 chunk 数（以索引为准，不看目录）。"""
+    from tools.vector_store import get_vector_store
+    store = get_vector_store()
+    out = {}
+    for name in names:
+        try:
+            out[name] = len(store._collection.get(where={"file_name": name},
+                                                  include=["metadatas"])["ids"])
+        except Exception:  # noqa: BLE001
+            out[name] = 0
+    return out
+
+
+def kb_file_list(scan: dict) -> dict:
+    """扫描结果 + 索引里的 chunk 数 → metadata 的 file_list。"""
+    counts = chunks_by_file([os.path.basename(rel) for rel in scan])
+    return {rel: {"sha256": sha256, "chunks": counts.get(os.path.basename(rel), 0),
+                  "ingested": counts.get(os.path.basename(rel), 0) > 0}
+            for rel, sha256 in scan.items()}
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # 扫描与差异对比
 # ──────────────────────────────────────────────────────────────────────────
 
 def scan_files(data_dir: str) -> dict:
-    """递归扫描 data_dir → {相对路径: md5}。"""
-    from tools.file_tools import get_file_md5_hex
+    """递归扫描 data_dir → {相对路径: sha256}。"""
+    from tools.file_tools import get_file_sha256_hex
 
     result = {}
     for root, dirs, files in os.walk(data_dir):
@@ -83,9 +161,9 @@ def scan_files(data_dir: str) -> dict:
                 continue
             full = os.path.join(root, f)
             rel = os.path.relpath(full, data_dir)
-            md5 = get_file_md5_hex(full)
-            if md5 is not None:
-                result[rel] = md5
+            sha256 = get_file_sha256_hex(full)
+            if sha256 is not None:
+                result[rel] = sha256
     return result
 
 
@@ -182,6 +260,7 @@ def run_once(data_dir: str = None) -> bool:
         apply_changes(data_dir, added, changed, removed)
         _rebuild_sparse_index()
         save_snapshot(new)
+        append_kb_metadata(kb_file_list(new))
         return True
     finally:
         release_lock("lock:ingest")
