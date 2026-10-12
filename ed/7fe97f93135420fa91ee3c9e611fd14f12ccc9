@@ -1,0 +1,101 @@
+tools/vector_store.py
+  s_40681318f5a20b::t_87aae922f3a6a6 62,72-74
+  s_40681318f5a20b::t_ce8b0902aeeb63 14
+  s_40681318f5a20b::t_c5a32186ea8fc4 103
+  s_40681318f5a20b::t_03f8c637497084 113
+  s_40681318f5a20b::t_c54c6699f91375 130
+  s_40681318f5a20b::t_b5faa6a6f79a3d 91
+data/datasets/intent_dataset.jsonl
+  s_40681318f5a20b::t_d0118dea15f23a 835-854
+  s_40681318f5a20b::t_4e9d7955553d8d 793-834
+sops/repair.py
+  s_40681318f5a20b::t_02edd20efacd2e 85-86
+  s_40681318f5a20b::t_20246ec5bad637 4
+config/word_dict_config.py
+  s_40681318f5a20b::t_7fff9b758cd584 37
+  s_40681318f5a20b::t_5c58792e129335 132
+  s_40681318f5a20b::t_625eed73e5b0f2 157-158
+  s_40681318f5a20b::t_1ff31679100212 127-130,133-135
+tools/agent.py
+  s_40681318f5a20b::t_8d69124d7afc9b 780-781
+  s_40681318f5a20b::t_36bde131072284 880
+  s_40681318f5a20b::t_799d855b08296c 885,887
+  s_40681318f5a20b::t_0747252098a42b 689
+  s_40681318f5a20b::t_b15816205ee163 782-784
+webapp/templates/index.html
+  s_40681318f5a20b::t_a7a7df7a36e6b4 820-823,825
+  s_40681318f5a20b::t_374e833f2ba05f 859,862
+data/datasets/README.md
+  s_40681318f5a20b::t_8075cf91120d9e 84-88
+  s_40681318f5a20b::t_007e7d0610045f 78-83
+  s_40681318f5a20b::t_ab857b42bc4783 50-52
+data/knowledge/不染一尘机器人操作指南.txt
+  s_02cf1826f69f43::t_c0a02056e38d10 1-152
+data/knowledge/不染一尘售后服务.txt
+  s_02cf1826f69f43::t_6f340a75ef59e2 29-33,36,39-40,42,45,48,53-54,56,59,62,65,68,71,74,77,80,85,88,91,94,99,102,105,110,113
+test_scripts/unit/test_retrieval.py
+  s_40681318f5a20b::t_110d3a1a417da3 130-131
+test_scripts/eval/test_intent_eval.py
+  s_40681318f5a20b::t_85b4d60858c3af 154-155
+  s_40681318f5a20b::t_8fe9140ec4bf95 165
+data/knowledge/不染一尘常见维修问题.txt
+  s_40681318f5a20b::t_fbf7e02a76c895 55-56
+tools/hot_ingest.py
+  s_40681318f5a20b::t_1a1a0016fe4865 3-5,25-26
+  s_40681318f5a20b::t_b3d076e02d36ae 75-148
+  s_40681318f5a20b::t_8967bca21fcfa3 154-155,164-166
+  s_40681318f5a20b::t_5d8e8774fd96ba 263
+tools/file_tools.py
+  s_40681318f5a20b::t_08b2342199379f 21-22,24,26,32-33,35
+tools/context_store.py
+  s_40681318f5a20b::t_2fb4d7c1eca0d1 329-335,338-363
+README.md
+  s_40681318f5a20b::t_6ebd66f2ef3d04 19,56
+  s_40681318f5a20b::t_4f4af423199658 253-255,261-263
+  s_40681318f5a20b::t_3b1fef9859047c 15
+test_scripts/eval/test_retrieval_eval.py
+  s_40681318f5a20b::t_fb131b03a8af7b 291-292,300
+  s_40681318f5a20b::t_df8863c683c077 350
+  s_40681318f5a20b::t_e041bceeb77623 364,369-378,380-382
+  s_321753db235424::t_7fe2e4602f7c8a 475
+  s_321753db235424::t_ee8e6e25b3bea2 525-545
+  s_321753db235424::t_fb23409f2a233b 563
+  s_40681318f5a20b::t_65bc00bfb52704 329-330,332,335-340,342-343
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.49-trip",
+  "base_commit_sha": "ed7fe97f93135420fa91ee3c9e611fd14f12ccc9",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_02cf1826f69f43": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_hw0o0c5y827a",
+        "model": "qwen3.8-max"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    },
+    "s_321753db235424": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_vqwohz01c4pd",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    },
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
