@@ -199,8 +199,12 @@ def _seed(session_id: str, key) -> None:
     _last[session_id] = last or {}
 
 
-def begin_turn(session_id: str, query: str) -> None:
-    """开一轮并补写上一轮；同一句 query 连续出现＝「重新回答」，记 retry=True。"""
+def begin_turn(session_id: str, query: str, retry: bool = None) -> None:
+    """开一轮并补写上一轮；同一句 query 连续出现＝「重新回答」，记 retry=True。
+
+    `retry` 显式给定时以它为准——前端点「重新回答」走的是同一条 query，
+    只靠"和上一句相同"会跟"用户自己又重复了一遍"混在一起。
+    """
     try:
         end_turn()
         with _lock:
@@ -211,7 +215,8 @@ def begin_turn(session_id: str, query: str) -> None:
             turn_index = _seq[key]
             prev = _last.get(session_id) or {}
         _t0.start = time.perf_counter()
-        retry = bool(prev.get("session_id") == session_id and prev.get("query") == query)
+        retry = bool(retry) if retry is not None else bool(
+            prev.get("session_id") == session_id and prev.get("query") == query)
         _local.turn = {
             "v": VERSION,
             "ts": datetime.now().isoformat(timespec="seconds"),
@@ -471,7 +476,10 @@ def turn_anchor() -> dict:
 
 
 def find_turn_by_index(session_id: str, date: str, turn_index) -> dict:
-    """按锚点直接取该轮（不用 query 猜轮次）；找不到返回空。"""
+    """按锚点直接取该轮（不用 query 猜轮次）；找不到返回空。
+
+    除定位字段外还给 `branch` / `sop` / `sop_gate`——「重新回答」要据此判断上一轮是不是 SOP 轮。
+    """
     if not session_id or not date or turn_index is None:
         return {}
     try:
@@ -486,7 +494,9 @@ def find_turn_by_index(session_id: str, date: str, turn_index) -> dict:
                     continue
                 if rec.get("turn_index") == turn_index:
                     return {"session_id": session_id, "date": date, "turn_index": turn_index,
-                            "query": rec.get("query"), "tag": rec.get("tag")}
+                            "query": rec.get("query"), "tag": rec.get("tag"),
+                            "branch": rec.get("branch"), "sop": rec.get("sop") or {},
+                            "sop_gate": rec.get("sop_gate") or {}}
     except OSError:
         pass
     return {}
@@ -531,7 +541,8 @@ def find_turn(session_id: str, query: str, days: int = FEEDBACK_LOOKBACK_DAYS) -
             if rec.get("query") == query and not rec.get("aborted"):
                 return {"session_id": session_id, "date": day_s,
                         "turn_index": rec.get("turn_index"),
-                        "query": rec.get("query"), "tag": rec.get("tag")}
+                        "query": rec.get("query"), "tag": rec.get("tag"),
+                        "branch": rec.get("branch")}
     return {}
 
 

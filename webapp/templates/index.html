@@ -677,8 +677,16 @@
     chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
   });
 
-  async function streamAnswer(query, botDiv, bubble, retry) {
+  async function streamAnswer(query, botDiv, bubble, retry, isRetry) {
     const sidAtSend = sessionId;   // 本轮属于哪个会话：回答期间可能被切走
+    // 重发复用的是同一个气泡：先把该气泡尾随的评价条摘掉——否则新旧两条并排，
+    // 旧那条还写着「已记录」，看着像这次重发已经标过了。
+    for (let sib = botDiv.nextElementSibling; sib;) {
+      const next = sib.nextElementSibling;
+      if (sib.classList.contains('feedback-bar')) sib.remove();
+      else if (!sib.classList.contains('retry-btn')) break;
+      sib = next;
+    }
     // Show loading dots, clear previous content
     bubble.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
     if (retry) retry.style.display = 'none';
@@ -698,7 +706,7 @@
       const r = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, session_id: sessionId, lng, lat })
+        body: JSON.stringify({ query, session_id: sessionId, lng, lat, retry: !!isRetry })
       });
 
       const reader = r.body.getReader();
@@ -712,6 +720,18 @@
         const parts = buffer.split('\n\n');
         buffer = parts.pop();
         for (const part of parts) {
+          // 结构性收尾帧（后端 event: meta）：SOP 还没结束时不给「重新回答」——那一步是写死的流程问句，
+          // 重发只会再问一遍同一句
+          if (part.startsWith('event: meta')) {
+            const m = part.match(/\ndata: ([\s\S]*)$/);
+            if (m) {
+              try {
+                const meta = JSON.parse(m[1]);
+                if (meta && meta.sop_active && retry) retry.style.display = 'none';
+              } catch (e) { /* 帧坏了不影响回答 */ }
+            }
+            continue;
+          }
           if (part.startsWith('data: ')) {
             const payload = part.slice(6);
             if (payload === '[DONE]') continue;
@@ -789,7 +809,7 @@
     retry.className = 'retry-btn';
     retry.innerHTML = '<i class="fa-solid fa-rotate-right"></i> 重新回答';
     retry.title = '使用相同问题重新回答';
-    retry.addEventListener('click', () => streamAnswer(query, botDiv, bubble, retry));
+    retry.addEventListener('click', () => streamAnswer(query, botDiv, bubble, retry, true));
     botDiv.after(retry);
 
     try {

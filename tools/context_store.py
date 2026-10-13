@@ -326,6 +326,17 @@ def get_last_models(session_id: str):
     return _get_meta_field(session_id, "last_models")
 
 
+def set_last_sop(session_id: str, sop_id: str, entry_query: str = ""):
+    """记下最近进入的 SOP 与它的入口 query——「重新回答」据此重开同一流程。"""
+    _update_meta(session_id, last_sop={"sop_id": sop_id, "entry_query": (entry_query or "")[:200]})
+
+
+def get_last_sop(session_id: str) -> dict:
+    """最近一次进入的 SOP（没有则空 dict）。"""
+    value = _get_meta_field(session_id, "last_sop")
+    return value if isinstance(value, dict) else {}
+
+
 def _declined_sops(value) -> list:
     """meta 值 → 拒绝过的 SOP 列表；旧格式（会话级 True）返回 ["*"]（等同全部）。"""
     if value is True:

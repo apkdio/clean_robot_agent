@@ -216,6 +216,7 @@ def chat_stream():
     session_id = ensure_session_id(data.get("session_id", ""))
     lng = data.get("lng")
     lat = data.get("lat")
+    is_retry = bool(data.get("retry"))     # 前端点「重新回答」时显式带上；不靠"和上一句相同"猜
 
     # 会话级锁：同一会话回答未完成时拒绝新请求（Redis SETNX + 本地降级）
     from tools.redis_store import acquire_lock
@@ -233,7 +234,7 @@ def chat_stream():
             parts = []
             stopped = False
             try:
-                for chunk in ask_stream(query, session_id, lng=lng, lat=lat):
+                for chunk in ask_stream(query, session_id, lng=lng, lat=lat, retry=is_retry):
                     if _is_stopped(session_id):
                         stopped = True
                         break
@@ -259,6 +260,18 @@ def chat_stream():
                     set_session_title(session_id, title)
             except Exception as e:
                 logger.warning(f"[Stream] Generate title failed: {e}")
+            # 结构性收尾帧：前端据此禁用「重新回答」（SOP 未结束时不给重发）、并拿到本轮锚点。
+            # 前端按 `data: ` 行解析，`event:` 开头的帧会被旧版忽略，不破坏兼容。
+            try:
+                from tools import trace_store
+                from sops import has_active_sop
+                turn = trace_store.find_turn(session_id, query) or {}
+                meta = {"branch": turn.get("branch") or "",
+                        "sop_active": bool(has_active_sop(session_id)),
+                        "anchor": {"date": turn.get("date"), "turn_index": turn.get("turn_index")}}
+                yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                logger.warning(f"[Stream] meta frame failed: {e}")
             yield "data: [DONE]\n\n"
         finally:
             from tools.redis_store import release_lock

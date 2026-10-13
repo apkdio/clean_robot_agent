@@ -82,7 +82,7 @@ def _strip_emotion(query: str) -> str:
 
 # 域路由的历史优先级（打分平手时用它排序）。顺序本身承载了修正：
 # 品牌优先于选购——「为什么买」的"买"会被误判选购；售后优先于故障——"报修"含"修"会被误判维修。
-_DOMAIN_ORDER = ["brand", "aftersales", "consulting", "repair", "maintain"]
+_DOMAIN_ORDER = ["brand", "aftersales", "consulting", "repair", "maintain", "operation"]
 
 _rag_retrieval_cfg_cache = None
 
@@ -111,12 +111,14 @@ def _domain_scores(query: str) -> list:
     打分而不是"命中即返回"，是为了承认多个域可能同时相关
     （「保修期内维修要多少钱」既是售后也是故障），再由调用方按 margin 决定搜一个还是两个域。
     """
-    from config.word_dict_config import BUY_WORDS, CONSULT_WORDS, MAINTAIN_WORDS, REPAIR_BASE_WORDS
+    from config.word_dict_config import (BUY_WORDS, CONSULT_WORDS, MAINTAIN_WORDS,
+                                         OPERATION_WORDS, REPAIR_BASE_WORDS)
     from sops.base import AFTERSALES_WORDS, BRAND_WORDS
 
     scores = {}
     for name, words in (("brand", BRAND_WORDS), ("aftersales", AFTERSALES_WORDS),
-                        ("repair", REPAIR_BASE_WORDS), ("maintain", MAINTAIN_WORDS)):
+                        ("repair", REPAIR_BASE_WORDS), ("maintain", MAINTAIN_WORDS),
+                        ("operation", OPERATION_WORDS)):
         hit = [w for w in words if w in query]
         if hit:
             scores[name] = float(sum(len(w) for w in hit))
@@ -537,11 +539,42 @@ def _resolve_series_query(query: str):
 def _enter_sop(session_id: str, sop_id: str, query: str, **detail) -> str:
     """进一条 SOP：启动 + 记 trace 进度 + 打行为标签，返回要回给用户的话。"""
     from sops import start_sop
+    from tools.context_store import set_last_sop
     reply, _done = start_sop(session_id, sop_id, query)
     _note_sop(session_id, sop_id)
+    set_last_sop(session_id, sop_id, query)   # 「重新回答」据此重开同一流程、并送回它的入口 query
     if reply:
         _log_behavior("start_sop", sop=sop_id, **detail)
     return reply
+
+
+def _reenter_sop_on_retry(session_id: str, query: str) -> tuple:
+    """「重新回答」时判断要不要重开 SOP，返回 `(是否接管, 要回给用户的话)`。
+
+    只接管一种情形：**上一轮是已结束的 SOP 轮**（判据取自上一轮 trace 的 `sop` 块与 `branch`，
+    不靠 query 猜）。重开时送纪念在会话 meta 里的**入口 query**，而不是这一句槽位答案；
+    入口 query 若是弱触发，照样先过确认门。SOP 还活跃时由上面的活跃分支处理，不走这里。
+    """
+    from sops import sop_needs_enter_confirm
+    from sops.base import SOPS
+    from tools.context_store import get_last_sop
+
+    cur = (trace_store.current_turn() or {}).get("turn_index")
+    found = trace_store.find_turn(session_id, query)        # 同 query 的最近一轮＝被重发的那轮
+    if not found or cur is None or found.get("turn_index") != int(cur) - 1:
+        return False, ""
+    prev = trace_store.find_turn_by_index(session_id, found.get("date"), found.get("turn_index"))
+    sop_id = str((prev.get("sop") or {}).get("id") or "")
+    if not sop_id or prev.get("branch") == "exit_sop" or sop_id not in SOPS:
+        return False, ""                                    # 与 SOP 无关（或用户刚退出）→ 按原样重走
+    entry = str(get_last_sop(session_id).get("entry_query") or query)
+    logger.info("[Retry] 重开 SOP: %s（入口 query=%s）", sop_id, entry[:40])
+    if sop_needs_enter_confirm(sop_id, entry):
+        pending_store.set(session_id, "confirm_enter", sop=sop_id, query=entry)
+        trace_store.node("sop.pending", in_={"kind": "confirm_enter", "retry": True})
+        _log_behavior("ask_clarify", kind="confirm_enter", via="retry")
+        return True, _ENTER_CONFIRM.format(sop=_sop_name(sop_id))
+    return True, _enter_sop(session_id, sop_id, entry, via="retry")
 
 
 def _log_behavior(tag: str, **detail) -> None:
@@ -604,14 +637,14 @@ def _shadow_probe(query: str, session_id: str, chain_category: str, chain_detail
     threading.Thread(target=_work, name="shadow-probe", daemon=True).start()
 
 
-def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
+def ask_stream(query: str, session_id: str = "default", lng=None, lat=None, retry: bool = False):
     """流式问答入口：开一轮 trace，交给 `_ask_stream`，收尾时落盘。"""
-    trace_store.begin_turn(session_id, query)
+    trace_store.begin_turn(session_id, query, retry=True if retry else None)
     set_log_session(session_id)
     completed = False
     reply_parts = []
     try:
-        for piece in _ask_stream(query, session_id, lng, lat):
+        for piece in _ask_stream(query, session_id, lng, lat, retry=retry):
             reply_parts.append(piece)
             yield piece
         completed = True
@@ -624,7 +657,7 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
         clear_log_session()
 
 
-def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
+def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, retry: bool = False):
     """流式问答入口 —— 经本地分类头做意图路由，支持多轮 SOP 引导。
 
     other → 礼貌拒答；casual → 闲聊；
@@ -789,6 +822,15 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None):
             pending_store.bump_retry(session_id)
             _log_behavior("ask_clarify", kind="confirm_enter_retry")
             yield _ENTER_CONFIRM.format(sop=sop_name)
+            return
+
+    # 「重新回答」：上一轮是已结束的 SOP 轮 → 重开同一 SOP（入口 query 走原触发规则，弱触发先过确认门）；
+    # 其余情况不接管，按原 query 重走一遍。SOP 仍活跃时由上面的活跃分支处理。
+    if retry and not has_active_sop(session_id):
+        reentered, reply = _reenter_sop_on_retry(session_id, query)
+        if reentered:
+            if reply:
+                yield reply
             return
 
     from tools.intent_router import route_intent_with_margin, get_guess_hint
