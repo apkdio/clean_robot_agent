@@ -254,7 +254,9 @@ def test_trace_nesting():
     def fill_answer():
         trace_store.route("danger", hit=False)
         trace_store.node("route.inject", out={"hit": False})
-        trace_store.step("intent", intent="robot", margin=0.98)
+        trace_store.step("intent", intent="robot", margin=0.98,
+                         intent_retry={"label": "robot", "margin": 0.5, "adopted": True})
+        trace_store.step("rewrite", normalize={"changed": True, "text": "支持以旧换新吗？"})
         trace_store.step("rewrite", via="none", effective_query="支持以旧换新吗")
         trace_store.retrieval(
             passes=[{"pass": 1, "dense": 3, "sparse": 5, "fused": 5,
@@ -282,6 +284,14 @@ def test_trace_nesting():
     _assert_eq((rec["route"].get("intent") or {}).get("label"), "robot", "route.intent 记分类结果")
     _assert_eq((rec["steps"]["intent"] or {}).get("intent"), "robot", "投影 steps.intent 与分层块等价")
     _assert_eq((rec["steps"]["retrieve"] or {}).get("n_chunks"), 2, "投影 steps.retrieve 仍在")
+    rw = (rec["retrieval"] or {}).get("rewrite") or {}
+    _assert_eq((rw.get("normalize") or {}).get("changed"), True,
+               "归一化与上下文改写共用一个 rewrite 块（先记 normalize）")
+    _assert_eq(rw.get("via"), "none", "上下文改写的 via 没被归一化那次调用盖掉")
+    _assert_eq([n["node"] for n in rec["path"]].count("rewrite"), 1,
+               "rewrite 路径节点只落一个（同一步调两次不能落两个节点）")
+    _assert_eq(((rec["route"].get("intent") or {}).get("retry") or {}).get("label"), "robot",
+               "route.intent.retry 记两遍分类的第二遍")
 
     for node_rec in rec["path"]:
         _assert_in(node_rec["node"], TRACE_NODE_LABELS, f"节点 {node_rec['node']} 已登记")

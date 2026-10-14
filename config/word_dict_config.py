@@ -271,6 +271,18 @@ FEEDBACK_REASON_KEYS = tuple(r["key"] for r in FEEDBACK_REASONS)
 FEEDBACK_REASON_LABELS = {r["key"]: r["label"] for r in FEEDBACK_REASONS}
 FEEDBACK_REASON_LAYERS = {r["key"]: r["layer"] for r in FEEDBACK_REASONS}
 
+# ── query 入口归一化（标点 / 空格 / 全半角 / 同义映射）──────────────
+# 半角标点归到知识库用的全角写法；数字之间的小数点与千分位保持原样。
+QUERY_HALF_PUNCT = {",": "，", ".": "。", "!": "！", "?": "？", ":": "：", ";": "；",
+                    "(": "（", ")": "）"}
+
+# 折叠重复标点、清理标点两侧空格时认的标点集合
+QUERY_PUNCT = "，。！？：；、（）,.!?:;()"
+
+# 同义词 / 错别字的有向映射（用户说法 → 知识库用词），只收有真实语料支撑的条目
+QUERY_SYNONYMS = {"扫托": "扫拖"}
+
+
 # ── trace 闭集（记录侧只存键，渲染侧查中文；见 notes/TRACE.md）─────
 # 行为闭集：`[Behavior]` tag → 本轮唯一出口。评测轨与 trace 的 branch 共用这一张表。
 BEHAVIOR_BY_TAG = {

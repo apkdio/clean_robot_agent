@@ -347,13 +347,14 @@ SERIES_MAP_DICT = {
 def extract_series(query: str) -> str:
     """从 query 规则提取系列名（子串匹配 SERIES_LIST），未精准命中时尝试走映射。
 
-    返回系列名（如「净白 S」），未命中返回空字符串。
+    返回系列名（如「净白 S」）。匹配忽略空白，兼容「云顶X」这种不带空格的写法。
     """
+    flat = re.sub(r"\s+", "", query)
     for s in SERIES_LIST:
-        if s in query:
+        if re.sub(r"\s+", "", s) in flat:
             return s
     for s in SERIES_MAP_DICT:
-        if s in query:
+        if re.sub(r"\s+", "", s) in flat:
             return SERIES_MAP_DICT[s]
     return ""
 

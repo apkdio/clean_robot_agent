@@ -163,8 +163,17 @@ def _fmt(ratio):
 
 
 def _compute(entries, hr):
-    from tools.agent import _domain_filter, _resolve_date_filter, _route_domain
+    from tools.agent import _domain_filter, _normalize_enabled, _resolve_date_filter, _route_domain
     from tools.metadata_extractor import enumerate_models, resolve_budget_filter
+
+    # 与线上同口径：入口归一化（agent.py 在注入/危险/情绪三条硬规则之后做）只作用于
+    # SOP 匹配 / 域路由 / 检索 query——本轨是直接调路由与 retriever 的，得自己补这一步。
+    # 开关同线上：config/agent.yaml 的 behavior.query_normalize。
+    normalize = None
+    if _normalize_enabled():
+        from tools.query_normalizer import normalize as _normalize
+
+        normalize = _normalize
 
     records = []
     ranks = []                 # 检索轨（domain + model）每条 rank
@@ -176,8 +185,9 @@ def _compute(entries, hr):
     strict_ood_fail = []       # 应零召回却召回了的严格领域外
 
     for e in entries:
-        q, t = e["query"], e["type"]
-        rec = {"id": e.get("id", "?"), "query": q, "type": t, "ok": False, "detail": ""}
+        raw, t = e["query"], e["type"]
+        q = normalize(raw) if normalize else raw
+        rec = {"id": e.get("id", "?"), "query": raw, "type": t, "ok": False, "detail": ""}
 
         if t == "domain":
             route_total += 1
@@ -240,6 +250,8 @@ def _compute(entries, hr):
                 struct_hits += 1
             rec["detail"] = f"命中 {sorted(names)}"
 
+        if q != raw:
+            rec["detail"] = f"归一化→「{q}」｜" + rec["detail"]
         records.append(rec)
 
     metrics = {
@@ -528,15 +540,18 @@ def _kb_metadata_selfcheck():
     这份记录是「索引里现在是什么」的唯一凭据，本轨的 `env.kb` 也直接读它；指纹算法改了却沿用旧记录时，
     环境比对会静默失真——这里当场报出来。没有记录不算失败（等一次热更新即可）。
     """
-    from tools.hot_ingest import METADATA_VERSION, kb_fingerprint, load_kb_metadata, metadata_path
+    from tools.hot_ingest import (KB_METADATA_VERSION, kb_fingerprint, kb_metadata_version,
+                                  load_kb_metadata, metadata_path)
 
     rec = load_kb_metadata()
     if not rec:
         print(f"  [知识库版本] 无记录（{os.path.relpath(metadata_path(), _ROOT)}）——等一次热更新")
         return
     files = rec.get("file_list") or {}
-    _assert(rec.get("v") == METADATA_VERSION,
-            f"版本记录 v={rec.get('v')} 与 METADATA_VERSION={METADATA_VERSION} 一致")
+    ver = kb_metadata_version(rec)
+    _assert(0 < ver <= KB_METADATA_VERSION,
+            f"版本记录格式版本={ver} 在读得懂的范围内（0, {KB_METADATA_VERSION}]"
+            f"；老行用 `v` 键视作 1，大于当前说明记录比代码新")
     _assert(rec.get("fingerprint") == kb_fingerprint(files),
             f"版本记录短指纹可由 file_list 复算（记录值 {rec.get('fingerprint')}）")
     bad = [k for k, v in files.items() if not (v or {}).get("sha256")]

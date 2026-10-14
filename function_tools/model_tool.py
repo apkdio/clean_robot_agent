@@ -76,27 +76,24 @@ def search_models_by_names(model_names: str) -> List[Dict]:
         return []
 
     models = _enumerate_model_infos()
-    # 两边都去品牌前缀：型号名来自知识库（带「不染一尘」），而 LLM 提取的 key 可能带也可能不带
-    def bare(name: str) -> str:
-        return name[len(_BRAND_NAME):] if name.startswith(_BRAND_NAME) else name
-
-    keys = [bare(n.replace("系列", "").strip()) for n in names]
-    exact = [m for m in models if any(k and bare(m.get("name", "")).endswith(k) for k in keys)]
+    keys = [match_key(n.replace("系列", "")) for n in names]
+    exact = [m for m in models if any(k and match_key(m.get("name", "")).endswith(k) for k in keys)]
     if exact:
         return exact
 
-    return [m for m in models if any(k and k in bare(m.get("name", "")) for k in keys)]
+    return [m for m in models if any(k and k in match_key(m.get("name", "")) for k in keys)]
 
 
 def model_name_in_query(query: str) -> bool:
-    """判断 query 里是否直接出现具体型号名（去掉品牌前缀后子串匹配）。
+    """判断 query 里是否直接出现具体型号名（去品牌前缀、去空白后子串匹配）。
 
-    如型号「不染一尘云顶 X2」→ 去掉品牌前缀得「云顶 X2」，query 含「云顶 X2」
+    如型号「不染一尘云顶 X2」→ 匹配键「云顶X2」，query 含「云顶X2」或「云顶 X2」
     即命中。用于「云顶 X2 怎么样」这类直接报型号名的详情咨询。
     """
+    flat = re.sub(r"\s+", "", query)
     for name in get_all_model_names():
-        short = name.replace(_BRAND_NAME, "").strip()
-        if short and short in query:
+        short = match_key(name)
+        if short and short in flat:
             return True
     return False
 
@@ -308,12 +305,13 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
     model_arg = (args.get("model") or "").strip()
     if model_arg:
         keys = [k.strip() for k in model_arg.split(",") if k.strip()]
-        exact = [m for m in models if any(bare_name(m["name"]).endswith(bare_name(k)) for k in keys)]
-        models = exact or [m for m in models if any(bare_name(k) in bare_name(m["name"]) for k in keys)]
+        exact = [m for m in models if any(match_key(m["name"]).endswith(match_key(k)) for k in keys)]
+        models = exact or [m for m in models if any(match_key(k) in match_key(m["name"]) for k in keys)]
 
     series_arg = (args.get("series") or "").strip()
     if series_arg:
-        models = [m for m in models if series_arg.replace("系列", "") in str(m.get("series") or "")]
+        want = match_key(series_arg.replace("系列", ""))
+        models = [m for m in models if want in match_key(str(m.get("series") or ""))]
 
     for cond in args.get("params") or []:
         if not isinstance(cond, dict):
@@ -349,6 +347,11 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
 def bare_name(name: str) -> str:
     """去掉品牌前缀后的型号名（「不染一尘云顶 X2」→「云顶 X2」）。"""
     return name[len(_BRAND_NAME):] if name.startswith(_BRAND_NAME) else name
+
+
+def match_key(name: str) -> str:
+    """型号名匹配键：去品牌前缀 + 去空白。用户常把「云顶 X2」打成「云顶X2」。"""
+    return re.sub(r"\s+", "", bare_name(name or ""))
 
 
 # 只做确定性纠正（方向翻面、剔除无效条件、枚举问法放开截断），不猜用户意图；

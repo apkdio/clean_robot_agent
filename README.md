@@ -7,6 +7,7 @@
 - **双路召回 + 精排**：稠密检索（bge-m3 向量）+ 稀疏检索（BM25 关键词）→ RRF 融合 → Cross-Encoder 精排，兼顾语义近似、精确关键词匹配与长尾噪声压制
 - **域定向召回的两遍机制**：进了知识域但域内得分整体过低时，自动撤掉域过滤再召回一次全库，两池按分数限额合并——避免“域路由选错文件→一条都召不回”，同时不让兜底结果把高置信的域内结果挤掉
 - **意图分类**：本地深度学习分类头（bge-m3 embedding + Linear 分类器）前置判断用户意图，毫秒级推理
+- **query 入口归一化**：进链路先做纯规则清洗（标点、空格、全半角、同义词映射如「扫托→扫拖」，也兼容型号名不带空格的写法「云顶X2」）；清洗后的文本用于 SOP 触发、域路由与检索，**判到领域外或低置信闲聊时会拿原文再判一次**，两遍里任一遍判域内就按域内走（宁可多检索一轮，也不误拒答）；原文仍用于生成与对话记录，整条链路可用开关一键关闭
 - **结构化查询**：识别"预算 1000 以内""净白 S 系列"等约束，通过 Chroma metadata 过滤精确枚举预算内/系列内产品；支持"云顶 X2 多少钱"等型号属性精准查询；型号名**精确优先**（问"P2"不会连带返回 P2 Lite / P2 Pro，系列名仍可多命中）
 - **工具调用**：LLM function calling，内置日期/预算/故障分类/型号提取/售后网点五个工具，支持"最近半年""一千来块"等口语化结构化提取；预算同时识别"2000吧"这类语气词尾音
 - **多轮 SOP 引导**：选购推荐、故障排查等场景按标准流程多轮引导，进入时给开场提示；**弱触发会先问一句是否要走引导**（进入确认门），流程内说退出也要先确认（退出确认门）；支持追问（比较新/更便宜/最贵）与最近发布查询；**「重新回答」按上一轮出口决定重算**——上一轮是 SOP 收尾轮就重开该流程（入口是弱触发照样先过确认门），SOP 中途不给重发
@@ -106,6 +107,7 @@ clean_robot_agent/
 |------|------|
 | `agent.py` | RAG 编排：意图路由 → 知识域路由 → 检索 → 结构化直出或 LLM 生成 |
 | `intent_router.py` | 意图分类：本地分类头（bge-m3 + Linear）判 robot/casual/other/unknown |
+| `query_normalizer.py` | query 入口归一化（纯规则、幂等）：标点 / 空格 / 全半角 / 同义词映射 |
 | `orchestrator.py` | 工具编排：让模型在工具白名单里做一次决策（选工具 + 填参数），**只出决策、不执行工具**；影子模式用于与现有链路对照并打日志 |
 | `hybrid_retriever.py` | 召回编排：dense + sparse → RRF 融合 → 精排 →（域内 top1 不过阈值时）撤域过滤二次全库召回 + 两池限额合并 → 截断 |
 | `vector_store.py` | Chroma 稠密检索、入库、metadata 过滤、稀疏索引构建 |
@@ -347,7 +349,7 @@ python intent_classifier_training/train_intent_classifier.py
 
 | 配置 | 关键项 |
 |------|--------|
-| `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关）、`behavior.verbose_log`（文件日志是否降到 DEBUG）、`tools.orchestration`（工具编排：`"off"` 走现有分支 / `"shadow"` 只记对照日志不执行 / `"on"` 选路生效，取值需带引号）、`tools.shadow_sample`（影子采样率） |
+| `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关）、`behavior.verbose_log`（文件日志是否降到 DEBUG）、`behavior.query_normalize`（query 入口归一化 + 判可疑时二次判意图的总开关）、`tools.orchestration`（工具编排：`"off"` 走现有分支 / `"shadow"` 只记对照日志不执行 / `"on"` 选路生效，取值需带引号）、`tools.shadow_sample`（影子采样率） |
 | `rag.yaml` | `chunk.chunk_size`、`retrieval.dense_top_k/sparse_top_k/final_top_k/score_threshold`、`retrieval.domain_margin`（域路由 margin 门控，0 关闭）、`rrf.*`、`rerank.*`（精排开关/模型/候选宽度/阈值）、`data_dir`（知识库源目录） |
 | `chroma.yaml` | `persist_dir`、`collection_name`、`embedding.model` |
 | `context.yaml` | `intent.low_conf_margin`（低置信降级阈值，0 关闭）、`intent.high_conf_margin`（安全告警窗口内的放行阀，0 关闭）、`context.topic_window`（回看多少条会话记录判定话题与安全告警）、`context.safety_carry_max`（同一告警最多承接几次，0 关闭）、`context.rewrite.*`（改写开关/模式/选轮相似度阈值） |
@@ -359,7 +361,8 @@ python intent_classifier_training/train_intent_classifier.py
 flowchart TD
     Q["用户提问"] --> G1["① 提示词注入检测 → 命中直接拒绝<br/>② 危险现象检测 → 命中停机转售后"]
     G1 --> G2["③ 记录用户消息（供 RAG 拼接历史、自主消解指代）<br/>④ 负面情绪安抚（只安抚不拦截）"]
-    G2 --> G3{"⑤ 有活跃 SOP？"}
+    G2 --> N0["⑤ query 入口归一化（标点 / 空格 / 全半角 / 同义词映射，可关）"]
+    N0 --> G3{"⑥ 有活跃 SOP？"}
     G3 -->|是| S1{"SOP 内：这一句是？"}
     S1 -->|"纯退出词 / 纯符号"| S1A["退出确认门：是要退出吗？<br/>是→退出；不是→继续；两次都认不出→直接退出"]
     S1 -->|"「0」"| S1B["直接退出（开场语约定，不再确认）"]
@@ -369,11 +372,11 @@ flowchart TD
     S1B --> OUT
     S1C --> IR
     S1D --> OUT
-    G3 -->|否| IR{"⑥ intent_router（本地分类头）"}
+    G3 -->|否| IR{"⑦ intent_router（本地分类头；判 other 或低置信闲聊时用原文再判一次）"}
     IR -->|other| O1["礼貌拒答"]
     IR -->|casual| O2["自然回应"]
     IR -->|unknown| O3["软引导"]
-    IR -->|robot| G4["⑦ 场景分支（按序判定，命中即返回）"]
+    IR -->|robot| G4["⑧ 场景分支（按序判定，命中即返回）"]
     IR -.->|"窗口内有过安全告警且未承接"| S2A["安全承接（不看意图标签，高置信 robot 除外）"]
     S2A --> OUT
     O3 --> G4

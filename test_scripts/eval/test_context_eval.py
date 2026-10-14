@@ -347,11 +347,11 @@ def _node_text(node: dict) -> str:
 
 
 def _trace_version() -> str:
-    """主链路 trace 的记录版本（`tools/trace_store.py::VERSION`），写进报告便于日后对齐。"""
+    """主链路 trace 的记录版本（`tools/trace_store.py::TRACE_VERSION`），写进报告便于日后对齐。"""
     try:
         from tools import trace_store
 
-        return "v%s" % trace_store.VERSION
+        return "v%s" % trace_store.TRACE_VERSION
     except Exception:  # noqa: BLE001
         return "?"
 

@@ -252,6 +252,11 @@ def _rewrite_cfg() -> dict:
     return (_ctx_cfg().get("context") or {}).get("rewrite") or {}
 
 
+def _normalize_enabled() -> bool:
+    """query 入口归一化总开关（config/agent.yaml behavior.query_normalize）。"""
+    return bool((_agent_cfg.get("behavior") or {}).get("query_normalize", True))
+
+
 def _window_messages(session_id: str) -> list:
     """最近 topic_window 条会话记录（判近期话题与是否发生过安全告警用）。"""
     from tools.context_store import get_recent
@@ -714,6 +719,14 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
         yield emotion_reply + "\n\n"
         query = _strip_emotion(query)  # 剥离情绪词，避免 LLM 把抱怨当独立问题
 
+    # query 入口归一化：只清洗标点/空格/全半角与同义词，不删实词。
+    # 归一后文本用于 SOP 触发匹配、域路由与检索；原文继续用于生成与会话记录。
+    q = query
+    if _normalize_enabled():
+        from tools.query_normalizer import normalize
+        q = normalize(query)
+        trace_store.step("rewrite", normalize={"changed": q != query, "text": q[:120]})
+
     # SOP 会话：有活跃 SOP 时继续该流程（不经过意图路由）
     from sops import (has_active_sop, continue_sop, end_sop, start_sop, match_sop,
                       get_active_sop_id, sop_needs_enter_confirm)
@@ -834,11 +847,22 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
             return
 
     from tools.intent_router import route_intent_with_margin, get_guess_hint
-    intent, margin = route_intent_with_margin(query)
-    trace_store.step("intent", intent=intent, margin=margin)
+    low_conf_margin = float((_ctx_cfg().get("intent") or {}).get("low_conf_margin", 0) or 0)
+    intent, margin = route_intent_with_margin(q)
+    # 归一化改过文本、且判到 other 或低置信 casual 时，再用原文判一次：
+    # other 不看 margin（高置信误判才是硬拒答主因），两遍里任一遍非 other 就采纳。
+    intent_retry = None
+    if q != query and (intent == "other" or (intent == "casual" and 0 < margin < low_conf_margin)):
+        intent2, margin2 = route_intent_with_margin(query)
+        adopt = intent2 != "other"
+        intent_retry = {"label": intent2, "margin": round(margin2, 6), "adopted": adopt}
+        logger.info("[Normalize] 两遍分类：归一化后 %s(%.3f) → 原文 %s(%.3f)，%s",
+                    intent, margin, intent2, margin2, "采纳原文判定" if adopt else "两遍都判 other")
+        if adopt:
+            intent, margin = intent2, margin2
+    trace_store.step("intent", intent=intent, margin=margin, intent_retry=intent_retry)
 
     # 近期发生过安全告警 → 直接承接（零检索、零 LLM）。
-    low_conf_margin = float((_ctx_cfg().get("intent") or {}).get("low_conf_margin", 0) or 0)
     low_conf = low_conf_margin > 0 and margin < low_conf_margin
     high_conf_margin = float((_ctx_cfg().get("intent") or {}).get("high_conf_margin", 0) or 0)
     confident_robot = intent == "robot" and high_conf_margin > 0 and margin >= high_conf_margin
@@ -872,56 +896,56 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
     # 追问检测：基于上一轮推荐结果回答（"有没有更新的""有没有更便宜的"等）
     if intent in ("robot", "unknown"):
         from sops import handle_followup
-        followup_reply = handle_followup(session_id, query)
+        followup_reply = handle_followup(session_id, q)
         if followup_reply:
             trace_store.node("followup", status="hit")
-            _shadow_probe(query, session_id, "model_query", "追问筛选")
+            _shadow_probe(q, session_id, "model_query", "追问筛选")
             _log_behavior("structured_answer", kind="followup")
             yield followup_reply
             return
 
     # "这两个有什么区别？" "它怎么样" 型号查询兜底：命中触发词 → LLM 提取型号名 → 精准检索详情
     if intent in ("robot", "unknown"):
-        model_reply = _resolve_model_query(session_id, query)
+        model_reply = _resolve_model_query(session_id, q)
         if model_reply:
             trace_store.node("model_query", status="hit")
-            _shadow_probe(query, session_id, "model_query", "型号/对比兜底")
+            _shadow_probe(q, session_id, "model_query", "型号/对比兜底")
             _log_behavior("structured_answer", kind="model_detail")
             yield model_reply
             return
 
     # 系列查询：系列名 + 枚举意图词 → 枚举该系列型号直出（不走 SOP）
     if intent in ("robot", "unknown"):
-        series_reply = _resolve_series_query(query)
+        series_reply = _resolve_series_query(q)
         if series_reply:
             trace_store.node("series_query", status="hit")
-            _shadow_probe(query, session_id, "model_query", "系列枚举")
+            _shadow_probe(q, session_id, "model_query", "系列枚举")
             _log_behavior("structured_answer", kind="series")
             yield series_reply
             return
 
     # 售后网点：网点词信号强，不依赖 intent（"离我最近的维修点"可能被分类器误判 other）
     # 前端有坐标 → 直接作答；否则交给网点 SOP 问城市（重名再问一次序号）
-    if match_sop(query, "service_point"):
+    if match_sop(q, "service_point"):
         has_coords = lng is not None and lat is not None
         trace_store.node("service_point", status="hit",
                          out={"mode": "coords" if has_coords else "sop"})
-        _shadow_probe(query, session_id, "service_point", "网点查询")
+        _shadow_probe(q, session_id, "service_point", "网点查询")
         if has_coords:
             from function_tools.service_point_tool import search_service_points, format_service_points
             points, origin = search_service_points(lng=lng, lat=lat)
             _log_behavior("structured_answer", kind="service_point")
             yield format_service_points(points, origin)
             return
-        reply = _enter_sop(session_id, "service_point", query)
+        reply = _enter_sop(session_id, "service_point", q)
         if reply:
             yield reply
         return
 
     # SOP 触发：robot/unknown 意图 + 命中场景 trigger（guards 已由 match_sop 评估）
     if intent in ("robot", "unknown") and not enter_declined_turn:
-        sop_id = match_sop(query)
-        weak = bool(sop_id) and sop_needs_enter_confirm(sop_id, query)
+        sop_id = match_sop(q)
+        weak = bool(sop_id) and sop_needs_enter_confirm(sop_id, q)
         if sop_id:
             trace_store.node("sop.match", status="hit", out={"sop": sop_id, "weak": weak})
         # 弱触发：先问一句要不要走引导；用户拒绝过该 SOP 且这次仍是弱信号 → 不打扰，走正常作答
@@ -931,12 +955,12 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
                 trace_store.step("sop_gate", skipped="declined", sop=sop_id)
                 sop_id = None
             else:
-                pending_store.set(session_id, "confirm_enter", sop=sop_id, query=query)
+                pending_store.set(session_id, "confirm_enter", sop=sop_id, query=q)
                 _log_behavior("ask_clarify", kind="confirm_enter")
                 yield _ENTER_CONFIRM.format(sop=_sop_name(sop_id))
                 return
         if sop_id:
-            reply = _enter_sop(session_id, sop_id, query)
+            reply = _enter_sop(session_id, sop_id, q)
             if reply:
                 yield reply
             return
@@ -945,10 +969,10 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
     if intent == "other":
         # 维修强词兜底："维修""故障"等即使被分类器误判 other 也进 repair SOP
         from config.word_dict_config import REPAIR_STRONG_WORDS
-        if any(w in query for w in REPAIR_STRONG_WORDS):
-            sop_id = match_sop(query)
+        if any(w in q for w in REPAIR_STRONG_WORDS):
+            sop_id = match_sop(q)
             if sop_id == "repair":
-                reply = _enter_sop(session_id, sop_id, query, via="strong_words")
+                reply = _enter_sop(session_id, sop_id, q, via="strong_words")
                 if reply:
                     yield reply
                 return
@@ -977,14 +1001,14 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
 
     hr = _get_retriever()
     from tools.metadata_extractor import resolve_budget_filter
-    metadata_filter = resolve_budget_filter(query)
+    metadata_filter = resolve_budget_filter(q)
 
     # 解析日期表达（"最近半年"/"2025年三月"）→ 日期过滤
     from config.word_dict_config import BRAND_EVENT_WORDS
-    if any(w in query for w in BRAND_EVENT_WORDS):
+    if any(w in q for w in BRAND_EVENT_WORDS):
         date_filter = None
     else:
-        date_filter = _resolve_date_filter(query)
+        date_filter = _resolve_date_filter(q)
     trace_store.node("date", out={"hit": date_filter is not None})
     filter_kind = "budget" if metadata_filter is not None else ""
     if metadata_filter is not None and date_filter is not None:
@@ -1001,7 +1025,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
         trace_store.node("filter", status="hit" if models else "ok",
                          in_={"kind": filter_kind}, out={"n": len(models)})
         if models:
-            _shadow_probe(query, session_id, "model_query", "预算/时间筛选")
+            _shadow_probe(q, session_id, "model_query", "预算/时间筛选")
             lines = [format_model_line(m) for m in models]
             prefix = {
                 "budget": f"在您预算内的机器人有 {len(models)} 款：",
@@ -1016,13 +1040,13 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
 
     # 普通 RAG：双路召回（按知识域定向，识别不准则全库兜底）
     # 探针放在结构化筛选之后：走到这里才是真的 kb_search
-    _shadow_probe(query, session_id, "kb_search", "RAG 检索")
+    _shadow_probe(q, session_id, "kb_search", "RAG 检索")
     # 低置信追问 / unknown：先按上文把 query 补成自足形式再检索（记录仍是原文）
     _t_rewrite = time.perf_counter()
     if low_conf or intent == "unknown":
-        effective_query, rewrite_via = _rewrite_query(session_id, query)
+        effective_query, rewrite_via = _rewrite_query(session_id, q)
     else:
-        effective_query, rewrite_via = query, "none"
+        effective_query, rewrite_via = q, "none"
     trace_store.add_ms("rewrite", _t_rewrite)
     trace_store.step("rewrite", via=rewrite_via, effective_query=effective_query[:200])
 
@@ -1041,10 +1065,10 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
     trace_store.step("retrieve", domain=domain_value, via=domain_via, n_chunks=len(chunks),
                      chunks=trace_store.chunk_brief(ranked))
 
-    # 保底 ②：改写后 0 命中 → 用原 query 在全库再检一次（把误改的代价降到多一次检索）
-    if not chunks and effective_query != query and _rewrite_cfg().get("retry_with_origin", True):
-        logger.info("[Rewrite] no hit via %s, retry with origin over full KB: %s", rewrite_via, query[:40])
-        ranked = hr.search_with_scores(query, filter=None)
+    # 保底 ②：改写后 0 命中 → 用归一后的 query 在全库再检一次（把误改的代价降到多一次检索）
+    if not chunks and effective_query != q and _rewrite_cfg().get("retry_with_origin", True):
+        logger.info("[Rewrite] no hit via %s, retry with origin over full KB: %s", rewrite_via, q[:40])
+        ranked = hr.search_with_scores(q, filter=None)
         chunks = [doc for doc, _score, _meta in ranked]
         trace_store.retrieval(source="retry",
                               retry={"rewrite_via": rewrite_via, "n_chunks": len(chunks)})

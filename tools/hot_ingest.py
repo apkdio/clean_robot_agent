@@ -23,7 +23,10 @@ logger = get_logger(name="hot_ingest")
 _SCAN_INTERVAL = 30 * 60          # 30 分钟
 _SNAPSHOT_FILE = "data/state/ingest_snapshot.json"
 _METADATA_FILE = "data/state/kb_metadata.jsonl"
-METADATA_VERSION = 1
+KB_METADATA_VERSION = 2
+# 知识库版本记录（data/state/kb_metadata.jsonl）每行的**记录格式版本**，落盘字段名 `schema_v`——
+# 不是知识库版本（那是 fingerprint），也不是代码版本（那在评测基线的 env.code）。
+# v2：字段名由 `v` 改为 `schema_v`；老行仍带 `v`，读侧按 kb_metadata_version() 兼容（视作 1）。
 
 _SUPPORTED_EXTS = (".txt", ".md", ".pdf", ".csv", ".docx", ".pptx", ".xlsx")
 
@@ -105,11 +108,23 @@ def load_kb_metadata() -> dict:
     return last
 
 
+def kb_metadata_version(rec: dict) -> int:
+    """取一行记录的**格式版本**：新行是 `schema_v`，老行用的键是 `v`（视作 1）；认不出返回 0。"""
+    if not isinstance(rec, dict):
+        return 0
+    if "schema_v" in rec:
+        try:
+            return int(rec.get("schema_v") or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 1 if "v" in rec else 0
+
+
 def append_kb_metadata(file_list: dict, ts: str = "") -> None:
     """把「索引里现在是什么」追加一行（写失败只告警，不影响对话）。"""
     if not file_list:
         return
-    rec = {"v": METADATA_VERSION,
+    rec = {"schema_v": KB_METADATA_VERSION,
            "ts": ts or time.strftime("%Y-%m-%dT%H:%M:%S"),
            "fingerprint": kb_fingerprint(file_list),
            "file_list": file_list}

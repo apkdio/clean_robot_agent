@@ -112,6 +112,7 @@ def test_search_models_by_names():
     mt._enumerate_model_infos = lambda: fake
     try:
         _assert_eq([m["name"] for m in mt.search_models_by_names("云顶 X2")], ["不染一尘云顶 X2"], "单型号子串匹配")
+        _assert_eq([m["name"] for m in mt.search_models_by_names("云顶X2")], ["不染一尘云顶 X2"], "不带空格的型号名同样命中")
         _assert_eq(len(mt.search_models_by_names("云顶 X2,净白 S1")), 2, "逗号分隔多型号")
         _assert_eq([m["name"] for m in mt.search_models_by_names("云顶 X 系列")], ["不染一尘云顶 X2"], "系列名兜底命中")
         _assert_eq(mt.search_models_by_names(""), [], "空→空")
@@ -127,6 +128,7 @@ def test_model_name_in_query():
     try:
         _assert(mt.model_name_in_query("云顶 X2 怎么样"), "含型号名→True")
         _assert(mt.model_name_in_query("净白 S1 多少钱"), "净白 S1→True")
+        _assert(mt.model_name_in_query("云顶X2怎么样"), "不带空格的写法也命中")
         _assert(not mt.model_name_in_query("扫地机器人怎么样"), "泛咨询→False")
     finally:
         mt._model_names_cache = orig

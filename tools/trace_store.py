@@ -22,11 +22,13 @@ from datetime import datetime, timedelta
 from config.word_dict_config import BEHAVIOR_BY_TAG
 from tools.log_tool import log_path
 
-VERSION = 3
+TRACE_VERSION = 3
+# 轮次记录（主干）的 schema 版本；落盘字段名仍是 `v`，靠所在文件区分是谁的版本。结构见 notes/TRACE.md。
 # 本轮记录 = 稳定核 {v, ts, session_id, turn_index, query, retry, tag, tags, detail, aborted, error}
 #   + 分层块 {route, branch, path, retrieval, sop, sop_gate, shadow, answer} + ms
 #   + 兼容投影 {steps}（老读侧仍按它取数）
 SIDE_VERSION = 1
+# 三份旁路证据（chunks / shadow / feedback）共用的 schema 版本，字段名同为 `v`
 # 旁路证据形如 {v, ts, session_id, turn_index, query, ...}
 CHUNK_KIND = "chunks"
 SHADOW_KIND = "shadow"
@@ -218,7 +220,7 @@ def begin_turn(session_id: str, query: str, retry: bool = None) -> None:
         retry = bool(retry) if retry is not None else bool(
             prev.get("session_id") == session_id and prev.get("query") == query)
         _local.turn = {
-            "v": VERSION,
+            "v": TRACE_VERSION,
             "ts": datetime.now().isoformat(timespec="seconds"),
             "session_id": session_id,
             "turn_index": turn_index,
@@ -274,11 +276,23 @@ def _mirror_step(turn: dict, name: str, fields: dict) -> None:
     if name == "intent":
         turn["route"]["intent"] = {"label": fields.get("intent"),
                                    "margin": _num(fields.get("margin"), 6)}
-        node("route.intent", out=turn["route"]["intent"])
+        retry = fields.get("intent_retry") or {}
+        if retry:
+            turn["route"]["intent"]["retry"] = retry
+        node("route.intent", out={"label": fields.get("intent"),
+                                  "margin": _num(fields.get("margin"), 6),
+                                  "retry": retry.get("label")})
     elif name == "rewrite":
-        turn["retrieval"]["rewrite"] = {"via": fields.get("via"),
-                                         "effective_query": fields.get("effective_query")}
-        node("rewrite", out={"via": fields.get("via")})
+        # 归一化与上下文改写共用一个节点：先到的是归一化（只并入 normalize），
+        # 后到的上下文改写带 via / effective_query，由它落路径节点。
+        rw = turn["retrieval"].setdefault("rewrite", {})
+        if fields.get("normalize") is not None:
+            rw["normalize"] = fields["normalize"]
+        if fields.get("via") is not None:
+            rw["via"] = fields.get("via")
+            rw["effective_query"] = fields.get("effective_query")
+            node("rewrite", out={"via": rw.get("via"),
+                                 "normalized": bool((rw.get("normalize") or {}).get("changed"))})
     elif name == "retrieve":
         if fields.get("domain") is not None or fields.get("via") is not None:
             turn["retrieval"]["domain"] = {"value": fields.get("domain"),
