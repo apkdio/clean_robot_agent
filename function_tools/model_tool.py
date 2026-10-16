@@ -10,13 +10,18 @@ from __future__ import annotations
 import re
 from typing import Dict, List
 
+from config.word_dict_config import (
+    ABOVE_RE as _ABOVE_RE,
+    BELOW_RE as _BELOW_RE,
+    BRAND_NAME as _BRAND_NAME,
+    ENUM_RE as _ENUM_RE,
+    PRICE_KEYS as _PRICE_KEYS,
+    PUBLISH_KEYS as _PUBLISH_KEYS,
+)
 from tools.llm_tool import get_chat_model_name
 
 # 型号提取跟随主生成模型（string 参数 + 上下文指代理解，3b 不稳定）
 MODEL_TOOL_MODEL = get_chat_model_name()
-
-# 品牌名（型号名前缀，型号上下文判断时去掉，得到「云顶 X2」这类用户口中的型号）
-_BRAND_NAME = "不染一尘"
 
 
 MODEL_TOOL_SCHEMA = {
@@ -181,14 +186,14 @@ FIND_MODELS_TOOL_SCHEMA = {
 
 def _param_of(record: Dict, key: str) -> str:
     """取某型号的规格原文（param_<键>）；特殊键「参考价」映射到 price。"""
-    if key in ("参考价", "价格", "价钱", "价位"):
+    if key in _PRICE_KEYS:
         return str(record.get("price") or "")
     return str(record.get(f"param_{key}") or "")
 
 
 def _param_num_of(record: Dict, key: str):
     """取某型号规格的数值（param_<键>_num）；特殊键「参考价」映射到 price。"""
-    if key in ("参考价", "价格", "价钱", "价位"):
+    if key in _PRICE_KEYS:
         return record.get("price")
     return record.get(f"param_{key}_num")
 
@@ -236,9 +241,9 @@ def _relative_scopes(scope) -> List[str]:
 
 def _sort_value_of(record: Dict, sort_by: str) -> float:
     """排序取值：参考价 → price；发布时间 → publish_date(YYYYMMDD)；其余 → param_<键>_num。"""
-    if sort_by in ("参考价", "价格", "价钱", "价位"):
+    if sort_by in _PRICE_KEYS:
         return float(record.get("price") or 0)
-    if sort_by in ("发布时间", "发布日期"):
+    if sort_by in _PUBLISH_KEYS:
         return float(_publish_int(record))
     return float(_param_num_of(record, sort_by) or 0)
 
@@ -356,10 +361,7 @@ def match_key(name: str) -> str:
 
 # 只做确定性纠正（方向翻面、剔除无效条件、枚举问法放开截断），不猜用户意图；
 # 纠正不了的（未知键、库里不存在的值）原样留着，让该条件命中 0 条、由编排层决定降级。
-_ABOVE_RE = re.compile(r"以上|超过|至少|起步|不低于|大于|往上")
-_BELOW_RE = re.compile(r"以内|以下|不超过|不到|低于|小于|之内")
-_PRICE_KEYS = ("参考价", "价格", "价钱", "价位")
-_ENUM_RE = re.compile(r"有哪些|有哪几|都有哪|都有什么|几款|几个|哪些型号")
+# 方向词 / 价格键 / 枚举问法正则见 config/word_dict_config.py（顶部按原名导入）
 
 
 def _spec_values_of(key: str) -> List[str]:
@@ -437,7 +439,7 @@ def validate_find_models_args(query: str, args: Dict) -> tuple:
     args["params"] = kept
 
     sort_by = str(args.get("sort_by") or "").strip()
-    if sort_by and sort_by not in ("参考价", "价格", "价钱", "价位", "发布时间", "发布日期"):
+    if sort_by and sort_by not in (_PRICE_KEYS + _PUBLISH_KEYS):
         values = _spec_values_of(sort_by)
         if values and not any(values):
             notes.append("排序键「%s」在知识库里不存在（将按 0 排序）" % sort_by)

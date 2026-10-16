@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from datetime import date, timedelta
 
+from config.word_dict_config import CN_NUM as _CN_NUM, MONTH_CN as _MONTH_CN
+
 _DATE_TODAY = None  # 测试时可注入
 
 
@@ -18,8 +20,7 @@ def _today() -> date:
 
 def _cn_to_int(s: str) -> int | None:
     """把简单中文数字转成 int。"""
-    num_map = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
-               "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+    num_map = {**_CN_NUM, "十": 10}
     if s.isdigit():
         return int(s)
     if s == "十":
@@ -30,10 +31,6 @@ def _cn_to_int(s: str) -> int | None:
         a, b = s.split("十", 1)
         return num_map.get(a, 0) * 10 + (num_map.get(b, 0) if b else 0)
     return num_map.get(s)
-
-
-_MONTH_CN = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
-             "七": 7, "八": 8, "九": 9, "十": 10, "十一": 11, "十二": 12}
 
 
 def _cn_month_to_int(s: str) -> int | None:

@@ -4,9 +4,10 @@
   - `<sid>_<YYYYMMDD>_<HHMM>.chunks.jsonl`：本轮召回片段全文（含排序与分数），由 `chunks()` 触发、`end_turn()` 落盘；
   - `<sid>_<YYYYMMDD>_<HHMM>.shadow.jsonl`：影子决策对照（跑在 daemon 线程，晚于本轮结束，故独立追加）；
   - `<sid>_<YYYYMMDD>_<HHMM>.feedback.jsonl`：前端「有用/无用」标注，落在**被标注轮次那天**的文件里。
-布局：`<TRACE_DIR>/<session_id>_<YYYYMMDD>_<HHMM>/<session_id>_<YYYYMMDD>_<HHMM>[.<kind>].jsonl`——
-一个会话一个目录，目录名与文件名都带时间（与 `data/context/` 命名一致；目录时间 = 该会话首条 trace，
-文件名时间 = 写入当天）；一天一份，跨天换新文件。
+布局：`<TRACE_DIR>/<YYYYMMDD>/<session_id>_<YYYYMMDD>_<HHMM>/<session_id>_<YYYYMMDD>_<HHMM>[.<kind>].jsonl`——
+先是**日期目录**（按会话首条 trace 那天归放，与 `data/context/` 一致，便于按天筛 case），
+再是一个会话一个目录，目录名与文件名都带时间（目录时间 = 该会话首条 trace，文件名时间 = 写入当天）；
+一天一份，跨天换新文件。读取侧（`session_dirs()`）同时认日期层与迁移前直接挂在根下的旧目录。
 trace 行里只留指路字段（`steps.retrieve.chunks_log` / `steps.shadow.log`），正文不进 trace。
 
 记录与执行同构：`route` 进门判断、`branch` 本轮唯一出口、`path[]` 有序节点、`retrieval` 召回过程、
@@ -15,6 +16,7 @@ trace 行里只留指路字段（`steps.retrieve.chunks_log` / `steps.shadow.log
 
 import json
 import os
+import re
 import threading
 import time
 from datetime import datetime, timedelta
@@ -69,8 +71,34 @@ def _root_dir() -> str:
     return os.environ.get("TRACE_DIR") or os.path.join(log_path, "trace")
 
 
+_DATE_DIR = re.compile(r"^\d{8}$")
+
+
+def session_dirs(root: str = "") -> list:
+    """root 下的全部会话目录，按路径升序。
+
+    新的会话落在日期目录 `<root>/<YYYYMMDD>/<会话目录>/`，迁移前的旧目录直接挂在 root 下；
+    这里两种都认，读侧（trace_report / 离线脚本 / 会话查找）统一走它。
+    """
+    base = root or _root_dir()
+    out = []
+    try:
+        for name in sorted(os.listdir(base)):
+            full = os.path.join(base, name)
+            if not os.path.isdir(full):
+                continue
+            if _DATE_DIR.match(name):
+                out += [os.path.join(full, sub) for sub in sorted(os.listdir(full))
+                        if os.path.isdir(os.path.join(full, sub))]
+            else:
+                out.append(full)
+    except OSError:
+        pass
+    return out
+
+
 def _session_dir(session_id: str, create: bool = False, stamp: str = "") -> str:
-    """该会话的 trace 目录：`<root>/<session_id>_<YYYYMMDD>_<HHMM>/`（时间 = 该会话首条 trace 的时间）。
+    """该会话的 trace 目录：`<root>/<YYYYMMDD>/<session_id>_<YYYYMMDD>_<HHMM>/`（时间 = 该会话首条 trace）。
     """
     sid = session_id or "default"
     cached = _dir_cache.get(sid)
@@ -81,24 +109,20 @@ def _session_dir(session_id: str, create: bool = False, stamp: str = "") -> str:
         return _dir_cache[sid]
     root = _root_dir()
     legacy = ""
-    try:
-        for name in sorted(os.listdir(root)):
-            full = os.path.join(root, name)
-            if not os.path.isdir(full):
-                continue
-            if name.startswith(sid + "_"):      # 正式命名：<sid>_<时间>
-                _dir_cache[sid] = full
-                return full
-            if name == sid:                     # 旧命名（只有会话 ID）→ 写入时补上时间
-                legacy = full
-    except OSError:
-        pass
+    for full in session_dirs(root):
+        name = os.path.basename(full)
+        if name.startswith(sid + "_"):      # 正式命名：<sid>_<时间>
+            _dir_cache[sid] = full
+            return full
+        if name == sid:                     # 旧命名（只有会话 ID）→ 写入时补上时间
+            legacy = full
     if legacy:
         _dir_cache[sid] = _rename_legacy_dir(legacy, sid) if create else legacy
         return _dir_cache[sid]
     if not create:
         return ""
-    _dir_cache[sid] = os.path.join(root, "%s_%s" % (sid, stamp or datetime.now().strftime("%Y%m%d_%H%M")))
+    stamp = stamp or datetime.now().strftime("%Y%m%d_%H%M")
+    _dir_cache[sid] = os.path.join(root, stamp.split("_")[0], "%s_%s" % (sid, stamp))
     return _dir_cache[sid]
 
 

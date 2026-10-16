@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import random
 
+from config.word_dict_config import GUESS_HINTS as _GUESS_HINTS
 from tools.log_tool import get_logger
 
 logger = get_logger(name="intent_router")
@@ -33,11 +34,7 @@ def _get_emb():
     return _emb
 
 
-_GUESS_HINTS = [
-    "我猜你可能想问扫地机器人相关的问题吧，帮你看看～",
-    "我主要擅长扫地机器人，先按机器人帮你查一下吧～",
-    "这个我不太确定是不是机器人的问题，帮你找找相关答案～",
-]
+# 软引导话术（_GUESS_HINTS）见 config/word_dict_config.py
 
 
 def _load_model():

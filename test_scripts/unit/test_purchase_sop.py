@@ -3,7 +3,8 @@
 覆盖：
   - sops.base：register / match_sop（trigger + guards）/ start_sop /
     continue_sop / end_sop / has_active_sop / get_active_sop_id
-  - 槽位提取：预算（extract_price_constraint，真实）、宠物（purchase._extract_has_pet）
+  - 槽位提取：预算（extract_price_constraint，真实；＋纯数字短答按上限）、宠物（purchase._extract_has_pet，＋裸否定短答）
+  - reply 步：函数模板（按结果分支：0 款换 PURCHASE_EMPTY_REPLIES、有结果保持原格式）
   - 重试循环 / 槽位放弃（max_retry）/ 模板 fallback / 异常防御
   - purchase SOP 触发与 guard（选购咨询/售后/品牌不触发选购）
   - [数据可用时] 选购 SOP 全流程（真实 enumerate_models）"""
@@ -177,7 +178,28 @@ def test_extract_has_pet():
     _assert(_extract_has_pet("没有", {}) is False, "没有→False")
     _assert(_extract_has_pet("没养", {}) is False, "没养→False")
     _assert(_extract_has_pet("无", {}) is False, "无→False")
+    _assert(_extract_has_pet("不", {}) is False, "裸「不」→False（槽位短答，别再问一遍）")
+    _assert(_extract_has_pet("不养", {}) is False, "不养→False")
     _assert(_extract_has_pet("不知道", {}) is None, "不知道→None")
+
+
+def test_extract_budget_bare_number():
+    from sops.purchase import _extract_budget
+    _assert_eq(_extract_budget("800块以内", {}), (None, 800), "带量词照旧走通用解析")
+    _assert(_extract_budget("2000左右", {}) is not None, "区间照旧走通用解析")
+    _assert_eq(_extract_budget("800", {}), (None, 800), "纯数字短答按上限收（BC-20261015-03）")
+    _assert_eq(_extract_budget("预算 5000 元", {}), (None, 5000), "带「预算」照旧")
+    _assert_eq(_extract_budget("不知道", {}), None, "非预算表达→None")
+
+
+def test_result_reply():
+    from sops.purchase import _render_result
+    full = _render_result({"count": 2, "list": "- A\n- B"})
+    _assert("共找到 2 款" in full and "对比其中某两款" in full, "有结果时保持原格式")
+    empty = _render_result({"count": 0, "list": "", "models": []})
+    _assert("预算" in empty, "0 款时说明是预算内没有")
+    _assert(not re.search(r"\d", empty), "0 款时不给价格数字（没有依据的推荐）")
+    _assert("对比" not in empty and "型号" not in empty, "0 款时不追问对比、不提型号")
 
 
 def test_retry_then_abandon():
@@ -251,6 +273,8 @@ TESTS = [
     test_end_sop,
     test_full_flow,
     test_extract_has_pet,
+    test_extract_budget_bare_number,
+    test_result_reply,
     test_retry_then_abandon,
     test_template_fallback,
     test_unknown_sop_id_raises,

@@ -9,6 +9,20 @@ from __future__ import annotations
 import re
 from typing import Dict, Optional
 
+from config.word_dict_config import (
+    ASPECT_KEYWORDS as _ASPECT_KEYWORDS,
+    BUDGET_BARE_PATTERN as _BUDGET_BARE_PATTERN,
+    BUDGET_HINT_RE,
+    CN_NUM as _CN_NUM,
+    CN_UNIT as _CN_UNIT,
+    MODEL_ASPECTS,
+    PRICE_PATTERN as _PRICE_PATTERN,
+    PRICE_RANGE_PATTERN as _PRICE_RANGE_PATTERN,
+    PUBLISH_DATE_PATTERN as _PUBLISH_DATE_PATTERN,
+    SERIES_LIST,
+    SERIES_MAP_DICT,
+    SPEC_SKIP_KEYS as _SPEC_SKIP_KEYS,
+)
 from tools.llm_tool import get_small_model_name
 from tools.log_tool import get_logger
 
@@ -16,11 +30,7 @@ logger = get_logger(name="metadata_extractor")
 
 # 预算提示特征（决定是否走 LLM 预算兜底）：货币单位/预算词，或"数字 + 范围词"，
 # 或"数字 + 语气词收尾"（「两千吧」这类口语，交给 LLM 兜底）
-_BUDGET_HINT_RE = re.compile(
-    r"(?:元|块钱?|预算|价位|多少钱)"
-    r"|(?:\d+|[一二两三四五六七八九十百千万]+)\s*(?:以内|以下|以上|起|左右|上下|出头|到|至|多)"
-    r"|(?:\d+|[一二两三四五六七八九十百千万]+)\s*(?:元|块|块钱)?\s*[吧呢啊呀]"
-)
+_BUDGET_HINT_RE = BUDGET_HINT_RE
 
 # 预算提取兜底用的小模型（默认 3b 更快；精度不够可在 agent.yaml 调 llm.small_model）
 _BUDGET_TOOL_MODEL = get_small_model_name()
@@ -28,14 +38,6 @@ _BUDGET_TOOL_MODEL = get_small_model_name()
 # ──────────────────────────────────────────────────────────────────────────
 # chunk → metadata（入库时）
 # ──────────────────────────────────────────────────────────────────────────
-
-_PRICE_PATTERN = re.compile(r"参考价[:：]?\s*(\d+(?:\.\d+)?)")
-_PRICE_RANGE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*[-–~到]\s*(\d+(?:\.\d+)?)")
-# 「预算 3000」这类只有数字、没有方向词的说法 → 视为上限（中文数字「预算五千」不在此列，交模型兜底）
-_BUDGET_BARE_PATTERN = re.compile(r"预算[^\d]{0,5}?(\d{3,})\s*(?:元|块|块钱)?")
-_PUBLISH_DATE_PATTERN = re.compile(
-    r"发布时间[:：]?\s*(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})"
-)
 
 
 def extract_price_metadata(text: str) -> Dict:
@@ -68,7 +70,6 @@ def extract_publish_date(text: str) -> Dict:
 _SPEC_PAIR_RE = re.compile(r"([^：:｜|\-\s][^：:｜|]{0,7})[：:]\s*([^｜|\n]{1,40})")
 # 数值 + 单位；单位允许中文（分钟 / 毫升），否则「续航：160分钟」抽不出数值。
 _SPEC_NUM_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*([\u4e00-\u9fffA-Za-z%]{0,4})$")
-_SPEC_SKIP_KEYS = {"参考价", "发布时间"}   # 已有专用抽取器（min_price/max_price/publish_date）
 
 
 def _spec_number(value: str):
@@ -162,15 +163,7 @@ def extract_model_info(doc) -> Dict:
     }
 
 
-# 型号属性维度映射：aspect 中文取值 → (字段名, 显示模板)
-# 用于「型号属性精准查询」（如"云顶 X2 多少钱"只答价格，不啰嗦全字段）
-MODEL_ASPECTS = {
-    "价格": ("price", "参考价 {v} 元"),
-    "吸力": ("suction", "吸力 {v}"),
-    "导航": ("navigation", "{v}"),
-    "避障": ("obstacle", "{v}"),
-    "发布时间": ("publish_date", "{v}"),
-}
+# 型号属性维度映射（MODEL_ASPECTS）与属性关键词（_ASPECT_KEYWORDS）见 config/word_dict_config.py
 
 
 def format_model_line(info: Dict, aspect: str = None) -> str:
@@ -206,14 +199,7 @@ def format_model_line(info: Dict, aspect: str = None) -> str:
     return line
 
 
-# aspect 关键词 → aspect 中文取值（规则提取，长关键词优先）
-_ASPECT_KEYWORDS = [
-    ("发布时间", "发布时间"), ("什么时候发布", "发布时间"), ("什么时候上市", "发布时间"),
-    ("上市时间", "发布时间"), ("何时发布", "发布时间"), ("何时上市", "发布时间"),
-    ("多少钱", "价格"), ("什么价", "价格"), ("价位", "价格"), ("售价", "价格"),
-    ("价格", "价格"), ("便宜", "价格"),
-    ("吸力", "吸力"), ("导航", "导航"), ("避障", "避障"),
-]
+# aspect 关键词 → aspect 中文取值（规则提取，长关键词优先）见 config/word_dict_config.py
 
 
 def extract_model_aspect(query: str) -> str:
@@ -334,14 +320,7 @@ def enumerate_models(filter: dict, require_field: str = "price") -> list[Dict]:
     return models
 
 
-# 系列列表（与知识库「系列」字段一致，规则子串匹配用）
-SERIES_LIST = ["净白 S", "净界 P", "天工 T", "云顶 X"]
-SERIES_MAP_DICT = {
-    "净白": "净白 S",
-    "净界": "净界 P",
-    "天工": "天工 T",
-    "云顶": "云顶 X"
-}
+# 系列列表与系列映射（SERIES_LIST / SERIES_MAP_DICT）见 config/word_dict_config.py
 
 
 def extract_series(query: str) -> str:
@@ -369,11 +348,7 @@ def enumerate_models_by_series(series: str) -> list[Dict]:
 # query → Chroma filter（检索时）
 # ──────────────────────────────────────────────────────────────────────────
 
-_CN_NUM = {
-    "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
-    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
-}
-_CN_UNIT = {"十": 10, "百": 100, "千": 1000, "万": 10000}
+# 中文数字与单位（_CN_NUM / _CN_UNIT）见 config/word_dict_config.py
 
 
 def _cn_to_int(s: str) -> Optional[int]:

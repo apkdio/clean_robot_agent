@@ -21,6 +21,20 @@ from tools import trace_store
 from tools.prompts_tool import load_main_prompts
 from config.word_dict_config import (DOMAIN_MAP, EMOTION_MILD, EMOTION_STRONG, EXIT_WORDS,
                                      NO_ANSWER_REPLIES, domain_files_of)
+from config.word_dict_config import (
+    AFTERSALES_WORDS, BRAND_WORDS,
+    BLOCK_INJECT_REPLY as _BLOCK_INJECT_REPLY,
+    ENTER_CONFIRM as _ENTER_CONFIRM,
+    EXIT_CONFIRM as _EXIT_CONFIRM,
+    INJECT_RE as _INJECT_RE,
+    PURCHASE_DURATION_RE as _PURCHASE_DURATION_RE,
+    REFUSE_OFFTOPIC_REPLY as _REFUSE_OFFTOPIC_REPLY,
+    RELEASE_HINT_RE as _RELEASE_HINT_RE,
+    SAFETY_CARRY as _SAFETY_CARRY,
+    SAFETY_CARRY_PREFIX as _SAFETY_CARRY_PREFIX,
+    SOP_NAMES as _SOP_NAMES,
+    TIME_HINT_RE as _TIME_HINT_RE,
+)
 
 logger = get_logger(name="agent")
 
@@ -41,18 +55,7 @@ def _get_retriever():
     return _hybrid_retriever
 
 
-_TIME_HINT_RE = re.compile(
-    r"最近|近[一二两三四五六七八九十0-9]|今年|去年|前年|半年|个月内|月内|周内|天内|年内"
-    r"|发布|上市|新品|\d{4}\s*年|[一二三四五六七八九十0-9]+\s*月|发售"
-)
-
-# 角色扮演 / 指令注入特征（命中则直接拒绝，不发给 LLM）
-_INJECT_RE = re.compile(
-    r"你是一[只个位]|你现在是|从现在开始|你只会|你只能"
-    r"|忽略[^，。！？\s]{0,8}(?:指令|提示|要求|规则)"
-    r"|忘记(?:你|你的)?(?:身份|指令|角色)|角色扮演|扮演|切换角色"
-    r"|系统提示词|system\s*prompt|初始指令|提示词是什么"
-)
+# 时间 / 购买时长 / 发布 / 注入 四张词表型正则见 config/word_dict_config.py（顶部按原名导入）
 
 # 情绪词表见 config.word_dict_config.EMOTION_STRONG / EMOTION_MILD
 
@@ -113,7 +116,6 @@ def _domain_scores(query: str) -> list:
     """
     from config.word_dict_config import (BUY_WORDS, CONSULT_WORDS, MAINTAIN_WORDS,
                                          OPERATION_WORDS, REPAIR_BASE_WORDS)
-    from sops.base import AFTERSALES_WORDS, BRAND_WORDS
 
     scores = {}
     for name, words in (("brand", BRAND_WORDS), ("aftersales", AFTERSALES_WORDS),
@@ -162,8 +164,7 @@ def _domain_filter(query: str):
             return ({"$in": files} if len(files) > 1 else files[0]), "top2"
     return (files[0] if len(files) == 1 else {"$in": files}), "top1"
 
-# SOP 中文名（用于退出提醒）
-_SOP_NAMES = {"purchase": "选购推荐", "repair": "故障排查", "service_point": "售后网点查询"}
+# SOP 中文名（用于退出提醒）：见 config/word_dict_config.py::SOP_NAMES
 
 
 def _sop_name(sop_id: str) -> str:
@@ -289,17 +290,7 @@ def _window_domain(session_id: str) -> str | None:
     return None
 
 
-_SAFETY_CARRY_PREFIX = "您前面提到的"
-
-# 退出确认门话术
-_EXIT_CONFIRM = "您当前正在「{sop}」环节。是要退出吗？回复「是」退出，「不是」继续～"
-_ENTER_CONFIRM = "匹配到您可能需要「{sop}」引导流程。要走引导吗？回复「是」开始，「不是」我直接回答这个问题～"
-
-_SAFETY_CARRY = (
-    _SAFETY_CARRY_PREFIX + "{danger}属于安全隐患，不建议继续使用机器人：请保持断电停机，"
-    "不要自行拆机、也不要继续充电，尽快联系官方售后（400-860-1314）安排检测。\n\n"
-    "如果您还有其他问题，也可以继续问我～"
-)
+# 退出确认门 / 进入确认门 / 安全承接话术：见 config/word_dict_config.py
 
 
 def _recent_carry_count(session_id: str) -> int:
@@ -433,6 +424,11 @@ def _resolve_date_filter(query: str) -> dict | None:
 
     先走确定性规则解析（快且可靠），规则未命中时再回退到 LLM function calling。
     """
+    # 购买/使用时长不是发布时间区间（「买了才半年」）；带了发布/新品类信号才照常解析
+    if _PURCHASE_DURATION_RE.search(query) and not _RELEASE_HINT_RE.search(query):
+        logger.info("[Agent] 购买/使用时长表达，跳过日期结构化：%s", query[:40])
+        return None
+
     from function_tools.date_tool import (
         parse_date,
         calc_date_range,
@@ -679,7 +675,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
         append_message(session_id, "user", query, blocked="inject", trace=trace_store.turn_anchor())
         logger.warning("[Guard] injection blocked: %s", query[:60])
         _log_behavior("block_inject")
-        yield "我是扫地机器人助手，只能帮你解答扫地机器人相关的问题，无法扮演其他角色哦～"
+        yield _BLOCK_INJECT_REPLY
         return
 
     trace_store.route("inject", hit=False)
@@ -977,7 +973,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
                     yield reply
                 return
         _log_behavior("refuse_offtopic")
-        yield "抱歉，我是扫地机器人专属助手，对这方面不太了解哦～你可以问我扫地机器人的选购、故障排查、使用维护等问题。"
+        yield _REFUSE_OFFTOPIC_REPLY
         return
 
     # 闲聊问候：自然回应，跳过检索

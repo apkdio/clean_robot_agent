@@ -9,13 +9,14 @@ from tools.log_tool import get_logger
 from config.word_dict_config import (
     AFTERSALES_WORDS,BUY_WORDS, CONSULT_WORDS, BRAND_WORDS,
     LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS, PRICIER_WORDS, NEWER_WORDS, OLDER_WORDS,
+    REL_LABEL as _REL_LABEL, REL_SUPER as _REL_SUPER,
 )
 
 logger = get_logger(name="sops_base")
 SOPS = {}  # sop_id → sop 定义
 # 定义形如 {"id": xxx, "trigger": [xxx], "guards": [xxx], "intro": xxx, "max_retry": xxx, "steps": [xxx]}
 # 步骤形如 {"id": xxx, "type": ask|action|reply, "slot": xxx, "ask": xxx, "retry": xxx, "extract": xxx}
-#          （action 步换成 "action"，reply 步换成 "template"；可选 "when" 条件跳过）
+#          （action 步换成 "action"，reply 步换成 "template"（字符串或接收 ctx 的函数）；可选 "when" 条件跳过）
 
 
 def is_consulting(query: str) -> bool:
@@ -275,12 +276,14 @@ def _run(session_id: str, user_input: str):
                 continue
 
             elif step["type"] == "reply":
-                # 输出结果并结束
+                # 输出结果并结束；template 可以是字符串（.format 取槽位/结果）或函数（按结果分支，如 0 款换话术）
                 ctx = {**session["slots"], **session.get("result", {})}
                 flow.append({"i": session["step"], "type": "reply", "outcome": "done"})
+                tpl = step["template"]
                 try:
-                    reply = step["template"].format(**ctx)
-                except (KeyError, IndexError):
+                    reply = tpl(ctx) if callable(tpl) else tpl.format(**ctx)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("[SOP] reply template failed: %s", e)
                     reply = step.get("fallback", "抱歉，出了一点小问题，请重新提问～")
                 ended = True
                 _finished[session_id] = session
@@ -307,8 +310,7 @@ _REL_SPEC = {
     "newer": ("publish", max, "gt", False),
     "older": ("publish", min, "lt", True),
 }
-_REL_LABEL = {"cheaper": "更便宜", "pricier": "更贵", "newer": "更新", "older": "发布更早"}
-_REL_SUPER = {"cheaper": "最便宜", "pricier": "最贵", "newer": "最新", "older": "最早发布"}
+# 追问维度的话术（_REL_LABEL / _REL_SUPER）见 config/word_dict_config.py
 
 
 def _rel_header(rels: list) -> str:

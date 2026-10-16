@@ -111,6 +111,21 @@ def test_danger_negative():
     _assert(not any(w in "边刷多久换一次" for w in DANGER_WORDS), "正常问题不命中危险词")
 
 
+# ──────────────────────────────────────────────────────────────
+# 5. 日期结构化的守卫：购买/使用时长不是发布时间区间（BC-20261015-02）
+# ──────────────────────────────────────────────────────────────
+
+def test_purchase_duration_guard():
+    from tools.agent import _PURCHASE_DURATION_RE, _RELEASE_HINT_RE, _resolve_date_filter
+
+    _assert(_PURCHASE_DURATION_RE.search("我这个买了才半年，保修期到了要不要续"), "识别购买时长")
+    _assert(not _RELEASE_HINT_RE.search("我这个买了才半年，保修期到了要不要续"), "该句无发布类信号")
+    _assert(_PURCHASE_DURATION_RE.search("我用了两年"), "「用了两年」→购买/使用时长")
+    _assert(not _PURCHASE_DURATION_RE.search("最近半年有什么新款"), "「最近半年」不是购买时长")
+    _assert(_resolve_date_filter("我这个买了才半年，怎么提示说保修期到了要不要续，不是一年吗？") is None,
+            "保修咨询不进日期结构化（否则会答成型号列表）")
+
+
 TESTS = [
     test_detect_emotion,
     test_strip_emotion,
@@ -120,12 +135,13 @@ TESTS = [
     test_inject_re_negative,
     test_danger_intercepted,
     test_danger_negative,
+    test_purchase_duration_guard,
 ]
 
 
 def run():
     reset()
-    return run_tests("Agent 前置防护测试（情绪/注入/危险/退出意图）", TESTS)
+    return run_tests("Agent 前置防护测试（情绪/注入/危险/退出意图/日期守卫）", TESTS)
 
 
 if __name__ == "__main__":

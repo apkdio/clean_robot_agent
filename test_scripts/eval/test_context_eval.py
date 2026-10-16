@@ -25,9 +25,13 @@ harness 对每条 case：回放前缀重建上下文与 SOP 状态，再发 `cas
 
 运行（需 Ollama + Chroma）：
   .venv\\Scripts\\python.exe test_scripts/eval/test_context_eval.py --e2e
+  # 基线快照：跑完存一份 / 与已存的逐条比对（形态与检索轨、意图轨一致）
+  .venv\\Scripts\\python.exe test_scripts/eval/test_context_eval.py --e2e --save-baseline
+  .venv\\Scripts\\python.exe test_scripts/eval/test_context_eval.py --e2e --compare
 """
 import json
 import os
+import shutil
 import sys
 import time
 
@@ -40,6 +44,9 @@ from config.word_dict_config import BEHAVIOR_BY_TAG, TRACE_NODE_LABELS
 _ROOT = os.path.dirname(os.path.dirname(_SCRIPT_DIR))   # 上两级：test_scripts/eval/ → 项目根
 _GOLDEN_FILE = os.path.join(_ROOT, "data", "eval", "context", "golden.jsonl")
 _REVIEW_DIR = os.path.join(_ROOT, "data", "eval", "output")   # 复核文件：<YYYYMMDD>/<HHMM>.md
+# 基线快照（与检索轨 / 意图轨同一形态：聚合计数 + ids + per_id + env）
+_BASELINE_FILE = os.path.join(_ROOT, "data", "eval", "context", "baseline.json")
+_PREV_BASELINE_FILE = os.path.join(_ROOT, "data", "eval", "context", "baseline.prev.json")
 
 # 唯一还靠文本的地方：回放「孤儿危险告警轮」时用它认出那条 assistant 回复（见 _replay_prefix）
 _DANGER_ALERT_MARK = "请立即停止使用"
@@ -448,6 +455,139 @@ def _write_review(rows, results, hard_results, soft_results, must_pass, regressi
     return path
 
 
+# ──────────────────────────────────────────────────────────────
+# 基线快照：把「这次跑出来是什么样」落成可比对的 JSON（与检索轨 / 意图轨同一形态）
+# ──────────────────────────────────────────────────────────────
+
+def _env_meta() -> dict:
+    """本轨的环境指纹：复用检索轨那套（代码 / 知识库 / 配置 / 索引），
+
+    再补本轨特有的三项——**分类头与训练集**（意图判错会直接改变出口行为）、trace 记录版本。
+    """
+    from test_scripts.eval import test_retrieval_eval as retr
+    from tools import trace_store
+
+    env = retr._env_meta()
+    try:
+        from test_scripts.eval import test_intent_eval as intent
+
+        head = intent._env_meta()
+        env["intent"] = {"head": head.get("head"), "dataset": head.get("dataset")}
+    except Exception as exc:  # noqa: BLE001 - 取不到不该拦住评测，但降级必须显式（AGENTS.md 准则 3）
+        print(f"  [环境] 分类头 / 训练集指纹取不到（{type(exc).__name__}: {exc}）→ env.intent 留空")
+        env["intent"] = {}
+    env["trace_version"] = getattr(trace_store, "TRACE_VERSION", None)
+    return env
+
+
+def _baseline_payload(rows, results) -> dict:
+    """基线内容：聚合计数 + `ids` + `per_id`（每条「与期望行为是否一致」）+ `env`。
+
+    `per_id` 的口径：硬行为比 `branch` 是否等于期望、软行为比是否落在接受集内，
+    取不到出口（没记 branch / 未登记）也算不一致。软行为那条只是参考，不当门禁。
+    """
+    hard = [r for r in results if r["hard"]]
+    soft = [r for r in results if not r["hard"]]
+    must = [r for r in hard if r["must_pass"]]
+    return {
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "counts": {
+            "sessions": len(rows), "cases": len(results),
+            "hard": len(hard), "soft": len(soft),
+            "must_pass_passed": sum(1 for r in must if not r["problems"]),
+            "must_pass_total": len(must),
+            "xfail": sum(1 for r in hard if not r["must_pass"] and r["problems"]),
+            "xpass": sum(1 for r in hard if not r["must_pass"] and not r["problems"]),
+            "soft_deviated": sum(1 for r in soft if r["problems"]),
+        },
+        "ids": [r["case"]["id"] for r in results],
+        "per_id": {r["case"]["id"]: not r["problems"] for r in results},
+        "env": _env_meta(),
+    }
+
+
+def _save_baseline(rows, results) -> None:
+    payload = _baseline_payload(rows, results)
+    os.makedirs(os.path.dirname(_BASELINE_FILE), exist_ok=True)
+    rotated = os.path.isfile(_BASELINE_FILE)
+    if rotated:
+        shutil.copyfile(_BASELINE_FILE, _PREV_BASELINE_FILE)
+    with open(_BASELINE_FILE, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    c = payload["counts"]
+    print(f"\n[基线] 已写入 {os.path.relpath(_BASELINE_FILE, _ROOT)}（{c['cases']} 条："
+          f"必过 {c['must_pass_passed']}/{c['must_pass_total']}、未修仍失败 {c['xfail']}、"
+          f"已转通过 {c['xpass']}、软行为偏离 {c['soft_deviated']}）")
+    if rotated:
+        print(f"       上一版留存为 {os.path.relpath(_PREV_BASELINE_FILE, _ROOT)}")
+
+
+def _print_id_list(label, ids) -> None:
+    if not ids:
+        print(f"{label}：无")
+    elif len(ids) <= 12:
+        print(f"{label}：{'、'.join(ids)}")
+    else:
+        print(f"{label}：{'、'.join(ids[:12])} …（共 {len(ids)} 条）")
+
+
+def _print_env_compare(env, base_env) -> None:
+    """核对基线采集时的代码 / 知识库 / 配置 / 索引 / 分类头 / trace——结论漂了先看这里。"""
+    if not base_env:
+        print("  基线未记录环境（旧格式）—— 跑一次 --save-baseline 即可核对")
+        return
+    from test_scripts.eval import test_retrieval_eval as retr
+
+    code, base_code = env.get("code") or {}, base_env.get("code") or {}
+    print(f"  代码    : {retr._code_label(code)}  vs  基线 {retr._code_label(base_code)}")
+    kb, base_kb = env.get("kb") or {}, base_env.get("kb") or {}
+    print(f"  知识库  : {kb.get('files')} 文件 fp={kb.get('fingerprint')}"
+          f"  vs  基线 {base_kb.get('files')} 文件 fp={base_kb.get('fingerprint')}"
+          + ("" if kb.get("fingerprint") == base_kb.get("fingerprint") else "  ⚠ 已变"))
+    cfg, base_cfg = env.get("config") or {}, base_env.get("config") or {}
+    print(f"  配置    : fp={cfg.get('fingerprint')}  vs  基线 fp={base_cfg.get('fingerprint')}"
+          + ("" if cfg.get("fingerprint") == base_cfg.get("fingerprint") else "  ⚠ 已变"))
+    print(f"  索引    : {retr._index_label(env.get('index') or {})}"
+          f"  vs  基线 {retr._index_label(base_env.get('index') or {})}")
+    it, base_it = env.get("intent") or {}, base_env.get("intent") or {}
+    print(f"  分类头  : {it.get('head')}  vs  基线 {base_it.get('head')}"
+          + ("" if it.get("head") == base_it.get("head") else "  ⚠ 已变（意图判错会直接改出口）"))
+    print(f"  训练集  : {it.get('dataset')}  vs  基线 {base_it.get('dataset')}"
+          + ("" if it.get("dataset") == base_it.get("dataset") else "  ⚠ 已变"))
+    print(f"  trace   : v{env.get('trace_version')}  vs  基线 v{base_env.get('trace_version')}")
+
+
+def _compare_baseline(rows, results) -> None:
+    """与基线逐条比 + 核对环境。
+
+    分类与检索轨一致，但**「回归」只认必过条目**：必过变红才是红灯；
+    未修 badcase 从「已转通过」退回失败单列「退步」——是信息，不是门禁失败。
+    """
+    if not os.path.isfile(_BASELINE_FILE):
+        print(f"\n[基线] 无基线快照（{os.path.relpath(_BASELINE_FILE, _ROOT)}）"
+              f"——跑一次 --save-baseline 才会有")
+        return
+    with open(_BASELINE_FILE, encoding="utf-8") as f:
+        base = json.load(f)
+    old = base.get("per_id") or {}
+    cur = {r["case"]["id"]: (not r["problems"], bool(r["must_pass"])) for r in results}
+    regress = sorted(i for i, (ok, must) in cur.items() if must and old.get(i) is True and not ok)
+    back = sorted(i for i, (ok, must) in cur.items() if not must and old.get(i) is True and not ok)
+    improve = sorted(i for i, (ok, _m) in cur.items() if old.get(i) is False and ok)
+    added = sorted(i for i in cur if i not in old)
+    missing = sorted(i for i in (base.get("ids") or []) if i not in cur)
+
+    print("\n[基线环境]")
+    print(f"  基线采集于 {base.get('created_at', '?')}")
+    _print_env_compare(_env_meta(), base.get("env") or {})
+    print("[基线逐条]（按 id 比「与期望行为是否一致」）")
+    _print_id_list("  回归（必过条目变红）", regress)
+    _print_id_list("  退步（未修 badcase 由通过退回失败）", back)
+    _print_id_list("  改善（由不一致转为一致）", improve)
+    _print_id_list("  新增（基线无记录，首次）", added)
+    _print_id_list("  未跑（基线有、本次没跑）", missing)
+
+
 def run():
     reset()
     if not E2E:
@@ -518,6 +658,11 @@ def run():
 
     review_path = _write_review(rows, results, hard_results, soft_results, must_pass, regressions)
     print(f"\n[复核清单] 已写入 {os.path.relpath(review_path, _ROOT)}")
+
+    if "--save-baseline" in sys.argv:
+        _save_baseline(rows, results)
+    if "--compare" in sys.argv:
+        _compare_baseline(rows, results)
 
     if regressions:
         for r in regressions:

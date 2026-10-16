@@ -1,9 +1,13 @@
 """选购推荐 SOP：通过多轮收集预算、宠物情况，然后结构化推荐。"""
 
+import random
 import re
 
 from sops.base import register, is_consulting, is_aftersales, is_brand
-from config.word_dict_config import PURCHASE_TRIGGER, PURCHASE_WEAK_TRIGGER
+from config.word_dict_config import (
+    PURCHASE_TRIGGER, PURCHASE_WEAK_TRIGGER, PURCHASE_EMPTY_REPLIES,
+    BARE_BUDGET_RE as _BARE_BUDGET_RE, BARE_NO_PET as _BARE_NO_PET,
+)
 from tools.metadata_extractor import (
     extract_price_constraint,
     enumerate_models,
@@ -12,12 +16,22 @@ from tools.metadata_extractor import (
 
 
 def _extract_budget(text: str, slots: dict):
-    """提取预算槽位，返回 (min_price, max_price) 元组（区间/上限/下限/浮动）。"""
-    return extract_price_constraint(text)
+    """提取预算槽位，返回 (min_price, max_price) 元组（区间/上限/下限/浮动）。
+
+    通用解析要量词或方向词；槽位里补一层纯数字短答，避免「800」被判没听懂而重复追问。
+    """
+    parsed = extract_price_constraint(text)
+    if parsed:
+        return parsed
+    m = _BARE_BUDGET_RE.match(text or "")
+    return (None, int(m.group(1))) if m else None
 
 
 def _extract_has_pet(text: str, slots: dict):
     """从用户回复提取「是否有宠物」槽位。"""
+    text = (text or "").strip()
+    if text in _BARE_NO_PET:
+        return False
     if re.search(r"没|无|不养|没有|没养", text):
         return False
     if re.search(r"有|养|猫|狗|宠物", text):
@@ -48,6 +62,18 @@ def _search(slots: dict):
 
     lines = [format_model_line(m) for m in models]
     return {"count": len(models), "list": "\n".join(lines), "models": models}
+
+
+def _render_result(ctx: dict) -> str:
+    """回复推荐结果：有结果用固定格式（型号与价格逐字来自知识库）；0 款换成品话术。
+
+    0 款时只说「预算内暂时没有 + 下一步」，不出现任何型号名与价格——空列表配「要不要对比某两款」
+    既生硬又没有依据（见 BADCASES BC-20261015-05）。
+    """
+    if int(ctx.get("count") or 0) > 0:
+        return ("根据您的需求，共找到 {count} 款符合条件的机器人：\n\n{list}\n\n"
+                "需要我帮您对比其中某两款吗？").format(**ctx)
+    return random.choice(PURCHASE_EMPTY_REPLIES)
 
 
 # 槽位形如 {"budget": [xxx, xxx], "has_pet": xxx}；action 返回 {"count": xxx, "list": xxx, "models": [xxx]}
@@ -87,11 +113,7 @@ PURCHASE_SOP = {
         {
             "id": "reply",
             "type": "reply",
-            "template": (
-                "根据您的需求，共找到 {count} 款符合条件的机器人：\n\n"
-                "{list}\n\n"
-                "需要我帮您对比其中某两款吗？"
-            ),
+            "template": _render_result,
             "fallback": "抱歉，查询出了点小问题，您可以换个方式再问我一次～",
         },
     ],

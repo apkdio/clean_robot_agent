@@ -1,7 +1,7 @@
 """读主链路 trace，按会话列出每一轮的走向——「从哪一轮开始跑偏」的一眼视图。
 
-trace 由 `tools/trace_store.py` 落盘（默认 `logs/trace/<session_id>/<session_id>_<YYYYMMDD>_<HHMM>.jsonl`，
-一个会话一个目录、当天一份文件；`TRACE_DIR` 可覆盖）。本脚本**只读**，不改任何数据、不调模型。
+trace 由 `tools/trace_store.py` 落盘（默认 `logs/trace/<YYYYMMDD>/<session_id>_<YYYYMMDD>_<HHMM>/<同名>.jsonl`，
+日期目录 + 一会话一目录、当天一份文件；`TRACE_DIR` 可覆盖）。本脚本**只读**，不改任何数据、不调模型。
 
 用法：解释器用 .venv\\Scripts\\python.exe
 
@@ -235,16 +235,14 @@ def _render_turn(rec: dict, flat: bool = False) -> list:
 
 
 def _session_dir(root: str, session_id: str) -> str:
-    """解析会话目录：会话名本身或 `<会话名>_*`（目录名带创建时间）都认；找不到返回按会话名的路径。"""
+    """解析会话目录（认日期层与迁移前的旧布局）：会话名本身或 `<会话名>_*`；找不到返回按会话名的路径。"""
     exact = os.path.join(root, session_id)
     if os.path.isdir(exact):
         return exact
-    try:
-        for name in sorted(os.listdir(root)):
-            if name.startswith(session_id + "_") and os.path.isdir(os.path.join(root, name)):
-                return os.path.join(root, name)
-    except OSError:
-        pass
+    for full in trace_store.session_dirs(root):
+        name = os.path.basename(full)
+        if name == session_id or name.startswith(session_id + "_"):
+            return full
     return exact
 
 
@@ -313,14 +311,13 @@ def _hint_sides(session_id: str, session_dir: str) -> None:
 
 
 def _print_list(root: str, day: str) -> None:
-    """列出该日期有 trace 的会话（每个会话一个目录）。"""
+    """列出该日期有 trace 的会话（日期目录下的每个会话目录）。"""
     if not os.path.isdir(root):
         print("没有该目录：%s" % root)
         return
     found = []
-    for name in sorted(os.listdir(root)):
-        if not os.path.isdir(os.path.join(root, name)):
-            continue
+    for full in trace_store.session_dirs(root):
+        name = os.path.basename(full)
         paths = _session_files(root, name, date=day)
         if not paths:
             continue
