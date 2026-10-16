@@ -11,6 +11,7 @@
 import sys
 import re
 import os
+import time
 import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -20,6 +21,8 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
 from test_scripts._runner import *
 import sops  # 触发 purchase/repair SOP 注册
 import sops.base
+from test_scripts import trace_reader
+from tools import trace_store
 
 
 def _models_ready():
@@ -98,6 +101,20 @@ _BAD_SOP = {
          "ask": "叫什么？", "retry": "说名字。", "extract": lambda text, slots: text.strip() or None},
         {"id": "reply", "type": "reply",
          "template": "你好{name}{missing_field}", "fallback": "抱歉，出了点小问题。"},
+    ],
+}
+
+
+def _boom_action(slots):
+    raise RuntimeError("step boom")
+
+
+_BOOM_SOP = {
+    "id": "sop_boom_action",
+    "trigger": ["炸一下"],
+    "steps": [
+        {"id": "boom", "type": "action", "action": _boom_action},
+        {"id": "reply", "type": "reply", "template": "不会走到这里"},
     ],
 }
 
@@ -226,15 +243,95 @@ def test_template_fallback():
     _cleanup()
 
 
-def test_unknown_sop_id_raises():
+def test_unknown_sop_id_dropped():
+    """会话里记的 sop_id 已不存在（SOP 被改名/删掉）→ 状态作废、按「没有活跃 SOP」处理，不再抛 KeyError。"""
     _cleanup()
     sops.base.register(_TEST_SOP)
     sops.base._start("s1", "nonexistent_sop")
+    _assert(not sops.base.has_active_sop("s1"), "旧状态被作废")
+    _assert_eq(sops.base.continue_sop("s1", None), None, "continue_sop 返回 None，本轮回落普通作答")
+    _cleanup()
 
-    def _run():
-        sops.base._run("s1", None)
 
-    _assert_raises(KeyError, _run, "不存在的 sop_id 抛 KeyError")
+def test_stale_def_state_dropped():
+    """代码改过 SOP 定义（步骤/槽位变了）→ Redis 里的旧状态作废，不拿旧下标续跑。"""
+    _cleanup()
+    sops.base.register(_TEST_SOP)
+    sops.base.start_sop("s1", "sop_unit_test", "")
+    _assert(sops.base.has_active_sop("s1"), "先有活跃状态")
+    # 模拟一次发版：同一 sop_id 的定义多出一步 → 指纹变
+    changed = dict(_TEST_SOP, steps=list(_TEST_SOP["steps"]) +
+                   [{"id": "extra", "type": "reply", "template": "补充说明"}])
+    sops.base.register(changed)
+    _assert(not sops.base.has_active_sop("s1"), "定义变了 → 旧状态作废")
+    _assert(sops.base._load_session("s1") is None, "Redis 里那份也已被删掉")
+    _assert_eq(sops.base.continue_sop("s1", "1000以内"), None, "不再拿旧下标续跑")
+    sops.base.register(_TEST_SOP)          # 还原注册表，别影响后面的用例
+    _cleanup()
+
+
+def test_injected_state_keeps_fingerprint():
+    """测试注入的状态（tools.test_hooks.set_active_sop）带指纹，能正常续跑——行为轨的 stateful 用例靠它。"""
+    _cleanup()
+    sops.base.register(_TEST_SOP)
+    from tools.test_hooks import set_active_sop
+    set_active_sop("s1", "sop_unit_test", step=1, slots={"budget": [None, 1000]})
+    _assert(sops.base.has_active_sop("s1"), "注入的状态没被当成过期")
+    reply, done = sops.base.continue_sop("s1", "没有")
+    _assert(done, "答完剩下槽位后一轮走完 action + reply")
+    _assert_in("型号A", reply, "回复里带推荐结果")
+    _cleanup()
+
+
+def test_stale_def_state_recorded_in_trace():
+    """作废要留在 trace 里（AGENTS：降级必须 WARNING + trace）：sop.active / skipped / by=stale_def。"""
+    _cleanup()
+    sops.base.register(_TEST_SOP)
+    sops.base.start_sop("s1", "sop_unit_test", "")
+    reset_trace("s1")
+    trace_store.begin_turn("s1", "1000以内")
+    # 发版：定义多一步 → 读状态时作废（这一步落节点）
+    sops.base.register(dict(_TEST_SOP, steps=list(_TEST_SOP["steps"]) +
+                            [{"id": "extra", "type": "reply", "template": "补充说明"}]))
+    _assert(not sops.base.has_active_sop("s1"), "状态被作废")
+    trace_store.end_turn(reply="（单测）")
+    rows = trace_reader.load(trace_reader.session_files(trace_reader.root_dir(), "s1")[0])
+    path = (rows[0].get("path") or []) if rows else []
+    _assert(any(n.get("node") == "sop.active" and n.get("status") == "skipped"
+                and n.get("by") == "stale_def" for n in path),
+            "trace 里有 sop.active / skipped / by=stale_def")
+    sops.base.register(_TEST_SOP)
+    _cleanup()
+
+
+def test_local_session_expires_without_redis():
+    """无 Redis 的降级路径按 sop_ttl 滑动过期（Redis 路径由 Redis 自己过期，不走这段）。"""
+    _cleanup()
+    from tools import redis_store
+    sops.base.register(_TEST_SOP)
+    real = redis_store.get_redis
+    redis_store.get_redis = lambda: None          # 强制走降级分支
+    try:
+        sops.base.start_sop("s1", "sop_unit_test", "")
+        _assert(sops.base.has_active_sop("s1"), "刚写的降级态可用")
+        _assert("ts" in sops.base._sessions["s1"], "降级态带 ts（Redis 路径不带）")
+        sops.base._sessions["s1"]["ts"] = time.time() - 100000      # 手动拨旧（sop_ttl=1800）
+        _assert(not sops.base.has_active_sop("s1"), "超过 sop_ttl → 作废")
+        _assert_eq(sops.base._load_session("s1"), None, "降级态那份也删了")
+    finally:
+        redis_store.get_redis = real
+        sops.base._sessions.pop("s1", None)
+    _cleanup()
+
+
+def test_step_exception_ends_sop():
+    """步骤函数抛异常：向上抛（外层兜底）+ 结束会话（不留半截状态、下轮不重跑同一步）。"""
+    _cleanup()
+    sops.base.register(_BOOM_SOP)
+    _assert_raises(RuntimeError, lambda: sops.base.start_sop("s1", "sop_boom_action", "随便"),
+                   "步骤异常照常向上抛")
+    _assert(not sops.base.has_active_sop("s1"), "异常后会话已结束（不会被 finally 写回去）")
+    _assert_eq(sops.base.continue_sop("s1", "再说一遍"), None, "下一轮不再停在同一步重复失败")
     _cleanup()
 
 
@@ -277,7 +374,12 @@ TESTS = [
     test_result_reply,
     test_retry_then_abandon,
     test_template_fallback,
-    test_unknown_sop_id_raises,
+    test_unknown_sop_id_dropped,
+    test_stale_def_state_dropped,
+    test_injected_state_keeps_fingerprint,
+    test_stale_def_state_recorded_in_trace,
+    test_step_exception_ends_sop,
+    test_local_session_expires_without_redis,
     test_purchase_sop_full_flow,
 ]
 

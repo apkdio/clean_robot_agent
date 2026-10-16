@@ -216,6 +216,71 @@ def test_enumerate_models_by_series():
     _assert_eq(len(enumerate_models_by_series("不存在系列")), 0, "不存在系列→0 个")
 
 
+class _FakeCollection:
+    """只为 `store_fingerprint` 造的假 collection：只实现它用到的 get()。"""
+
+    def __init__(self, rows):
+        self._rows = rows                      # [(file_name, file_sha256), ...]
+
+    def get(self, where=None, include=None):
+        return {"metadatas": [{"file_name": f, "file_sha256": h} for f, h in self._rows]}
+
+    def count(self):
+        return len(self._rows)
+
+
+def test_store_fingerprint_content_sensitive():
+    """索引指纹要认内容：条数不变、只改一个文件的正文（改价格/参数/错字）也必须变。"""
+    from tools import vector_store
+    real = vector_store.get_vector_store
+    base = [("型号.txt", "sha-old"), ("型号.txt", "sha-old"), ("售后.txt", "sha-2")]
+
+    def fp(rows):
+        class _S:
+            _collection = _FakeCollection(rows)
+        vector_store.get_vector_store = lambda: _S()
+        return vector_store.store_fingerprint()
+
+    try:
+        _assert_eq(fp(base), fp(list(base)), "同一份索引 → 指纹稳定")
+        _assert(fp(base) != fp([("型号.txt", "sha-new"), ("型号.txt", "sha-old"), ("售后.txt", "sha-2")]),
+                "条数不变、改了一个文件的内容 → 指纹必须变（只看条数会漏）")
+        _assert(fp(base) != fp(base[:2]), "少一个 chunk → 指纹变")
+        _assert(fp(base) != fp([("改名.txt", "sha-old"), ("型号.txt", "sha-old"), ("售后.txt", "sha-2")]),
+                "改文件名 → 指纹变")
+    finally:
+        vector_store.get_vector_store = real
+
+
+def test_models_cache_rebuilt_on_content_change():
+    """models.pkl 由旧内容生成、正文已改（指纹变）→ 必须重建，不能继续给旧价格。"""
+    import pickle
+    from tools import metadata_extractor as me
+    from tools import vector_store
+    real_store, real_path, real_enum = (vector_store.get_vector_store, me._MODELS_CACHE_FILE,
+                                        me._enumerate_models_from_store)
+    rel = "temp/models_cache_test.pkl"
+    abs_path = os.path.join(os.path.dirname(os.path.dirname(_SCRIPT_DIR)), rel)
+    try:
+        class _S:
+            _collection = _FakeCollection([("型号.txt", "sha-new")])
+        vector_store.get_vector_store = lambda: _S()
+        me._MODELS_CACHE_FILE = rel
+        me._enumerate_models_from_store = lambda f, require_field=None: [{"name": "新数据"}]
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        with open(abs_path, "wb") as f:        # 旧缓存：旧指纹 + 旧价格
+            pickle.dump({"fingerprint": "old-fp", "models": [{"name": "旧数据"}]}, f)
+        _assert_eq([m["name"] for m in me.get_all_models()], ["新数据"], "指纹不符 → 重建，不返回旧缓存")
+        with open(abs_path, "rb") as f:
+            _assert_eq(pickle.load(f)["fingerprint"], vector_store.store_fingerprint(), "新缓存写入当前指纹")
+    finally:
+        vector_store.get_vector_store = real_store
+        me._MODELS_CACHE_FILE = real_path
+        me._enumerate_models_from_store = real_enum
+        if os.path.isfile(abs_path):
+            os.remove(abs_path)
+
+
 TESTS = [
     test_extract_price_constraint,
     test_build_filter,
@@ -228,6 +293,8 @@ TESTS = [
     test_cn_to_int,
     test_match_model_filter,
     test_enumerate_models_by_series,
+    test_store_fingerprint_content_sensitive,
+    test_models_cache_rebuilt_on_content_change,
 ]
 
 

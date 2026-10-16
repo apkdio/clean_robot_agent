@@ -28,6 +28,11 @@ harness 对每条 case：回放前缀重建上下文与 SOP 状态，再发 `cas
   # 基线快照：跑完存一份 / 与已存的逐条比对（形态与检索轨、意图轨一致）
   .venv\\Scripts\\python.exe test_scripts/eval/test_context_eval.py --e2e --save-baseline
   .venv\\Scripts\\python.exe test_scripts/eval/test_context_eval.py --e2e --compare
+  # 子集：全量一次约 55 分钟（回放成本按会话累积），改一处只想验一小片时用
+  # 注意：子集跑不能 --save-baseline（会把子集当成全量基线）
+  .venv\\Scripts\\python.exe test_scripts/eval/test_context_eval.py --list-sets
+  .venv\\Scripts\\python.exe test_scripts/eval/test_context_eval.py --e2e --set smoke --compare
+  .venv\\Scripts\\python.exe test_scripts/eval/test_context_eval.py --e2e --only CTX-20261015-01,CTX-20261009-*
 """
 import json
 import os
@@ -243,6 +248,12 @@ def _replay_prefix(sid: str, turns: list, lo: int, hi: int):
             append_message(sid, "assistant", t["content"])
 
 
+def _is_must_pass_case(case: dict) -> bool:
+    """该 case 是否必过：硬行为，且「采集时就是 pass」或「曾坏已修（fixed）」。"""
+    return (case["expect"].get("behaviour") in _HARD_BEHAVIOURS
+            and ((case.get("verdict") == "pass") or bool(case.get("fixed"))))
+
+
 def _run_row(row: dict) -> list:
     import sops.base
     from tools.context_store import append_message, delete_session
@@ -283,7 +294,7 @@ def _run_row(row: dict) -> list:
             # 评测里正常不会出现（生成器必被消费完）；真出现说明这轮被截断，行为判定不可信
             problems.append("本轮 trace 标记 aborted（回答未跑完，判定不可信）")
         hard = case["expect"].get("behaviour") in _HARD_BEHAVIOURS
-        must_pass = hard and ((case.get("verdict") == "pass") or bool(case.get("fixed")))
+        must_pass = _is_must_pass_case(case)
         # 有问题的条目附上本轮 trace 摘要（主链路落的结构化环节记录），省得回头 grep 日志
         results.append({"case": case, "reply": reply, "problems": problems,
                         "hard": hard, "must_pass": must_pass,
@@ -588,8 +599,112 @@ def _compare_baseline(rows, results) -> None:
     _print_id_list("  未跑（基线有、本次没跑）", missing)
 
 
+# ──────────────────────────────────────────────────────────────
+# 子集：全量一次要按 21 个会话各回放前缀（约 120+ 轮真跑），改一处只想验一小片时按集合跑
+# ──────────────────────────────────────────────────────────────
+
+def _arg_value(flag: str) -> str:
+    """取 `--flag value` 的值；没给返回空串。"""
+    if flag in sys.argv and len(sys.argv) > sys.argv.index(flag) + 1:
+        return sys.argv[sys.argv.index(flag) + 1]
+    return ""
+
+
+def _latest_batch() -> str:
+    """评测集里最新的那批日期（id 形如 `CTX-<YYYYMMDD>-<序号>`）。"""
+    dates = [i.split("-")[1] for i in _all_case_ids() if i.count("-") >= 2]
+    return max(dates) if dates else ""
+
+
+def _all_case_ids() -> list:
+    if not os.path.isfile(_GOLDEN_FILE):
+        return []
+    return [c.get("id", "") for row in _load_golden() for c in row["cases"]]
+
+
+# 命名集合：按 case 自身可核实的字段筛（期望行为 / 必过语义 / 位置 / 批次），不靠人工维护清单
+_SET_DESC = {
+    "smoke": "必过集合（回归门）——只想确认「没把基线弄红」时跑它",
+    "safety": "期望安全出口（safety_alert / safety_carry）",
+    "answer": "期望作答类出口（answer / structured / no_answer_fallback / refuse）",
+    "soft": "软行为（chitchat / clarify / slot_filled / scope_guard）",
+    "fast": "位置最靠前的用例（回放少、最省时间）",
+    "recent": "最新一批（id 日期最大的那批）",
+}
+_SETS = {
+    "smoke": _is_must_pass_case,
+    "safety": lambda c: c["expect"].get("behaviour") in ("safety_alert", "safety_carry"),
+    "answer": lambda c: c["expect"].get("behaviour")
+    in ("answer", "structured", "no_answer_fallback", "refuse"),
+    "soft": lambda c: c["expect"].get("behaviour") in _SOFT_BEHAVIOURS,
+    "fast": lambda c: c["query_index"] <= 4,
+    "recent": lambda c: c.get("id", "").startswith("CTX-%s-" % _latest_batch()),
+}
+
+
+def _replay_turns(rows) -> int:
+    """这套用例要真跑多少轮：按会话累积（同一会话只回放到最后一个 case 的位置）。"""
+    total = 0
+    for row in rows:
+        cases = sorted(row["cases"], key=lambda c: c["query_index"])
+        if not cases:
+            continue
+        hi = cases[-1]["query_index"]
+        total += 1 + sum(1 for t in _turns_of(row)[:hi] if t.get("role") == "user")
+    return total
+
+
+def _select_sets(rows, names=(), ids=()):
+    """按集合名 / id（支持 `前缀*`）过滤；两者都给就取交集。返回 (rows, 说明文字)。"""
+    bad = set(names) - set(_SETS)
+    if bad:
+        raise ValueError("未知集合：%s（可用：%s）"
+                         % ("、".join(sorted(bad)), "、".join(sorted(_SETS))))
+
+    def keep(case):
+        if names and not any(_SETS[n](case) for n in names):
+            return False
+        if ids:
+            cid = case.get("id", "")
+            if not any(cid == i or (i.endswith("*") and cid.startswith(i[:-1])) for i in ids):
+                return False
+        return True
+
+    out, kept = [], 0
+    for row in rows:
+        cases = [c for c in row["cases"] if keep(c)]
+        kept += len(cases)
+        if cases:
+            out.append(dict(row, cases=cases))
+    total = sum(len(r["cases"]) for r in rows)
+    bits = []
+    if names:
+        bits.append("集合 " + "、".join(sorted(names)))
+    if ids:
+        bits.append("id " + "、".join(sorted(ids)))
+    return out, "%s（%d/%d 条，回放 %d 轮）" % (" + ".join(bits), kept, total, _replay_turns(out))
+
+
+def _print_sets(rows) -> None:
+    """列出可用集合与各自的规模 / 回放成本——挑集合时先看这个。"""
+    total = sum(len(r["cases"]) for r in rows)
+    print(f"可用集合（全量 {total} 条 / 回放 {_replay_turns(rows)} 轮）：")
+    for name in sorted(_SETS):
+        sub, desc = _select_sets(rows, [name])
+        print(f"  {name:<8} {desc}")
+        print(f"           {_SET_DESC[name]}")
+    print("\n用法：--e2e --set smoke --compare ｜ --e2e --only CTX-20261015-01,CTX-20261009-*")
+    print("注意：子集跑不能 --save-baseline（会把子集当成全量基线）。")
+
+
 def run():
     reset()
+    if "--list-sets" in sys.argv:            # 纯数据：不用 --e2e 也能看
+        if os.path.isfile(_GOLDEN_FILE):
+            _print_sets(_load_golden())
+        else:
+            print(f"未找到评测集 {_GOLDEN_FILE}（本地数据目录 data/eval，已 gitignore）")
+        return stats()
     if not E2E:
         _skip("多轮上下文评测需要 Ollama + Chroma（加 --e2e 运行）")
         return stats()
@@ -600,6 +715,23 @@ def run():
     rows = _load_golden()
     _assert(len(rows) > 0, f"评测集加载成功（{len(rows)} 个会话）")
     _validate_golden(rows)
+
+    # 子集：--set / --only 过滤。基线只跟子集比（未跑桶会列出没选的），存基线会被拦
+    subset_desc = ""
+    if "--set" in sys.argv or "--only" in sys.argv:
+        try:
+            rows, subset_desc = _select_sets(
+                rows,
+                [s.strip() for s in _arg_value("--set").split(",") if s.strip()],
+                [s.strip() for s in _arg_value("--only").split(",") if s.strip()])
+        except ValueError as exc:
+            _assert(False, f"子集参数非法：{exc}")
+            return stats()
+        if not rows:
+            _assert(False, f"子集没命中任何用例（{subset_desc}）")
+            return stats()
+        _assert(True, f"子集命中用例：{subset_desc}")
+        print(f"  [子集] {subset_desc}")
 
     # 影子探针在这条轨上是纯开销：多跑一次 FC（实测每轮 +75~125s），且它只落日志、不改被测行为。
     # 跑用例期间关掉，算力让给被测主链路；跑完即恢复（run_tests 同进程还会跑后面的模块）。
@@ -628,6 +760,12 @@ def run():
 
     print(f"  会话 {len(rows)} 个 / 标注 {len(results)} 条（硬行为 {len(hard_results)} · 软行为 {len(soft_results)}）")
     print(f"  trace 记录版本：{_trace_version()}（失败归因取自它；逐轮时间线用 test_scripts/trace_report.py 看）")
+    try:                                    # 索引与知识库对不上时，任何轨都要喊一声（不只是 --compare）
+        from test_scripts.eval import test_retrieval_eval as _retr
+
+        _retr._print_index_warning()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ⚠ 索引状态检查没跑起来（{type(exc).__name__}: {exc}）")
     from collections import Counter
 
     by_reason = Counter((r["case"].get("type") or "") for r in hard_results if r["problems"])
@@ -660,8 +798,14 @@ def run():
     print(f"\n[复核清单] 已写入 {os.path.relpath(review_path, _ROOT)}")
 
     if "--save-baseline" in sys.argv:
-        _save_baseline(rows, results)
+        if subset_desc:
+            # AGENTS.md 准则 3：不许静默换一套口径——子集存成基线会让下一个人以为那是全量
+            _assert(False, "子集跑不能存基线（会把子集当成全量基线）——去掉 --set / --only 再存")
+        else:
+            _save_baseline(rows, results)
     if "--compare" in sys.argv:
+        if subset_desc:
+            print(f"\n[基线] 本次是子集（{subset_desc}）：未跑桶里列的是没选的用例，属正常")
         _compare_baseline(rows, results)
 
     if regressions:

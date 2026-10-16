@@ -373,6 +373,39 @@ def test_feedback_one_per_turn():
     reset_trace(sid)
 
 
+def test_context_sets_defined():
+    """上下文轨子集的自检：集合非空、选出的 id 都在评测集里、smoke 与「必过」同口径。"""
+    if not os.path.isfile(ctx_eval._GOLDEN_FILE):
+        return
+    rows = ctx_eval._load_golden()
+    all_ids = {c["id"] for row in rows for c in row["cases"]}
+    for name in sorted(ctx_eval._SETS):
+        sub, desc = ctx_eval._select_sets(rows, [name])
+        ids = [c["id"] for row in sub for c in row["cases"]]
+        _assert_true(ids, f"集合 {name} 非空（{desc}）")
+        _assert_eq(set(ids) - all_ids, set(), f"集合 {name} 选出的 id 都在评测集里")
+    must = sorted(c["id"] for row in rows for c in row["cases"] if ctx_eval._is_must_pass_case(c))
+    smoke, _d = ctx_eval._select_sets(rows, ["smoke"])
+    _assert_eq(sorted(c["id"] for row in smoke for c in row["cases"]), must,
+               "smoke 就是必过集合（与 _is_must_pass_case 同一口径）")
+
+
+def test_context_set_filter_and_cost():
+    """子集过滤与成本估算：id 前缀、未知集合报错、回放轮数不少于用例数、fast 确实更省。"""
+    if not os.path.isfile(ctx_eval._GOLDEN_FILE):
+        return
+    rows = ctx_eval._load_golden()
+    sub, desc = ctx_eval._select_sets(rows, [], ["CTX-20261015-*"])
+    _assert_eq(len([c for r in sub for c in r["cases"]]), 3, "id 前缀 `CTX-20261015-*` 命中 3 条")
+    _assert_in("3/", desc, "说明里带「命中/总数」")
+    _assert_raises(ValueError, lambda: ctx_eval._select_sets(rows, ["nope"]), "未知集合要报错")
+    n_cases = sum(len(r["cases"]) for r in rows)
+    _assert_true(ctx_eval._replay_turns(rows) >= n_cases, "回放轮数不少于用例数（每条至少跑一轮）")
+    quick, _d = ctx_eval._select_sets(rows, ["fast"])
+    _assert_true(ctx_eval._replay_turns(quick) < ctx_eval._replay_turns(rows),
+                 "fast 的回放成本低于全量")
+
+
 TESTS = [
     test_branch_closed_set_from_config,
     test_branch_covers_behaviours,
@@ -388,6 +421,8 @@ TESTS = [
     test_trace_best_effort,
     test_trace_report_flags,
     test_golden_schema_and_context,
+    test_context_sets_defined,
+    test_context_set_filter_and_cost,
     test_branch_text,
     test_feedback_reason_enum,
 ]

@@ -279,15 +279,15 @@ def get_all_model_records() -> list[Dict]:
 
 
 def get_all_models() -> list[Dict]:
-    """全量型号 info 列表，走 data/pkl/models.pkl 缓存（fingerprint = chunk_count）。
+    """全量型号 info 列表，走 data/pkl/models.pkl 缓存（fingerprint = vector_store.store_fingerprint()）。
     """
     import os
     import pickle
     from tools.path_tool import get_abs_path
-    from tools.vector_store import get_vector_store
+    from tools.vector_store import store_fingerprint
 
     path = get_abs_path(_MODELS_CACHE_FILE)
-    fingerprint = get_vector_store()._collection.count()
+    fingerprint = store_fingerprint()
 
     if os.path.isfile(path):
         try:

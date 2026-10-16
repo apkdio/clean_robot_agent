@@ -12,7 +12,7 @@
 - **工具调用**：LLM function calling，内置日期/预算/故障分类/型号提取/售后网点五个工具，支持"最近半年""一千来块"等口语化结构化提取；预算同时识别"2000吧"这类语气词尾音
 - **多轮 SOP 引导**：选购推荐、故障排查等场景按标准流程多轮引导，进入时给开场提示；**弱触发会先问一句是否要走引导**（进入确认门），流程内说退出也要先确认（退出确认门）；支持追问（比较新/更便宜/最贵）与最近发布查询；**「重新回答」按上一轮出口决定重算**——上一轮是 SOP 收尾轮就重开该流程（入口是弱触发照样先过确认门），SOP 中途不给重发。槽位收口语短答（预算「800」按上限、宠物「不」/「没」算没有）；筛出 0 款时给"预算内暂时没有 + 下一步"的成品话术，**不点型号与价格**（型号与价格只允许来自知识库原文）
 - **售后网点定位**：识别"最近的售后网点"等查询，通过 geonamescache 离线解析城市经纬度 + Haversine 距离排序返回最近网点，重名城市（如"洛阳"）多轮消歧（走 SOP 状态机：先问城市，重名再问一次序号）
-- **Redis 可选接入**：SOP 会话状态、会话并发锁、热更新摄入锁迁移到 Redis（分布式锁/跨实例共享），未配置 Redis 时自动降级到本地内存，功能不受影响
+- **Redis 可选接入**：SOP 会话状态、会话并发锁、热更新摄入锁迁移到 Redis（分布式锁/跨实例共享），未配置 Redis 时自动降级到本地内存，功能不受影响（降级的内存态同样按 TTL 过期，不会永远不失效）
 - **知识库分域**：按场景（品牌/选购/型号/故障/售后/维护/操作 7 域）定向检索对应知识域（型号类问题走结构化直出、不靠域过滤），避免跨域词带偏召回
 - **品牌化**：全面转型"不染一尘"品牌专属客服；品牌咨询、售后咨询走 RAG 直答，安全危险现象前置拦截（除书面词外，也包含火星、焦味、噼啪等**口语同义表达**），且告警后的追问会被拉回安全话题（**不看意图分类结果**，只有高置信的域内问题才放行）；公司 / 招聘类问题一律礼貌回避、不编造信息
 - **情绪安抚**：识别负面情绪（投诉/烦躁等）前置安抚，只安抚不拦截
@@ -68,12 +68,14 @@ clean_robot_agent/
 │   ├── service_point_tool.py    # 售后网点工具（geonamescache 离线解析城市 + Haversine 距离）
 │   └── registry.py              # 工具注册中心（对外暴露的工具白名单 + 编排开关读取）
 ├── sops/                        # SOP 标准操作流程（多轮引导）
-│   ├── base.py                  # 会话状态（按 session_id 隔离）+ 执行器 + 知识域定义
+│   ├── base.py                  # 会话状态（按 session_id 隔离，带定义指纹）+ 执行器 + 知识域定义
 │   ├── purchase.py              # 选购推荐 SOP
 │   └── repair.py                # 故障排查 SOP
 ├── test_scripts/                # 测试与评测（run_tests.py 只聚合 eval/ 评测轨；unit/ 功能测试暂搁置）
 │   ├── run_tests.py             # 评测入口：python run_tests.py --e2e
 │   ├── _runner.py               # 共享断言/汇总/e2e 门控/测试数据隔离
+│   ├── trace_reader.py          # trace 读取层（文本视图与 HTML 报告共用）
+│   ├── trace_report.py          # 读 trace：按会话列出每轮走向（--list/--session/--chunks/--shadow/--feedback）；--html 出 HTML 报告（落 reports/<日期>/）
 │   ├── unit/                    # 功能测试（暂搁置：不进评测入口，文件保留、可单独运行）
 │   │   ├── test_intent.py       # 意图分类（robot/other/casual/unknown，需 --e2e）
 │   │   ├── test_purchase_sop.py # 选购 SOP（SOP 状态机 + 选购推荐流程）
@@ -83,6 +85,10 @@ clean_robot_agent/
 │   │   ├── test_function_tools.py  # 日期/预算/型号/症状/网点五个工具
 │   │   ├── test_retrieval.py    # 检索链路（域路由/分词/过滤/RRF/阈值/精排/条目切分）
 │   │   ├── test_agent_guards.py # Agent 前置防护（情绪/注入/危险/退出意图）
+│   │   ├── test_query_normalizer.py # query 入口归一化（标点/空格/全半角/同义词/幂等）
+│   │   ├── test_hot_ingest.py   # 知识库热更新（增量同步的删除/重入语义）
+│   │   ├── test_service_point_sop.py # 网点 SOP（城市解析 / 重名选序号）
+│   │   ├── test_trace_report_html.py # trace HTML 报告（数据整形 / 渲染 / 边界）
 │   │   └── test_dialogue.py     # 多轮实战对话（正常 + 非人类，需 --e2e）
 │   └── eval/                    # 评测轨（留出集 + 基线，评测入口默认跑这些；多数需 --e2e）
 │       ├── test_behavior_tags.py   # 行为闭集（branch）与 trace 记录契约自检（纯规则，不依赖模型）
@@ -127,6 +133,9 @@ clean_robot_agent/
 | `test_hooks.py` | **仅供测试/评测**的状态注入助手（danger 窗口 / 连续承接计数 / 活跃 SOP / 待确认状态）|
 | `trace_store.py` | 会话级 trace：每轮落一条结构化记录（`logs/trace/<日期>/<会话ID>_<日期>_<时间>/<同名>.jsonl`，先按日期分目录再按会话，best-effort 不影响对话，`TRACE_DIR` 可改落点）；记录与执行同构：进门判断、本轮唯一出口、有序节点（含状态/耗时/进出事实）、两遍召回与各遍计数、最终候选的来源分布、SOP 动作链，另保留旧字段作兼容；同一会话目录下另有三份旁路文件：召回片段全文、影子决策、用户评价 |
 
+> trace 读侧是一个脚本 `test_scripts/trace_report.py`：文本视图按会话列出每轮走向（`--chunks/--shadow/--feedback` 看旁路证据）；
+> 加 `--html` 则把某天渲染成一份自包含 HTML 报告（落 `reports/<日期>/`，`--out-dir` 换根目录、`--out` 给整路径）。
+
 ## 工具调用模块（function_tools/）
 
 | 模块 | 职责 |
@@ -143,7 +152,7 @@ clean_robot_agent/
 
 | 模块 | 职责 |
 |------|------|
-| `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 知识域定义（DOMAIN_MAP）+ 追问处理（比较新/更便宜）+ 最近发布查询 |
+| `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 知识域定义（DOMAIN_MAP）+ 追问处理（比较新/更便宜）+ 最近发布查询。**会话状态带定义指纹**：代码改过 SOP 定义后，Redis 里的旧会话读时自动作废（不会拿旧下标续跑）；无 Redis 降级的内存态同样按 TTL 过期 |
 | `purchase.py` | 选购推荐 SOP：收集预算（上限/下限/区间/浮动）+ 宠物 → 结构化推荐 |
 | `repair.py` | 故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤 |
 
@@ -243,6 +252,8 @@ python webapp/app.py
 - 发布时间独立一行 `发布时间：YYYY-MM-DD`（用于"最近半年""2025年三月"等新品查询）
 
 **热更新**：放入新文件后，系统每 30 分钟自动检测并入库；重启 Flask 会立即触发一次扫描。
+
+**改同一个文件**：把新版本放回 `data/knowledge/`（或走页面上传）即可——重入是**替换**（旧 chunk 会被删掉，不会叠加重复条目），型号缓存与 BM25 索引也跟着重建，直出与检索两边始终一致。
 
 ## 意图分类模型训练
 
@@ -401,7 +412,8 @@ flowchart TD
 ## 注意事项
 
 - 所有模型本地运行，无云端依赖；其中精排模型 `bge-reranker-v2-m3`（约 2.2GB）首次运行需联网下载（见「快速开始 §3」），加载失败会自动降级为“不精排”，也可在 `rag.yaml` 设 `rerank.enabled: false` 主动关闭
-- Redis 为可选依赖：未配置 `config/redis.yaml` 时，SOP 会话状态 / **待确认状态（退出确认、网点问城市）** / 并发锁 / 摄入锁自动降级到本地内存（待确认状态带时间戳校验），功能不受影响
+- Redis 为可选依赖：未配置 `config/redis.yaml` 时，SOP 会话状态 / **待确认状态（退出确认、网点问城市）** / 并发锁 / 摄入锁自动降级到本地内存（待确认状态与 SOP 会话状态都按各自的 TTL 做时间戳/过期校验），功能不受影响
+- 改过 SOP 定义（步骤 / 槽位）**不需要手动清 Redis**：会话状态自带定义指纹，读时与当前定义对账、对不上就自动作废并记 WARNING（trace 里对应 `sop.active` 的 `skipped` 节点），不会拿旧下标续跑
 - `data/vector_store/`、`data/pkl/`、`data/state/`、`data/bgm_model/`、`data/context/`、`data/context_meta/` 为运行时产物，已加入 `.gitignore`
 - `data/eval/`（评测集与基线：`retrieval/` 单轮检索、`context/` 多轮行为）为本地数据，同样已加入 `.gitignore`；缺失时对应评测模块自动跳过
 - `data/test_context/`、`data/test_context_metadata/`（测试产生的会话文件）同样已加入 `.gitignore`

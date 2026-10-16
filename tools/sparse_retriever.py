@@ -154,11 +154,12 @@ class SparseRetriever:
 
     @staticmethod
     def _fingerprint() -> dict:
-        from tools.vector_store import get_vector_store
+        from tools.vector_store import get_vector_store, store_fingerprint
         store = get_vector_store()
         return {
             "chunk_count": store._collection.count(),
             "collection_name": _chroma_cfg.get("collection_name", "clean_robot_kb"),
+            "store": store_fingerprint(),   # 内容摘要：条数不变但正文改了（价格/参数/错字）也要重建
         }
 
     def save(self) -> None:
@@ -186,8 +187,9 @@ class SparseRetriever:
             return False
         fp = payload.get("fingerprint", {})
         cur = self._fingerprint()
-        if fp.get("chunk_count") != cur.get("chunk_count"):
-            logger.info("[Sparse] Cache stale (%d → %d chunks), rebuild.",
+        if fp.get("store") != cur.get("store"):
+            logger.info("[Sparse] Cache stale（索引指纹 %s → %s，%d → %d chunks），rebuild.",
+                        fp.get("store") or "无", cur.get("store"),
                         fp.get("chunk_count", 0), cur.get("chunk_count", 0))
             return False
         self.chunks = payload["chunks"]

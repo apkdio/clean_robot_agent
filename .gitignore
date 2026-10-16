@@ -36,3 +36,9 @@ notes/
 # OS
 .DS_Store
 Thumbs.db
+
+# trace HTML 报告（含真实用户话术，不外发）
+reports/
+
+# Agent 开发准则（本地约定，不进仓库）
+AGENTS.md

@@ -163,6 +163,10 @@ def ingest():
             return jsonify({"status": "busy", "message": "正在摄入知识库，请稍候"}), 409
         try:
             result = ingest_file(save_path)
+            if result.get("status") == "ok":
+                # 手动入库也要让索引侧跟上：重建 BM25、失效 models.pkl、重置检索器单例
+                from tools.hot_ingest import rebuild_sparse_index
+                rebuild_sparse_index()
         finally:
             release_lock("lock:ingest")
     finally:
@@ -182,10 +186,10 @@ def reset():
     if not acquire_lock("lock:ingest"):
         return jsonify({"status": "busy", "message": "正在摄入知识库，请稍候"}), 409
     try:
-        deleted = reset_collection()
-        # 使热更新快照失效，以便下一个周期从头重新摄入
+        # 先失效快照再清空：两步之间中断时，热更新下一轮会按「全新增」重入，不会留下「空索引 + 快照称已同步」
         from tools.hot_ingest import invalidate_snapshot
         invalidate_snapshot()
+        deleted = reset_collection()
         return jsonify({"status": "ok", "deleted": deleted})
     except Exception as e:
         logger.error(f"[Reset] {e}")
@@ -243,7 +247,7 @@ def chat_stream():
                     yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
             except Exception as e:
                 logger.error(f"[Stream] {e}")
-                yield f"data: {json.dumps(f'[错误: {e}]', ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps('错误: 生成失败，请重试！', ensure_ascii=False)}\n\n"
             if stopped:
                 # 停止：回滚这一轮（忽略进上下文），首句取消则会话不落地磁盘
                 rollback_last_user_message(session_id)
@@ -321,15 +325,22 @@ def remove_session(sid):
 
 @app.route("/api/ingest/batch", methods=["POST"])
 def ingest_batch():
-    """一次性摄入知识目录中所有受支持的文件。"""
+    """一次性摄入知识目录中所有受支持的文件（与热更新/重置互斥，完成后重建索引）。"""
     from tools.config_tool import get_data_dir
+    from tools.redis_store import acquire_lock, release_lock
     data_dir = get_data_dir()
+    if not acquire_lock("lock:ingest"):
+        return jsonify({"status": "busy", "message": "正在摄入知识库，请稍候"}), 409
     try:
         results = ingest_data_dir(data_dir)
+        from tools.hot_ingest import rebuild_sparse_index
+        rebuild_sparse_index()
         return jsonify({"status": "ok", "results": results})
     except Exception as e:
         logger.error(f"[BatchIngest] {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        release_lock("lock:ingest")
 
 
 @app.route("/api/config", methods=["GET"])

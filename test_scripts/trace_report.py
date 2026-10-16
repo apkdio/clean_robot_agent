@@ -17,6 +17,11 @@ trace 由 `tools/trace_store.py` 落盘（默认 `logs/trace/<YYYYMMDD>/<session
     python test_scripts/trace_report.py --session abc12345 --date 2026-09-29 --dir temp/trace_test
     # 按平铺形态打印
     python test_scripts/trace_report.py --session abc12345 --flat
+    # 把某天渲染成自包含 HTML 报告（只出报告，不打印 trace 文本）
+    python test_scripts/trace_report.py --html                       # 最近有 trace 的一天
+    python test_scripts/trace_report.py --html --date 2026-10-15 --out-dir temp/reports
+    python test_scripts/trace_report.py --html --dir temp/trace_test --out /tmp/x.html
+默认落点 reports/<YYYYMMDD>/trace_<YYYYMMDD>.html（`--out-dir` 换根目录，`--out` 直接给整路径，不再加日期层）。
 
 默认按分层视图打印：进门判断 / 有序路径 / 检索各遍与来源分布 / SOP 动作链 / 出口；
 没有分层块的记录自动回退到平铺视图。字段含义见 notes/TRACE.md。
@@ -24,6 +29,7 @@ trace 由 `tools/trace_store.py` 落盘（默认 `logs/trace/<YYYYMMDD>/<session
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime
 
@@ -35,26 +41,15 @@ for _p in (_ROOT,):
 
 # 刻意不 import `_runner`：它会设 TRACE_DIR 等测试隔离变量，而这里读的是真实 trace（--dir 可覆盖）。
 from tools import trace_store  # noqa: E402
+from test_scripts import trace_reader  # noqa: E402
+
+# 读取层（本脚本的文本视图与 HTML 报告都用）与 trace_reader 共用，避免两套读法漂移
+_root_dir = trace_reader.root_dir
+_load = trace_reader.load
+_session_dir = trace_reader.session_dir
+_session_files = trace_reader.session_files
 
 _SLOW_MS = 30000   # 单轮超过这个耗时就在摘要里标「慢」
-
-
-def _root_dir(arg_dir: str) -> str:
-    return arg_dir or os.environ.get("TRACE_DIR") or os.path.join(trace_store.log_path, "trace")
-
-
-def _load(path: str) -> list:
-    rows = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(json.loads(line))
-            except ValueError:
-                continue          # 半截行（写到一半被杀）跳过即可
-    return rows
 
 
 def _flags(rec: dict) -> list:
@@ -234,43 +229,6 @@ def _render_turn(rec: dict, flat: bool = False) -> list:
     return _turn_lines_nested(rec, TRACE_NODE_LABELS)
 
 
-def _session_dir(root: str, session_id: str) -> str:
-    """解析会话目录（认日期层与迁移前的旧布局）：会话名本身或 `<会话名>_*`；找不到返回按会话名的路径。"""
-    exact = os.path.join(root, session_id)
-    if os.path.isdir(exact):
-        return exact
-    for full in trace_store.session_dirs(root):
-        name = os.path.basename(full)
-        if name == session_id or name.startswith(session_id + "_"):
-            return full
-    return exact
-
-
-def _session_files(root: str, session_id: str, kind: str = "", date: str = "") -> list:
-    """该会话在 root 下的 trace 文件（`kind` 空 = 主文件，非空 = 旁路证据），按文件名升序。
-
-    `date` 非空时只留那一天（按文件名里的 YYYYMMDD）；一个会话可能跨多天。
-    """
-    suffix = (".%s.jsonl" % kind) if kind else ".jsonl"
-    want_day = date.replace("-", "")
-    out = []
-    try:
-        names = sorted(os.listdir(_session_dir(root, session_id)))
-    except OSError:
-        return out
-    for fn in names:
-        if not fn.endswith(suffix):
-            continue
-        stem = fn[: -len(suffix)]
-        if "." in stem:                       # 查主文件时排除旁路文件
-            continue
-        parts = stem.rsplit("_", 2)
-        if want_day and (len(parts) < 3 or parts[-2] != want_day):
-            continue                     # 名字里没带日期的（旧命名 / 测试用短名）只在不按日期筛时才看
-        out.append(os.path.join(_session_dir(root, session_id), fn))
-    return out
-
-
 def _print_session(session_id: str, paths: list, flat: bool = False) -> None:
     """打印该会话的 trace；`paths` 按日期升序，一天一段。"""
     total = 0
@@ -404,6 +362,356 @@ def _print_feedback(session_id: str, path: str) -> None:
         print("   %s  %s" % ("  ".join(bits), rec.get("ts")))
 
 
+# ──────────────────────────────────────────────────────────────
+# HTML 报告（`--html`）：把某天渲染成一份自包含页面，打开即看、不引外部 CDN
+# ──────────────────────────────────────────────────────────────
+
+BRANCH_COLORS = {
+    "safety_alert": "#c0392b", "safety_carry": "#d35400", "block_inject": "#8e44ad",
+    "refuse": "#7f8c8d", "no_answer_fallback": "#e67e22",
+    "structured": "#2980b9", "answer": "#27ae60", "retrieve_answer": "#27ae60",
+    "chitchat": "#9b59b6", "clarify": "#16a085",
+    "start_sop": "#2c3e50", "sop_step": "#34495e", "exit_sop": "#95a5a6",
+}
+
+
+def _hhmmss(ts: str) -> str:
+    return (ts or "")[11:19]
+
+
+def _fmt_val(v) -> str:
+    """表格里的一格：布尔说人话、空值给短横、嵌套结构压成一行 JSON。"""
+    if isinstance(v, bool):
+        return "是" if v else "否"
+    if v is None or v == "":
+        return "-"
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, ensure_ascii=False)
+    return str(v)
+
+
+def _fmt_pairs(d) -> str:
+    """逐节点各不同的小 dict → 「键=值 键=值」一行（path 的 out 用它）。"""
+    if not isinstance(d, dict) or not d:
+        return ""
+    return " ".join("%s=%s" % (k, _fmt_val(v)) for k, v in d.items())
+
+
+def turn_view(rec: dict, chunks: list, feedback: dict, max_chunk: int) -> dict:
+    """一轮 → 模板要用的字段（全部取自 trace 现成字段，不另造口径）。"""
+    rt = rec.get("route") or {}
+    intent = rt.get("intent") or {}
+    flags = [k for k in ("inject", "danger", "emotion") if (rt.get(k) or {}).get("hit")]
+    ret = rec.get("retrieval") or {}
+    rewrite = ret.get("rewrite") or {}
+    domain = ret.get("domain") or {}
+    shadow = rec.get("shadow") or {}
+    ms = rec.get("ms") or {}
+    branch = rec.get("branch") or "未记"
+    views = []
+    for c in chunks:
+        text = c.get("text") or ""
+        views.append({"rank": c.get("rank"), "score": c.get("score"), "file": c.get("file"),
+                      "entry": c.get("entry"), "chars": c.get("chars"), "dense": c.get("dense_rank"),
+                      "sparse": c.get("sparse_rank"), "rrf": c.get("rrf"), "rerank": c.get("rerank"),
+                      "text": text[:max_chunk], "truncated": len(text) > max_chunk})
+    return {
+        "i": rec.get("turn_index"), "ts": _hhmmss(rec.get("ts")), "query": rec.get("query") or "",
+        "retry": bool(rec.get("retry")), "aborted": bool(rec.get("aborted")), "error": rec.get("error"),
+        "detail": rec.get("detail") or {},
+        "hits": (rec.get("detail") or {}).get("hits"),
+        "branch": branch, "tag": rec.get("tag"), "color": BRANCH_COLORS.get(branch, "#555"),
+        "intent": intent.get("label"), "margin": intent.get("margin"), "intent_retry": intent.get("retry"),
+        "flags": flags, "domain": domain.get("value"), "domain_via": domain.get("via"),
+        "rewrite": rewrite, "passes": ret.get("passes") or [], "merge": ret.get("merge") or {},
+        "twice": ret.get("twice_retrieval") or {},
+        "sop": rec.get("sop") or {}, "sop_gate": rec.get("sop_gate") or {}, "shadow": shadow,
+        "path": rec.get("path") or [], "answer": rec.get("answer") or {}, "ms": ms,
+        "chunks": views, "feedback": feedback, "slow": (ms.get("total") or 0) >= _SLOW_MS,
+        "norm": bool((rewrite.get("normalize") or {}).get("changed")),
+        "shadow_mismatch": shadow.get("agree") is False,
+        "no_recall": branch == "no_answer_fallback",
+        "total_ms": ms.get("total"),
+    }
+
+
+def session_view(root: str, name: str, date: str, max_chunk: int) -> dict:
+    """一个会话 → 模板要用的字段。"""
+    paths = trace_reader.session_files(root, name, date=date)
+    rows = []
+    for p in paths:
+        rows += trace_reader.load(p)
+    sid = name.rsplit("_", 2)[0]
+    fb_paths = trace_reader.session_files(root, name, kind="feedback", date=date)
+    fb = trace_reader.effective_feedback(trace_reader.load(fb_paths[0]) if fb_paths else [])
+    chunk_rows = []
+    for p in trace_reader.session_files(root, name, kind="chunks", date=date):
+        chunk_rows += trace_reader.load(p)
+    chunks = trace_reader.chunks_by_turn(chunk_rows)
+    turns = [turn_view(r, chunks.get(r.get("turn_index"), []), fb.get(r.get("turn_index")) or {}, max_chunk)
+             for r in rows]
+    return {"name": name, "sid": sid, "short": sid[:8], "date": date, "turns": turns,
+            "n_turns": len(turns), "n_useless": sum(1 for t in turns if (t["feedback"] or {}).get("rating") == "useless")}
+
+
+def latest_date(root: str) -> str:
+    """最近有 trace 的日期（目录名 YYYYMMDD）。"""
+    days = []
+    try:
+        for d in os.listdir(root):
+            full = os.path.join(root, d)
+            if os.path.isdir(full) and re.fullmatch(r"\d{8}", d):
+                days.append(d)
+    except OSError:
+        pass
+    if days:
+        return max(days)
+    # 旧布局（会话目录直接挂根下）：从目录名里取日期
+    for name in os.listdir(root):
+        m = re.search(r"_(\d{8})_\d{4}$", name)
+        if m:
+            days.append(m.group(1))
+    return max(days) if days else datetime.now().strftime("%Y%m%d")
+
+
+TEMPLATE = """{% macro kvtable(title, d) -%}
+<table class="kv"><caption>{{ title }}</caption>
+  {% for k, v in d.items() %}<tr><th>{{ k }}</th><td>{{ v|fmt }}</td></tr>{% endfor %}
+</table>
+{%- endmacro %}<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>trace 报告 · {{ date }}</title>
+<style>
+ :root{--fg:#1f2328;--dim:#6b7280;--line:#e5e7eb;--bg:#f6f7f9;--card:#fff}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.6 -apple-system,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif}
+ header{position:sticky;top:0;background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px;z-index:5}
+ h1{font-size:15px;margin:0 0 6px}
+ .meta{color:var(--dim);font-size:12px}
+ .filters{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+ input[type=search]{padding:3px 8px;border:1px solid var(--line);border-radius:4px;min-width:200px}
+ .chip{border:1px solid var(--line);background:#fff;border-radius:12px;padding:2px 9px;cursor:pointer;font-size:12px;user-select:none}
+ .chip.on{background:#1f2328;color:#fff;border-color:#1f2328}
+ main{padding:14px 16px 40px;max-width:1180px;margin:0 auto}
+ section{background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:14px;overflow:hidden}
+ section>h2{font-size:13px;margin:0;padding:9px 12px;border-bottom:1px solid var(--line);background:#fafbfc;font-weight:600}
+ section>h2 small{color:var(--dim);font-weight:400;margin-left:8px}
+ .turn{border-bottom:1px solid var(--line);padding:9px 12px}
+ .turn:last-child{border-bottom:none}
+ .turn.hide{display:none}
+ .row1{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+ .badge{color:#fff;border-radius:4px;padding:1px 7px;font-size:11px;white-space:nowrap}
+ .tag{border:1px solid var(--line);border-radius:4px;padding:0 6px;font-size:11px;color:var(--dim)}
+ .tag.warn{border-color:#e67e22;color:#e67e22}
+ .tag.bad{border-color:#c0392b;color:#c0392b}
+ .q{margin:4px 0 0;font-weight:600;word-break:break-word}
+ .facts{color:var(--dim);font-size:12px;margin-top:3px;display:flex;flex-wrap:wrap;gap:10px}
+ details{margin-top:6px}
+ summary{cursor:pointer;color:#2563eb;font-size:12px}
+ table{border-collapse:collapse;font-size:12px;margin:6px 0}
+ th,td{border:1px solid var(--line);padding:2px 7px;text-align:left;vertical-align:top}
+ th{background:#fafbfc;color:var(--dim);font-weight:500}
+ caption{caption-side:top;text-align:left;color:var(--dim);font-size:12px;padding:2px 0}
+ .kv th{width:110px}
+ pre{background:#fafbfc;border:1px solid var(--line);border-radius:4px;padding:7px;margin:4px 0;white-space:pre-wrap;word-break:break-word;font-size:12px}
+ .chunk{border-left:3px solid var(--line);padding-left:8px;margin:7px 0}
+ .k{color:var(--dim)}
+ button.copy{font-size:11px;border:1px solid var(--line);background:#fff;border-radius:4px;padding:1px 7px;cursor:pointer}
+ code{background:#f3f4f6;border-radius:3px;padding:0 3px}
+</style></head><body>
+<header>
+  <h1>扫地机器人客服 · trace 报告 <span class="meta">{{ date }}</span></h1>
+  <div class="meta">根目录 {{ root }} · {{ sessions|length }} 个会话 / {{ total_turns }} 轮 · 出口分布
+    {% for b, n in branch_counts %}<code>{{ b }} {{ n }}</code> {% endfor %}
+    · 人工👎 {{ total_useless }} 条</div>
+  <div class="filters">
+    <input type="search" id="kw" placeholder="搜 query 关键词…">
+    <span class="chip" data-f="useless">有👎</span>
+    <span class="chip" data-f="no_recall">0 召回</span>
+    <span class="chip" data-f="norm">归一化改过</span>
+    <span class="chip" data-f="shadow">影子不一致</span>
+    <span class="chip" data-f="bad">error / aborted</span>
+    <span class="chip" data-f="slow">慢（≥30s）</span>
+    <span class="meta">·</span>
+    {% for b in branches %}<span class="chip" data-b="{{ b }}">{{ b }}</span>{% endfor %}
+    <span class="chip" id="reset">重置</span>
+  </div>
+</header>
+<main>
+{% for s in sessions %}
+  <section data-sid="{{ s.name }}">
+    <h2>{{ s.short }} <small>{{ s.name }} · {{ s.n_turns }} 轮{% if s.n_useless %} · 👎 {{ s.n_useless }}{% endif %}</small></h2>
+    {% for t in s.turns %}
+    <article class="turn" data-branch="{{ t.branch }}" data-useless="{{ 1 if (t.feedback or {}).get('rating')=='useless' else 0 }}"
+             data-no_recall="{{ 1 if t.no_recall else 0 }}" data-norm="{{ 1 if t.norm else 0 }}"
+             data-shadow="{{ 1 if t.shadow_mismatch else 0 }}" data-bad="{{ 1 if (t.error or t.aborted) else 0 }}"
+             data-slow="{{ 1 if t.slow else 0 }}" data-q="{{ t.query }}">
+      <div class="row1">
+        <span class="k">#{{ t.i }}</span><span class="k">{{ t.ts }}</span>
+        <span class="badge" style="background:{{ t.color }}">{{ t.branch }}</span>
+        {% if t.intent %}<span class="tag">意图 {{ t.intent }}{% if t.margin is not none %} {{ '%.3f'|format(t.margin) }}{% endif %}</span>{% endif %}
+        {% if t.intent_retry %}<span class="tag">两遍分类→{{ t.intent_retry.label }}</span>{% endif %}
+        {% if t.flags %}<span class="tag warn">进门命中 {{ t.flags|join(' / ') }}</span>{% endif %}
+        {% if t.domain %}<span class="tag">域 {{ t.domain }}{% if t.domain_via %}（{{ t.domain_via }}）{% endif %}</span>{% endif %}
+        {% if t.twice.active %}<span class="tag warn">撤域二次召回 kept={{ t.twice.kept }}</span>{% endif %}
+        {% if t.norm %}<span class="tag">归一化改过</span>{% endif %}
+        {% if t.retry %}<span class="tag">重发</span>{% endif %}
+        {% if t.aborted %}<span class="tag bad">中止</span>{% endif %}
+        {% if t.error %}<span class="tag bad">error</span>{% endif %}
+        {% if t.slow %}<span class="tag warn">慢</span>{% endif %}
+        {% if (t.feedback or {}).get('rating') == 'useless' %}<span class="tag bad">👎 {{ t.feedback.reason or '-' }}{% if t.feedback.note %}：{{ t.feedback.note }}{% endif %}</span>{% endif %}
+        {% if (t.feedback or {}).get('rating') == 'useful' %}<span class="tag">👍</span>{% endif %}
+        <span class="k">{{ t.total_ms and '%.0fms'|format(t.total_ms) or '' }}</span>
+        <button class="copy" data-copy="{{ t.query }}">复制 query</button>
+      </div>
+      <p class="q">{{ t.query }}</p>
+      <div class="facts">
+        {% if t.answer %}<span>出口 {{ t.answer.kind }}{% if t.answer.model %} · {{ t.answer.model }}{% endif %}{% if t.answer.chars %} · {{ t.answer.chars }} 字{% endif %}</span>{% endif %}
+        {% if t.hits is not none %}<span>召回 {{ t.hits }} 片</span>
+        {% elif t.chunks %}<span>召回 {{ t.chunks|length }} 片</span>{% endif %}
+        {% if t.sop %}<span>SOP {{ t.sop.id }} · step {{ t.sop.step }}{% if t.sop.slots %} · {{ t.sop.slots }}{% endif %}</span>{% endif %}
+        {% if t.ms %}<span>耗时 retrieve {{ t.ms.get('retrieve') }}ms / 合计 {{ t.ms.get('total') }}ms</span>{% endif %}
+      </div>
+      <details><summary>链路与检索（path · 检索各遍 · rewrite / merge / 影子）</summary>
+        {% if t.path %}
+        <table><caption>有序路径</caption><tr><th>节点</th><th>状态</th><th>by</th><th>ms</th><th>out</th></tr>
+        {% for n in t.path %}<tr><td>{{ n.node }}</td><td>{{ n.status }}</td><td>{{ n.by or '' }}</td>
+          <td>{{ n.ms if n.ms is not none else '' }}</td><td>{{ n.out|pairs }}</td></tr>{% endfor %}</table>
+        {% endif %}
+        {% if t.detail %}{{ kvtable('detail · 标签细节', t.detail) }}{% endif %}
+        {% if t.passes %}
+        <table><caption>检索各遍</caption>
+          <tr><th>遍</th><th>域过滤</th><th>稠密</th><th>稀疏</th><th>融合</th><th>精排 in→out</th><th>模型</th></tr>
+          {% for p in t.passes %}{% set rk = p.rerank or {} %}
+          <tr><td>{{ p.pass|fmt }}</td>
+            <td>{% if p.filter %}{{ p.filter.file_name if p.filter.file_name else p.filter }}{% else %}全库{% endif %}</td>
+            <td>{{ p.dense|fmt }}</td><td>{{ p.sparse|fmt }}</td><td>{{ p.fused|fmt }}</td>
+            <td>{{ rk.get('in')|fmt }} → {{ rk.get('out')|fmt }}{% if rk.degraded %}（降级，未精排）{% endif %}</td>
+            <td>{{ rk.get('model')|fmt }}</td></tr>
+          {% endfor %}
+        </table>
+        {% endif %}
+        {% if t.rewrite %}
+        <table class="kv"><caption>rewrite · 检索口径</caption>
+          {% for k, v in t.rewrite.items() if k != 'normalize' %}<tr><th>{{ k }}</th><td>{{ v|fmt }}</td></tr>{% endfor %}
+          {% set nz = t.rewrite.normalize %}{% if nz %}
+          <tr><th>normalize</th><td>{% if nz.changed %}改了 → {{ nz.text }}{% else %}未改（{{ nz.text }}）{% endif %}</td></tr>
+          {% endif %}
+        </table>
+        {% endif %}
+        {% if t.merge %}{{ kvtable('merge · 两路合并', t.merge) }}{% endif %}
+        {% if t.twice and t.twice.active %}{{ kvtable('twice_retrieval · 撤域二次召回', t.twice) }}{% endif %}
+        {% if t.shadow %}{{ kvtable('shadow · 影子决策', t.shadow) }}{% endif %}
+        {% if t.sop_gate %}{{ kvtable('sop_gate · SOP 门', t.sop_gate) }}{% endif %}
+      </details>
+      {% if t.chunks %}
+      <details><summary>召回片段 {{ t.chunks|length }} 片（正文）</summary>
+        {% for c in t.chunks %}
+        <div class="chunk">
+          <div class="facts"><span class="k">rank {{ c.rank }} · score {{ c.score }}</span>
+            <span class="k">{{ c.file }}{% if c.entry %} · {{ c.entry }}{% endif %}</span><span class="k">{{ c.chars }} 字</span>
+            <span class="k">稠密#{{ c.dense }} 稀疏#{{ c.sparse }} rrf{{ c.rrf }} 精排{{ c.rerank }}</span></div>
+          <pre>{{ c.text }}{% if c.truncated %}…（已截断）{% endif %}</pre>
+        </div>
+        {% endfor %}
+      </details>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </section>
+{% endfor %}
+{% if not sessions %}<p>这一天没有 trace。</p>{% endif %}
+</main>
+<script>
+const kw = document.getElementById('kw');
+let on = new Set();
+document.querySelectorAll('.chip[data-f]').forEach(c => c.onclick = () => {
+  const k = c.dataset.f; on.has(k) ? on.delete(k) : on.add(k); c.classList.toggle('on'); apply();
+});
+document.querySelectorAll('.chip[data-b]').forEach(c => c.onclick = () => {
+  const k = 'b:' + c.dataset.b; on.has(k) ? on.delete(k) : on.add(k); c.classList.toggle('on'); apply();
+});
+document.getElementById('reset').onclick = () => { on.clear(); kw.value = '';
+  document.querySelectorAll('.chip.on').forEach(c => c.classList.remove('on')); apply(); };
+kw.oninput = apply;
+function apply() {
+  const text = (kw.value || '').trim().toLowerCase();
+  const bs = [...on].filter(k => k.startsWith('b:')).map(k => k.slice(2));
+  document.querySelectorAll('.turn').forEach(t => {
+    const d = t.dataset;
+    let ok = true;
+    if (on.has('useless') && d.useless !== '1') ok = false;
+    if (on.has('no_recall') && d.no_recall !== '1') ok = false;
+    if (on.has('norm') && d.norm !== '1') ok = false;
+    if (on.has('shadow') && d.shadow !== '1') ok = false;
+    if (on.has('bad') && d.bad !== '1') ok = false;
+    if (on.has('slow') && d.slow !== '1') ok = false;
+    if (bs.length && !bs.includes(d.branch)) ok = false;
+    if (text && !(d.q || '').toLowerCase().includes(text)) ok = false;
+    t.classList.toggle('hide', !ok);
+  });
+  document.querySelectorAll('section').forEach(s => {
+    const vis = [...s.querySelectorAll('.turn')].some(t => !t.classList.contains('hide'));
+    s.style.display = vis ? '' : 'none';
+  });
+}
+document.querySelectorAll('button.copy').forEach(b => b.onclick = () => {
+  const v = b.dataset.copy || '';
+  (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject())
+    .then(() => { b.textContent = '已复制'; setTimeout(() => b.textContent = '复制 query', 1200); })
+    .catch(() => { const a = document.createElement('textarea'); a.value = v; document.body.appendChild(a);
+                   a.select(); document.execCommand('copy'); a.remove(); b.textContent = '已复制'; });
+});
+</script></body></html>
+"""
+
+
+def render(sessions: list, date: str, root: str) -> str:
+    import jinja2          # 只 HTML 路径需要，文本视图不因此多一个依赖
+
+    branch_counts = {}
+    branches = []
+    for s in sessions:
+        for t in s["turns"]:
+            b = t["branch"]
+            branch_counts[b] = branch_counts.get(b, 0) + 1
+            if b not in branches:
+                branches.append(b)
+    env = jinja2.Environment(autoescape=True)
+    env.filters["fmt"] = _fmt_val
+    env.filters["pairs"] = _fmt_pairs
+    return env.from_string(TEMPLATE).render(
+        sessions=sessions, date=date, root=root, branches=branches,
+        branch_counts=sorted(branch_counts.items(), key=lambda kv: -kv[1]),
+        total_turns=sum(s["n_turns"] for s in sessions),
+        total_useless=sum(s["n_useless"] for s in sessions))
+
+
+def out_dir(arg: str = "") -> str:
+    """报告输出根目录：--out-dir 优先，默认项目下 reports/。"""
+    return arg or os.path.join(_ROOT, "reports")
+
+
+def resolve_day(root: str, date_arg: str = "") -> str:
+    """YYYYMMDD：给了就用它，否则取最近有 trace 的一天。"""
+    return (date_arg or "").replace("-", "") or latest_date(root)
+
+
+def default_out_path(base: str, day: str) -> str:
+    """默认落点：<base>/<YYYYMMDD>/trace_<YYYYMMDD>.html（与 trace 一样按日期一层目录）。"""
+    return os.path.join(base, day, "trace_%s.html" % day)
+
+
+def write_report(root: str, day: str, out_path: str, max_chunk: int = 1500) -> tuple:
+    """把某天渲染成自包含 HTML 写到 out_path（父目录自动建），返回 (路径, 会话数, 轮数)。"""
+    date = "%s-%s-%s" % (day[:4], day[4:6], day[6:8])
+    sessions = [session_view(root, name, date, max_chunk) for name, _ in trace_reader.sessions_on(root, date)]
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(render(sessions, date, root))
+    return out_path, len(sessions), sum(s["n_turns"] for s in sessions)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="读主链路 trace，看某个会话每一轮的走向")
     ap.add_argument("--session", help="会话 id（= logs/trace 下的目录名，如 abc12345-……）")
@@ -415,9 +723,20 @@ def main() -> None:
                     help="只看某天（YYYY-MM-DD）；默认：--list 看今天，--session 看全部")
     ap.add_argument("--dir", default=None, help="trace 根目录，默认 logs/trace（或 TRACE_DIR）")
     ap.add_argument("--flat", action="store_true", help="按平铺形态打印")
+    ap.add_argument("--html", action="store_true", help="产出那天的 HTML 报告（只出报告，不打印 trace 文本）")
+    ap.add_argument("--out-dir", default=None, help="HTML 报告输出根目录，默认 reports/；报告落在其 <YYYYMMDD>/ 下")
+    ap.add_argument("--out", default=None, help="HTML 报告的输出文件整路径；给了就不再套日期层")
+    ap.add_argument("--max-chunk-chars", type=int, default=1500, help="HTML 里单条召回片段正文的截断上限")
     args = ap.parse_args()
 
     root = _root_dir(args.dir)
+    if args.html:
+        day = resolve_day(root, args.date or "")
+        out = args.out or default_out_path(out_dir(args.out_dir), day)
+        path, n_sessions, n_turns = write_report(root, day, out, args.max_chunk_chars)
+        print("已生成 %s（%d 会话 / %d 轮，%.0f KB）"
+              % (path, n_sessions, n_turns, os.path.getsize(path) / 1024))
+        return
     if args.chunks or args.shadow or args.feedback:
         if not args.session:
             print("--chunks / --shadow / --feedback 需要配合 --session")

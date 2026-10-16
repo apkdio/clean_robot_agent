@@ -22,6 +22,7 @@ _LABELS_FILE = "labels.json"
 
 _head = None
 _labels = None
+_head_unavailable = False   # 加载失败后不再每轮重试（失败是秒级的）
 _emb = None
 
 
@@ -38,25 +39,30 @@ def _get_emb():
 
 
 def _load_model():
-    """懒加载训练好的分类头和标签映射。"""
-    global _head, _labels
+    """懒加载训练好的分类头和标签映射；不可用时返回 (None, None)，由调用方显式降级。"""
+    global _head, _labels, _head_unavailable
     if _head is not None:
         return _head, _labels
+    if _head_unavailable:
+        return None, None
 
     import torch
     from tools.path_tool import get_abs_path
 
-    head_path = get_abs_path(f"{_MODEL_DIR}/{_HEAD_FILE}")
-    labels_path = get_abs_path(f"{_MODEL_DIR}/{_LABELS_FILE}")
+    # 先在局部装配完再赋值：失败时不留半个状态
+    head = torch.nn.Linear(1024, 4)
+    try:
+        head.load_state_dict(torch.load(get_abs_path(f"{_MODEL_DIR}/{_HEAD_FILE}"), map_location="cpu"))
+        head.eval()
+        with open(get_abs_path(f"{_MODEL_DIR}/{_LABELS_FILE}"), encoding="utf-8") as f:
+            labels = json.load(f)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[IntentRouter] 分类头不可用，降级为 unknown：%s", e)
+        _head_unavailable = True
+        return None, None
 
-    _head = torch.nn.Linear(1024, 4)
-    _head.load_state_dict(torch.load(head_path, map_location="cpu"))
-    _head.eval()
-
-    with open(labels_path, "r", encoding="utf-8") as f:
-        _labels = json.load(f)
-
-    logger.info("[IntentRouter] classifier head loaded (%s)", labels_path)
+    _head, _labels = head, labels
+    logger.info("[IntentRouter] classifier head loaded (%s)", get_abs_path(_LABELS_FILE))
     return _head, _labels
 
 
@@ -71,6 +77,9 @@ def route_intent_with_margin(query: str) -> tuple[str, float]:
     import torch
 
     head, labels = _load_model()
+    if head is None:
+        # 显式降级：unknown 会走软引导 + RAG（加载失败已记 WARNING）
+        return "unknown", 0.0
     emb = _get_emb()
     # 用 embed_documents（与训练同一条路径）而非 embed_query，
     # 保证训练与推理的 embedding 一致。

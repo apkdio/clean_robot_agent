@@ -126,6 +126,24 @@ def test_purchase_duration_guard():
             "保修咨询不进日期结构化（否则会答成型号列表）")
 
 
+def test_intent_head_unavailable_degrades():
+    """分类头坏了要显式降级为 unknown，而不是拿随机初始化的头继续分类。"""
+    import torch
+
+    import tools.intent_router as ir
+
+    saved = (ir._head, ir._labels, ir._head_unavailable, torch.load)
+    ir._head, ir._labels, ir._head_unavailable = None, None, False
+    torch.load = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("head 文件坏了"))
+    try:
+        label, margin = ir.route_intent_with_margin("怎么设置定时清扫")
+        _assert_eq(label, "unknown", "分类头不可用 → 降级 unknown（走软引导 + RAG）")
+        _assert_eq(margin, 0.0, "降级时 margin 记 0")
+        _assert(ir._head is None, "不许把随机初始化的头留在模块状态里")
+    finally:
+        ir._head, ir._labels, ir._head_unavailable, torch.load = saved
+
+
 TESTS = [
     test_detect_emotion,
     test_strip_emotion,
@@ -136,12 +154,13 @@ TESTS = [
     test_danger_intercepted,
     test_danger_negative,
     test_purchase_duration_guard,
+    test_intent_head_unavailable_degrades,
 ]
 
 
 def run():
     reset()
-    return run_tests("Agent 前置防护测试（情绪/注入/危险/退出意图/日期守卫）", TESTS)
+    return run_tests("Agent 前置防护测试（情绪/注入/危险/退出意图/日期与分类头守卫）", TESTS)
 
 
 if __name__ == "__main__":

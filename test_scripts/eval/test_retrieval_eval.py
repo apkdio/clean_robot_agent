@@ -372,13 +372,42 @@ def _config_meta():
     return {"files": [rel for rel, _ in pairs], "fingerprint": _digest(pairs), "key": key}
 
 
+def _index_file_shas(names) -> dict:
+    """索引里每个文件当前带的 `file_sha256` 集合（chunk 入库时写入；老 chunk 可能没这个键）。"""
+    from tools.vector_store import get_vector_store
+
+    store = get_vector_store()
+    out = {}
+    for name in names:
+        try:
+            metas = store._collection.get(where={"file_name": name},
+                                         include=["metadatas"])["metadatas"]
+        except Exception:  # noqa: BLE001
+            continue
+        out[name] = {m.get("file_sha256") for m in metas if m.get("file_sha256")}
+    return out
+
+
+def _print_index_warning() -> None:
+    """索引与版本记录对不上时，在任何轨的汇总里都喊一声——别只在 `--compare` 时才可见。"""
+    idx = _index_meta()
+    if idx.get("in_sync") is True:
+        return
+    if idx.get("in_sync") is None:
+        print(f"  ⚠ 索引状态未知：{idx.get('note')}")
+        return
+    pending = idx.get("pending") or {}
+    bits = "、".join(f"{k}={v}" for k, v in pending.items() if v) or "（明细见 --compare）"
+    print(f"  ⚠ 索引与知识库版本记录不一致（{bits}）——本次结果不可信，先重建 / 重入库再谈回归")
+
+
 def _index_meta():
     """索引有没跟上知识库：拿热更新的版本记录（data/state/kb_metadata.jsonl = 索引里现在是什么）与当前目录比。
 
     不用文件 mtime —— Chroma 读一次也会动文件时间，mtime 判不出「索引落后」。
     """
     from tools.config_tool import get_data_dir
-    from tools.hot_ingest import load_kb_metadata, scan_files
+    from tools.hot_ingest import chunks_by_file, load_kb_metadata, scan_files
 
     meta = load_kb_metadata()
     if not meta:
@@ -388,10 +417,23 @@ def _index_meta():
     added = sorted(set(live) - set(indexed))
     removed = sorted(set(indexed) - set(live))
     changed = sorted(k for k in set(live) & set(indexed) if live[k] != indexed[k])
-    if not (added or changed or removed):
+    # 文件哈希一致 ≠ 索引完好：逐文件 chunk 数也要对得上。踩过（2026-10-16）——型号文件的 16 个 chunk
+    # 整批从索引里消失，而文件与版本记录都没变，只比 sha256 会报「已同步」，其实型号直出已全空。
+    # 记录里本来就存了 chunks，直接拿来比；对不上说明索引被删过而没补回来。
+    want = {rel: (v or {}).get("chunks") for rel, v in (meta.get("file_list") or {}).items()}
+    have = chunks_by_file([os.path.basename(rel) for rel in want]) if want else {}
+    short = sorted(rel for rel, n in want.items() if n and have.get(os.path.basename(rel), 0) != n)
+    # 再比「块是不是这一版建的」：每个 chunk 带着入库时的 file_sha256，与记录里的 sha256 对不上说明
+    # 索引留着旧版本的块——chunk 数一样也可能内容陈旧。老 chunk 没这个键时按「无法判定」放过。
+    shas = _index_file_shas([os.path.basename(rel) for rel in want]) if want else {}
+    stale = sorted(rel for rel, v in (meta.get("file_list") or {}).items()
+                   if (v or {}).get("sha256")
+                   and any(s != v["sha256"] for s in shas.get(os.path.basename(rel), set())))
+    if not (added or changed or removed or short or stale):
         return {"in_sync": True, "ts": meta.get("ts")}
     return {"in_sync": False, "ts": meta.get("ts"),
-            "pending": {"added": added, "changed": changed, "removed": removed}}
+            "pending": {"added": added, "changed": changed, "removed": removed,
+                        "chunks_mismatch": short, "chunks_stale": stale}}
 
 
 def _index_label(idx):
@@ -599,6 +641,7 @@ def run():
     records, metrics, strict_ood_fail = _compute(entries, hr)
     _print_table(records)
     _print_metrics(metrics)
+    _print_index_warning()
 
     # 回归护栏：严格领域外 query 应零召回（依赖 P0-1 阈值 + P0-2 精排）
     for q in strict_ood_fail:

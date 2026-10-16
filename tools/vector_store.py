@@ -58,10 +58,32 @@ def get_vector_store() -> Chroma:
     )
 
 
+def store_fingerprint() -> str:
+    """索引指纹：逐 chunk 的 (文件名, 文件 sha256) 排序后的摘要。
+
+    条数、文件名、**文件内容**任一变化都会变。只数 chunk 条数会漏掉「改了正文但条数不变」
+    （改价格 / 改参数 / 改错字），那会让 `models.pkl` 的型号价格与 BM25 的关键词索引一直用旧数据。
+    """
+    import hashlib
+
+    got = get_vector_store()._collection.get(where={"file_name": {"$ne": "__never__"}},
+                                             include=["metadatas"])
+    rows = sorted("%s\u0001%s" % ((m or {}).get("file_name") or "?", (m or {}).get("file_sha256") or "-")
+                  for m in got.get("metadatas") or [])
+    return hashlib.sha1("\n".join(rows).encode("utf-8")).hexdigest()[:12]
+
+
+def ids_of_file(file_name: str) -> list:
+    """某文件当前在索引里的全部 chunk id（替换式重入用）。"""
+    got = get_vector_store()._collection.get(where={"file_name": file_name})
+    return list(got.get("ids") or [])
+
+
 def ingest_file(file_path: str, source_tag: str = "") -> dict:
     """解析、分块并把单个文件向量化入库，返回 {status, file, chunks, sha256, elapsed}。
 
-    不做「先删后插」——同一文件重复调用会叠加重复 chunk，去重由调用方负责。
+    同一文件重复调用 = **替换**：先抓旧 chunk 的 id，入库成功后再删——
+    失败时旧 chunk 原样留着（不留「0 chunk」空洞），成功时不会叠加重复条目。
     """
     import time
 
@@ -119,7 +141,11 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
     # 持久化到 Chroma
     logger.info(f"[Ingest] Embedding {len(chunks)} chunk(s) from {file_name}")
     store = get_vector_store()
+    old_ids = ids_of_file(file_name)
     store.add_documents(chunks)
+    if old_ids:
+        store._collection.delete(ids=old_ids)
+        logger.info("[Ingest] Replaced %d old chunk(s) of %s", len(old_ids), file_name)
 
     elapsed = round(time.time() - start, 2)
     logger.info(f"[Ingest] Done {file_name}: {len(chunks)} chunks, {elapsed}s")

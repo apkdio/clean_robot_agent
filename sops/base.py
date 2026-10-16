@@ -3,7 +3,11 @@
 一个 SOP 是一组有状态的步骤，通过槽位（slot）记忆上下文，逐步引导用户完成一个业务场景。
 步骤类型：ask（提问收集槽位）、action（执行动作，如按预算检索）、reply（输出结果并结束）。
 """
+import hashlib
+import json
 import re
+import time
+
 from tools import trace_store
 from tools.log_tool import get_logger
 from config.word_dict_config import (
@@ -38,8 +42,20 @@ def is_brand(query: str) -> bool:
     return any(w in query for w in BRAND_WORDS)
 
 
+def _def_ver(sop: dict) -> str:
+    """SOP 定义里「与续跑状态耦合」那部分的短指纹：步骤序列（id / 类型 / 槽位 / 是否带 when）与重试上限。
+
+    只用于判断 Redis 里的半截状态还能不能用：文案（ask / retry / intro / template）与触发词、guards
+    变了不影响续跑，不进指纹。
+    """
+    shape = [[s.get("id"), s.get("type"), s.get("slot"), bool(s.get("when"))] for s in sop.get("steps") or []]
+    raw = json.dumps([shape, sop.get("max_retry", 2)], ensure_ascii=False)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+
+
 def register(sop: dict) -> None:
-    """注册一个 SOP 定义。"""
+    """注册一个 SOP 定义，并算好它的定义指纹（供 Redis 里的半截状态对账）。"""
+    sop["def_ver"] = _def_ver(sop)
     SOPS[sop["id"]] = sop
 
 
@@ -57,7 +73,8 @@ def get_last_recommend(session_id: str):
 
 # 当前活跃会话，按 session_id 隔离（Redis 可用时存 Redis，否则本地降级）
 _sessions = {}
-# 状态形如 {"sop_id": xxx, "step": xxx, "slots": {xxx}, "retry_count": xxx, "result": {xxx}}
+# 状态形如 {"sop_id": xxx, "def_ver": xxx, "step": xxx, "slots": {xxx}, "retry_count": xxx, "result": {xxx}}
+# （无 Redis 的降级态另带 "ts"，读时按 sop_ttl 校验过期；Redis 在时不带，由 Redis 自己过期）
 _finished = {}  # session_id -> 刚收尾的那份状态（形状同 _sessions，供 CaseTrace 记槽位/结果，取走即清）
 
 
@@ -65,14 +82,48 @@ def _session_key(session_id: str) -> str:
     return f"sop:session:{session_id}"
 
 
+def make_session(sop_id: str, step: int = 0, slots: dict = None, retry_count: int = 0) -> dict:
+    """造一份带定义指纹的会话状态（`_start` 与测试注入共用，避免手搓状态漏指纹）。"""
+    return {"sop_id": sop_id, "def_ver": (SOPS.get(sop_id) or {}).get("def_ver"),
+            "step": int(step), "slots": dict(slots or {}), "retry_count": int(retry_count)}
+
+
+def _same_def(session: dict) -> bool:
+    """状态与当前 SOP 定义是否同一版（没带指纹的老状态、SOP 已被删掉，都算对不上）。"""
+    sop = SOPS.get(session.get("sop_id") or "")
+    return bool(sop) and session.get("def_ver") == sop.get("def_ver")
+
+
 def _load_session(session_id: str):
-    """读会话状态。Redis 可用从 Redis 读，否则从本地 _sessions 读。"""
-    from tools.redis_store import get_redis, json_loads
+    """读会话状态；与当前 SOP 定义对不上就丢掉它（代码改过 SOP、Redis 里的旧状态还在）。
+
+    状态的 `step` 是步骤下标、`slots` 是槽位键名，定义一动就会指向别的步骤，续跑必然串场；
+    这类状态一律作废，本轮按「没有活跃 SOP」正常作答，并留一条 WARNING 便于对账。
+    """
+    from tools.redis_store import get_redis, json_loads, sop_ttl
     r = get_redis()
     if r is not None:
         raw = r.get(_session_key(session_id))
-        return json_loads(raw) if raw else None
-    return _sessions.get(session_id)
+        session = json_loads(raw) if raw else None
+    else:
+        # 降级的内存态没有 Redis 的 TTL，得自己算：`ts` 每轮重盖，与 `SET ... EX` 一样是滑动窗口
+        session = _sessions.get(session_id)
+        if session and time.time() - float(session.get("ts") or 0) > sop_ttl():
+            logger.warning("[SOP] 本地降级会话已过期，作废：sop=%s（session=%s）",
+                           session.get("sop_id"), session_id)
+            _delete_session(session_id)
+            return None
+    if session and not _same_def(session):
+        cur = (SOPS.get(session.get("sop_id") or "") or {}).get("def_ver") or "未注册"
+        logger.warning("[SOP] SOP 定义已变，作废旧状态：sop=%s 状态指纹=%s 现定义=%s（session=%s）",
+                       session.get("sop_id"), session.get("def_ver") or "无", cur, session_id)
+        # 留下痕（节点与状态都在闭集里；`by` 的新取值见 notes/TRACE.md）
+        trace_store.node("sop.active", status="skipped", by="stale_def",
+                         in_={"sop": session.get("sop_id"),
+                              "def": "%s→%s" % (session.get("def_ver") or "无", cur)})
+        _delete_session(session_id)
+        return None
+    return session
 
 
 def _save_session(session_id: str, session: dict):
@@ -82,6 +133,7 @@ def _save_session(session_id: str, session: dict):
     if r is not None:
         r.set(_session_key(session_id), json_dumps(session), ex=sop_ttl())
     else:
+        session["ts"] = time.time()      # 降级态自己算过期时间（Redis 路径由 Redis 管）
         _sessions[session_id] = session
 
 
@@ -115,7 +167,7 @@ def get_sop_state(session_id: str) -> dict:
 
 
 def _start(session_id: str, sop_id: str):
-    session = {"sop_id": sop_id, "step": 0, "slots": {}, "retry_count": 0}
+    session = make_session(sop_id)
     _save_session(session_id, session)
     return session
 
@@ -296,6 +348,14 @@ def _run(session_id: str, user_input: str):
         _end(session_id)
         logger.warning("[SOP] %s ended without reply", sop["id"])
         return "", True
+    except Exception as e:  # noqa: BLE001
+        # 步骤函数（when / extract / action）炸了：结束会话，别让下一轮还停在这一步重复失败；
+        # 异常照常向上抛——外层 ask_stream 出兜底话术、trace 记 error
+        logger.warning("[SOP] %s 第 %s 步执行失败（%s）：%s",
+                       sop["id"], session["step"], type(e).__name__, e)
+        ended = True        # 让下面的 finally 不再把状态写回去
+        _end(session_id)
+        raise
     finally:
         trace_store.step("sop", flow=flow)
         # 会话未结束（停在 ask 等下一轮）→ 保存最新状态

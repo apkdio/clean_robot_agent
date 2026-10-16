@@ -8,7 +8,7 @@ SOP 会话状态与统一待确认状态——所以把最小的 setup 接口集
     setup = {"danger_word": "糊味", "carry_count": 1, "intent": "unknown"}
     → set_danger_window(sid, "糊味"); set_carry_count(sid, 1)
 
-用到的私有接口（`agent._SAFETY_CARRY_PREFIX`、`sops.base._save_session`）都在本文件里封住：
+用到的私有接口（`agent._SAFETY_CARRY_PREFIX`、`sops.base.make_session` / `_save_session`）都在本文件里封住：
 将来内部结构变了，只改这一处。
 """
 
@@ -42,11 +42,13 @@ def set_carry_count(session_id: str, n: int) -> None:
 
 def set_active_sop(session_id: str, sop_id: str, step: int = 0,
                    slots: Optional[Dict] = None, retry_count: int = 0) -> None:
-    """直接写入一个活跃 SOP 会话（不跑首轮引导，便于精确构造场景）。"""
-    from sops.base import _save_session
+    """直接写入一个活跃 SOP 会话（不跑首轮引导，便于精确构造场景）。
 
-    _save_session(session_id, {"sop_id": sop_id, "step": int(step),
-                               "slots": dict(slots or {}), "retry_count": int(retry_count)})
+    状态要带当前定义指纹（`make_session` 负责），否则会被 `_load_session` 当成过期状态作废。
+    """
+    from sops.base import _save_session, make_session
+
+    _save_session(session_id, make_session(sop_id, step=step, slots=slots, retry_count=retry_count))
 
 
 def set_pending(session_id: str, kind: str, **data) -> None:

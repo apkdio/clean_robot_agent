@@ -287,6 +287,46 @@ def test_rerank_scores_e2e():
     _assert_in("rerank_score", res[0][2], "meta 内含 rerank_score")
 
 
+class _FakeCollection:
+    """只为 BM25 缓存的指纹计算造假 collection（只用到 get()/count()）。"""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def get(self, where=None, include=None):
+        return {"metadatas": [{"file_name": f, "file_sha256": h} for f, h in self._rows]}
+
+    def count(self):
+        return len(self._rows)
+
+
+def test_bm25_cache_stale_on_content_change():
+    """BM25 缓存按内容摘要判新鲜度：条数不变、正文改了 → 不能复用旧索引。"""
+    import pickle
+    import tempfile
+    from tools import vector_store
+    from tools.sparse_retriever import SparseRetriever
+    real_store, real_path = vector_store.get_vector_store, SparseRetriever._cache_path
+    tmp = os.path.join(tempfile.mkdtemp(prefix="bm25_cache_"), "bm25.pkl")
+
+    class _S:
+        _collection = _FakeCollection([("型号.txt", "sha-new")])
+
+    try:
+        vector_store.get_vector_store = lambda: _S()
+        SparseRetriever._cache_path = staticmethod(lambda: tmp)
+        cur = SparseRetriever._fingerprint()
+        for fp, expect, msg in (({**cur, "store": "旧内容摘要"}, False, "内容摘要不符 → 判过期、不复用"),
+                                (cur, True, "指纹一致 → 正常复用")):
+            with open(tmp, "wb") as f:
+                pickle.dump({"chunks": [], "corpus_tokens": [], "bm25_model": None,
+                             "fingerprint": fp}, f)
+            _assert_eq(SparseRetriever().load(), expect, msg)
+    finally:
+        vector_store.get_vector_store = real_store
+        SparseRetriever._cache_path = real_path
+
+
 TESTS = [
     test_route_domain,
     test_domain_scoring_and_filter,
@@ -300,6 +340,7 @@ TESTS = [
     test_rrf_fusion,
     test_split_numbered_entries,
     test_drop_without_dense_support,
+    test_bm25_cache_stale_on_content_change,
     test_reranker_unavailable_returns_none,
     test_hybrid_domain_filter_e2e,
     test_score_threshold_filters_out_of_domain_e2e,

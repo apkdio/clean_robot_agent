@@ -153,9 +153,25 @@ def chunks_by_file(names) -> dict:
     return out
 
 
-def kb_file_list(scan: dict) -> dict:
+def ids_of_file(name: str) -> list:
+    """某文件当前在索引里的 chunk id（换新内容时删旧用）；取不到返回空表。"""
+    from tools.vector_store import ids_of_file as _ids_of_file
+    try:
+        return _ids_of_file(name)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[HotIngest] 取旧 chunk id 失败（%s）：%s", name, e)
+        return []
+
+
+def files_missing_from_index(scan: dict, counts: dict) -> list:
+    """扫描到、但索引里 0 chunk 的文件（相对路径）——哈希比对看不见这种状态。"""
+    return [rel for rel in scan if counts.get(os.path.basename(rel), 0) == 0]
+
+
+def kb_file_list(scan: dict, counts: dict = None) -> dict:
     """扫描结果 + 索引里的 chunk 数 → metadata 的 file_list。"""
-    counts = chunks_by_file([os.path.basename(rel) for rel in scan])
+    if counts is None:
+        counts = chunks_by_file([os.path.basename(rel) for rel in scan])
     return {rel: {"sha256": sha256, "chunks": counts.get(os.path.basename(rel), 0),
                   "ingested": counts.get(os.path.basename(rel), 0) > 0}
             for rel, sha256 in scan.items()}
@@ -190,30 +206,84 @@ def diff_snapshot(old: dict, new: dict):
     return added, changed, removed
 
 
+def _project_root() -> str:
+    """仓库根（本文件在 tools/ 下）。"""
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def git_state_of(path: str) -> str:
+    """该文件的 git 状态（只读）：已提交 / 有未提交改动 / 未跟踪 / 未知，供变更明细判断"有人在动"。"""
+    import subprocess
+    try:
+        out = subprocess.run(["git", "status", "--porcelain", "--", os.path.abspath(path)],
+                             cwd=_project_root(), capture_output=True, text=True,
+                             encoding="utf-8", timeout=5)
+    except Exception as e:  # noqa: BLE001
+        return "未知（git 不可用：%s）" % e
+    if out.returncode != 0:
+        return "未知（git 返回 %s）" % out.returncode
+    line = (out.stdout or "").strip()
+    if not line:
+        return "已提交（与 HEAD 一致）"
+    code = line.split()[0]
+    return "未跟踪（新文件）" if code == "??" else "有未提交改动"
+
+
+def change_detail(path: str) -> str:
+    """变更明细：修改时间 + 大小/行数 + git 状态（乱码误触、半截保存都能看出异常）。"""
+    try:
+        st = os.stat(path)
+        mtime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st.st_mtime))
+        size = st.st_size
+    except OSError as e:
+        return "读取文件信息失败：%s" % e
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = sum(1 for _ in f)
+    except Exception:  # noqa: BLE001
+        lines = "?"
+    return "mtime=%s | %sB / %s行 | git=%s" % (mtime, size, lines, git_state_of(path))
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # 应用变更
 # ──────────────────────────────────────────────────────────────────────────
 
 def apply_changes(data_dir: str, added: dict, changed: dict, removed: list) -> dict:
-    """根据文件差异增量同步 Chroma。"""
+    """根据文件差异增量同步 Chroma。
+
+    changed 先入库、成功后再删旧 chunk：`ingest_file` 最后一步才落库，先删后插一失败就留下 0 chunk 的空洞。
+    """
     from tools.vector_store import get_vector_store, ingest_file
 
     store = get_vector_store()
-    results = {"added": 0, "changed": 0, "removed": 0}
+    results = {"added": 0, "changed": 0, "removed": 0, "failed": []}
 
     for rel in added:
         r = ingest_file(os.path.join(data_dir, rel))
         if r.get("status") == "ok":
             results["added"] += 1
             logger.info("[HotIngest] added: %s (%d chunks)", rel, r.get("chunks", 0))
+        else:
+            results["failed"].append(rel)
+            logger.warning("[HotIngest] added 失败，跳过本轮: %s (%s)", rel, r.get("message"))
 
     for rel in changed:
         file_name = os.path.basename(rel)
-        store._collection.delete(where={"file_name": file_name})
+        old_ids = ids_of_file(file_name)          # 先把旧 chunk 记下来，插成功再删
         r = ingest_file(os.path.join(data_dir, rel))
         if r.get("status") == "ok":
+            if old_ids:
+                try:
+                    store._collection.delete(ids=old_ids)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("[HotIngest] 删旧 chunk 失败（%s，会留重复）: %s", file_name, e)
             results["changed"] += 1
-            logger.info("[HotIngest] changed: %s (%d chunks)", rel, r.get("chunks", 0))
+            logger.info("[HotIngest] changed: %s (%d chunks, 删旧 %d)", rel, r.get("chunks", 0), len(old_ids))
+        else:
+            results["failed"].append(rel)
+            logger.warning("[HotIngest] changed 失败，旧 chunk 保持不动、下轮重试: %s (%s)",
+                           rel, r.get("message"))
 
     for rel in removed:
         file_name = os.path.basename(rel)
@@ -224,8 +294,11 @@ def apply_changes(data_dir: str, added: dict, changed: dict, removed: list) -> d
     return results
 
 
-def _rebuild_sparse_index() -> None:
-    """强制重建 BM25 索引（丢弃缓存，避免复用陈旧的 pickle）。"""
+def rebuild_sparse_index() -> None:
+    """强制重建 BM25 索引并失效型号缓存（丢弃缓存，避免复用陈旧的 pickle）。
+
+    热更新与手动入库都走这里：知识库变更后 BM25 与 models.pkl 都过期了。
+    """
     from tools.path_tool import get_abs_path
     # 同步失效型号元数据缓存（models.pkl）——知识库变更后型号数据已过期
     for cache_name in ("data/pkl/bm25_index.pkl", "data/pkl/models.pkl"):
@@ -264,6 +337,13 @@ def run_once(data_dir: str = None) -> bool:
         new = scan_files(data_dir)
         added, changed, removed = diff_snapshot(old, new)
 
+        # 索引自愈：扫到却是 0 chunk 的文件，按 changed 重入（哈希比对看不见这种状态）
+        counts = chunks_by_file([os.path.basename(rel) for rel in new])
+        for rel in files_missing_from_index(new, counts):
+            if rel not in added and rel not in changed:
+                logger.warning("[HotIngest] 索引里没有该文件的 chunk，按 changed 重入：%s", rel)
+                changed[rel] = new[rel]
+
         if not (added or changed or removed):
             logger.info("[HotIngest] No changes detected")
             return False
@@ -272,10 +352,22 @@ def run_once(data_dir: str = None) -> bool:
             "[HotIngest] added=%d changed=%d removed=%d",
             len(added), len(changed), len(removed),
         )
-        apply_changes(data_dir, added, changed, removed)
-        _rebuild_sparse_index()
-        save_snapshot(new)
-        append_kb_metadata(kb_file_list(new))
+        # 变更明细：在应用之前打，摄取中途失败也留下痕迹
+        for kind, rels in (("added", list(added)), ("changed", list(changed)), ("removed", list(removed))):
+            for rel in rels:
+                if kind == "removed":
+                    logger.info("[HotIngest] 变更明细：removed %s | 已从目录消失，按记录删其 chunk", rel)
+                else:
+                    logger.info("[HotIngest] 变更明细：%s %s | %s", kind, rel,
+                                change_detail(os.path.join(data_dir, rel)))
+        results = apply_changes(data_dir, added, changed, removed)
+        rebuild_sparse_index()
+        # 快照只为成功的文件推进，失败的下轮还会被 diff 抓到
+        failed = set(results.get("failed") or [])
+        if failed:
+            logger.warning("[HotIngest] 本轮有 %d 个文件未同步，快照不推进：%s", len(failed), sorted(failed))
+        save_snapshot({k: v for k, v in new.items() if k not in failed})
+        append_kb_metadata(kb_file_list(new, counts))
         return True
     finally:
         release_lock("lock:ingest")

@@ -803,6 +803,13 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
     pending = pending_store.get(session_id)
     if pending:
         trace_store.node("sop.pending", in_={"kind": pending.get("kind")})
+        # 待确认里记的 SOP 已被改名/删掉（代码更新过）→ 作废这次待确认，这一句按普通提问继续
+        if pending.get("kind") == "confirm_enter":
+            from sops import SOPS
+            if (pending.get("sop") or "purchase") not in SOPS:
+                logger.warning("[SOP] 待确认里的 SOP 已不存在，作废：%s", pending.get("sop"))
+                pending_store.clear(session_id)
+                pending = None
 
     # 进入侧确认门：上一轮问了「要不要走一遍引导」，这一轮等「是 / 不是」
     if pending and pending.get("kind") == "confirm_enter":

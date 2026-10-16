@@ -173,11 +173,15 @@ def main():
         acc_s = sum(1 for k in hit if pred[k] == y_test[k]) / len(hit)
         print(f"  {s:16s} n={len(hit):3d}  acc={acc_s:.4f}")
 
-    # 保存模型 + 标签映射
+    # 保存模型 + 标签映射：先写临时文件再替换，训练中途失败不会留下半个模型（读侧会当可用）
     os.makedirs(_abs(_MODEL_DIR), exist_ok=True)
-    torch.save(model.state_dict(), os.path.join(_abs(_MODEL_DIR), "classifier_head.pt"))
-    with open(os.path.join(_abs(_MODEL_DIR), "labels.json"), "w", encoding="utf-8") as f:
+    head_path = os.path.join(_abs(_MODEL_DIR), "classifier_head.pt")
+    labels_path = os.path.join(_abs(_MODEL_DIR), "labels.json")
+    torch.save(model.state_dict(), head_path + ".tmp")
+    os.replace(head_path + ".tmp", head_path)
+    with open(labels_path + ".tmp", "w", encoding="utf-8") as f:
         json.dump(_LABELS, f, ensure_ascii=False)
+    os.replace(labels_path + ".tmp", labels_path)
     print(f"\n模型已保存到 {_abs(_MODEL_DIR)}")
 
 

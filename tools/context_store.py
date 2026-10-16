@@ -149,8 +149,10 @@ def _update_meta(session_id: str, **fields) -> dict:
             data = {}
     data.update(fields)
     try:
-        with open(file_path, "w", encoding="utf-8") as f:
+        tmp = file_path + ".tmp"          # 先写临时文件再替换：中途失败不会把 meta 截断
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, file_path)
     except Exception:
         pass
     return data
