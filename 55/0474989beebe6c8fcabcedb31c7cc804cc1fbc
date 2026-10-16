@@ -1,0 +1,102 @@
+test_scripts/unit/test_agent_guards.py
+  s_40681318f5a20b::t_19af7109b4a831 114-128,138,144
+function_tools/model_tool.py
+  s_40681318f5a20b::t_e1d17a6daf40ce 19
+  s_40681318f5a20b::t_bfa516c6ee23d8 246
+  s_40681318f5a20b::t_cb306e7de4ea93 189,196
+  s_40681318f5a20b::t_1212e75e439931 442
+  s_40681318f5a20b::t_da97e0ac59e688 244
+  s_40681318f5a20b::t_4420ff02173509 13-18,20
+  s_40681318f5a20b::t_789686f0487c19 364
+tools/agent.py
+  s_40681318f5a20b::t_dc42ca9385cf70 24-33,35-37
+  s_40681318f5a20b::t_e487f7df295271 678
+  s_40681318f5a20b::t_39f8b91c2b2fe5 427-431
+  s_40681318f5a20b::t_2d37992e2179a0 167
+  s_40681318f5a20b::t_ce93dbe28fbf17 293
+  s_40681318f5a20b::t_a532ca3ba2d541 58
+  s_40681318f5a20b::t_506ad480c97630 976
+  s_40681318f5a20b::t_49676275d4a8f8 34
+sops/purchase.py
+  s_40681318f5a20b::t_b463ac1871250a 9
+  s_40681318f5a20b::t_2300580d0cb757 3,7-8,10,19-27,32-34
+  s_40681318f5a20b::t_bd17a824a7bea8 116
+  s_40681318f5a20b::t_6bfa8862d44595 67-78
+function_tools/date_tool.py
+  s_40681318f5a20b::t_82203443adf20c 12-13
+  s_40681318f5a20b::t_88df8f5ff6366e 23
+test_scripts/trace_report.py
+  s_40681318f5a20b::t_c0ee3a0fde410e 238,242-245
+  s_40681318f5a20b::t_83f86a74a6ef8a 314,319-320
+  s_40681318f5a20b::t_90ff7669f3f3a3 3-4
+test_scripts/unit/test_purchase_sop.py
+  s_40681318f5a20b::t_ddfa5ec04e2aad 181-182,186-202
+  s_40681318f5a20b::t_b38fa0cee74403 276-277
+  s_40681318f5a20b::t_d9840cf3460b4b 6-7
+tools/trace_store.py
+  s_40681318f5a20b::t_978b4abd6e64db 74-99,101,112-118,124-125
+  s_40681318f5a20b::t_f2722eab0df636 7-10
+  s_40681318f5a20b::t_a59ce91b2102ca 19
+tools/intent_router.py
+  s_40681318f5a20b::t_fe63c3297b0607 14
+  s_40681318f5a20b::t_d8d618e0dbbaf4 37
+README.md
+  s_40681318f5a20b::t_0e4914e30de687 47
+  s_40681318f5a20b::t_eb911f603d14c6 128
+  s_40681318f5a20b::t_1f5a4f29d13ab1 13
+config/word_dict_config.py
+  h_26b9a38f4942dd 102
+  s_40681318f5a20b::t_d5f3184961377f 376-378,380
+  s_40681318f5a20b::t_2ce1cfc86ec475 250-256
+  s_40681318f5a20b::t_458f05281ee0c5 273-307,310-375,379,381-384,386-394
+  s_40681318f5a20b::t_fc0181d543ed83 385
+  s_40681318f5a20b::t_d9ff52d3ead36b 10,13
+  s_40681318f5a20b::t_6b3253fcf121aa 308-309
+test_scripts/eval/test_context_eval.py
+  s_321753db235424::t_1645bc9137dde7 662-666
+  s_321753db235424::t_21f020da90e3aa 34
+  s_321753db235424::t_54bd5eee3cd27a 476-477
+  s_321753db235424::t_01ca2ab58f839b 28-30
+  s_321753db235424::t_697e52b568ef4e 458-475,478-590
+tools/metadata_extractor.py
+  s_40681318f5a20b::t_2e41689629e736 323
+  s_40681318f5a20b::t_e7b3c2c738f4a4 12-25
+  s_40681318f5a20b::t_532967736750ba 166
+  s_40681318f5a20b::t_52b11193e3efe8 202
+  s_40681318f5a20b::t_2282771ecb5723 33
+  s_40681318f5a20b::t_42928af7a9db8a 351
+sops/base.py
+  s_40681318f5a20b::t_f4ce19d714c5a5 279,282,284-286
+  s_40681318f5a20b::t_1f05f289bcaea6 12
+  s_40681318f5a20b::t_519d5b1c99a0bc 19
+  s_40681318f5a20b::t_37a362709ae074 313
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.49-trip",
+  "base_commit_sha": "550474989beebe6c8fcabcedb31c7cc804cc1fbc",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_321753db235424": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_vqwohz01c4pd",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    },
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
