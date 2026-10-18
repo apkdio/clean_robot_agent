@@ -112,7 +112,7 @@ def feedback():
         logger.warning("[Feedback] no matching turn: session=%s query=%s", session_id, query[:40])
         return jsonify({"status": "no_turn", "message": "没找到对应的轮次（可能已超出回看天数）"}), 404
     marked = trace_store.feedback_of(session_id, ctx.get("date"), ctx.get("turn_index"))
-    # 同一轮可以再来一次（改主意）：**追加**一条、不改历史，读侧按轮次取最后一条为准
+    # 同一轮可以再来一次（改主意）：追加一条、不改历史，读侧按轮次取最后一条为准
     trace_store.feedback_turn(
         ctx, rating=rating,
         reason=reason[:40],
@@ -265,7 +265,7 @@ def chat_stream():
             except Exception as e:
                 logger.warning(f"[Stream] Generate title failed: {e}")
             # 结构性收尾帧：前端据此禁用「重新回答」（SOP 未结束时不给重发）、并拿到本轮锚点。
-            # 前端按 `data: ` 行解析，`event:` 开头的帧会被旧版忽略，不破坏兼容。
+            # 前端按 data:  行解析，event: 开头的帧会被旧版忽略，不破坏兼容。
             try:
                 from tools import trace_store
                 from sops import has_active_sop

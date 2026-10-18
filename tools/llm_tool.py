@@ -106,7 +106,7 @@ def stream_chat(messages: list, model: str = "", temperature: float = 0.3) -> an
     """流式对话生成器，每次 yield 一个纯字符串文本块。
 
     对支持思考过程的模型（qwen3、deepseek-r1），可设 model_kwargs 为
-    `extra_body={"reasoning": True}` 来包含推理 token。
+    extra_body={"reasoning": True} 来包含推理 token。
     """
     m = model or get_chat_model_name()
     llm = get_chat_model(model=m, temperature=temperature, streaming=True)
@@ -121,7 +121,7 @@ def stream_chat(messages: list, model: str = "", temperature: float = 0.3) -> an
 
 
 def chat_with_tools(messages: list, tools: list, model: str = "", temperature: float = 0.1):
-    """带工具定义的 LLM 调用（function calling），返回 AIMessage（`.tool_calls` 查看决定）。"""
+    """带工具定义的 LLM 调用（function calling），返回 AIMessage（.tool_calls 查看决定）。"""
 
     m = model or get_chat_model_name()
     llm = get_chat_model(model=m, temperature=temperature)

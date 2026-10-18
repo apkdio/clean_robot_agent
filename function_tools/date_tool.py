@@ -1,7 +1,7 @@
 """日期计算工具：把绝对/相对日期表达换算成 ISO 日期范围（"YYYY-MM-DD"）。
 
 绝对表达（"2025年三月"、"2025年"）优先于相对表达（"最近半年"、"今年"）；
-`build_date_filter` 会把 ISO 日期转成 int（YYYYMMDD），供 Chroma 的 $gte/$lte 做数值比较。
+build_date_filter 会把 ISO 日期转成 int（YYYYMMDD），供 Chroma 的 $gte/$lte 做数值比较。
 """
 
 from __future__ import annotations
@@ -217,7 +217,7 @@ def _iso_to_int(iso: str) -> int:
 
 
 def build_date_filter(start_date: str, end_date: str | None = None) -> dict:
-    """构建 publish_date 的 Chroma `where` 过滤条件。
+    """构建 publish_date 的 Chroma where 过滤条件。
 
     闭区间用 $and 组合两个单操作符条件——Chroma 每个表达式只允许一个操作符。
     """

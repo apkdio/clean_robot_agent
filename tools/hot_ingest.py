@@ -24,9 +24,9 @@ _SCAN_INTERVAL = 30 * 60          # 30 分钟
 _SNAPSHOT_FILE = "data/state/ingest_snapshot.json"
 _METADATA_FILE = "data/state/kb_metadata.jsonl"
 KB_METADATA_VERSION = 2
-# 知识库版本记录（data/state/kb_metadata.jsonl）每行的**记录格式版本**，落盘字段名 `schema_v`——
+# 知识库版本记录（data/state/kb_metadata.jsonl）每行的记录格式版本，落盘字段名 schema_v——
 # 不是知识库版本（那是 fingerprint），也不是代码版本（那在评测基线的 env.code）。
-# v2：字段名由 `v` 改为 `schema_v`；老行仍带 `v`，读侧按 kb_metadata_version() 兼容（视作 1）。
+# v2：字段名由 v 改为 schema_v；老行仍带 v，读侧按 kb_metadata_version() 兼容（视作 1）。
 
 _SUPPORTED_EXTS = (".txt", ".md", ".pdf", ".csv", ".docx", ".pptx", ".xlsx")
 
@@ -109,7 +109,7 @@ def load_kb_metadata() -> dict:
 
 
 def kb_metadata_version(rec: dict) -> int:
-    """取一行记录的**格式版本**：新行是 `schema_v`，老行用的键是 `v`（视作 1）；认不出返回 0。"""
+    """取一行记录的格式版本：新行是 schema_v，老行用的键是 v（视作 1）；认不出返回 0。"""
     if not isinstance(rec, dict):
         return 0
     if "schema_v" in rec:
@@ -252,7 +252,7 @@ def change_detail(path: str) -> str:
 def apply_changes(data_dir: str, added: dict, changed: dict, removed: list) -> dict:
     """根据文件差异增量同步 Chroma。
 
-    changed 先入库、成功后再删旧 chunk：`ingest_file` 最后一步才落库，先删后插一失败就留下 0 chunk 的空洞。
+    changed 先入库、成功后再删旧 chunk：ingest_file 最后一步才落库，先删后插一失败就留下 0 chunk 的空洞。
     """
     from tools.vector_store import get_vector_store, ingest_file
 
@@ -374,7 +374,7 @@ def run_once(data_dir: str = None) -> bool:
 
 
 def hot_ingest_loop(data_dir: str = None, interval: int = _SCAN_INTERVAL) -> None:
-    """后台循环：每隔 `interval` 秒执行一次 run_once。"""
+    """后台循环：每隔 interval 秒执行一次 run_once。"""
     data_dir = data_dir or _knowledge_path()
     logger.info("[HotIngest] Started, interval=%ds dir=%s", interval, data_dir)
     while True:

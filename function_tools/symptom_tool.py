@@ -1,10 +1,13 @@
 """故障现象分类工具（repair SOP 关键词规则未命中时的 LLM 兜底）。
 
-`_SYMPTOM_MAP` 的关键词匹配会漏掉"不动弹""拖地留水印"这类口语描述，
+_SYMPTOM_MAP 的关键词匹配会漏掉"不动弹""吸不动"这类口语描述，
 这里用 3b 把故障描述归类到标准类型，再映射回标准检索 query。
 
 与 budget_tool 同理：qwen2.5:3b 只能稳定处理「单一 integer 参数」，故用编号
-symptom_id（0-10）而非多字段，编号含义写进 description。
+symptom_id（0-11）而非多字段，编号含义写进 description。
+
+description 里的编号含义与 SYMPTOM_QUERY_MAP 是同一口径的两处表达，新增或改名症状要同时改两处
+（单测 test_symptom_maps_in_sync 兜住）。
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ SYMPTOM_TOOL_SCHEMA = {
             "编号含义：1=不移动/卡住/不走，2=水箱漏水，3=异响/噪音大，"
             "4=充不进电，5=找不到充电座/回充失败，6=APP连不上/联网失败，"
             "7=吸力下降/吸力变弱，8=建图不完整/地图错误，"
-            "9=清扫不干净/拖不干净，10=拖布有异味/发臭。"
+            "9=清扫不干净/拖不干净，10=拖布有异味/发臭，11=拖地后地面有明显水痕/水渍。"
             "没有明确故障填 0。"
         ),
         "parameters": {
@@ -32,7 +35,7 @@ SYMPTOM_TOOL_SCHEMA = {
             "properties": {
                 "symptom_id": {
                     "type": "integer",
-                    "description": "故障类型编号（0-10），无明确故障填 0",
+                    "description": "故障类型编号（0-11），无明确故障填 0",
                 },
             },
             "required": ["symptom_id"],

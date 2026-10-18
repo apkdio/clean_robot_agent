@@ -17,6 +17,8 @@ from test_scripts._runner import *
 import sops  # 触发注册
 import sops.base
 import sops.repair
+from test_scripts import trace_reader
+from tools import trace_store
 
 
 def _cleanup():
@@ -90,11 +92,57 @@ def test_repair_sop_ask_fallback():
     _cleanup()
 
 
+def test_symptom_maps_in_sync():
+    """两张症状表 + 工具 description 必须同步（v2.4 加「水痕/水印」时漏过一次）。"""
+    from config.word_dict_config import SYMPTOM_MAP, SYMPTOM_QUERY_MAP
+    from function_tools.symptom_tool import SYMPTOM_TOOL_SCHEMA
+    a, b = set(SYMPTOM_MAP.values()), set(SYMPTOM_QUERY_MAP.values())
+    _assert_eq(sorted(a - b), [], "这些标准问句只在口语词表里 → LLM 兜底永远选不到")
+    _assert_eq(sorted(b - a), [], "这些标准问句只在工具闭集里 → 规则侧没有对应口语词")
+    ids = sorted(SYMPTOM_QUERY_MAP)
+    _assert_eq(ids, list(range(1, len(ids) + 1)), "闭集 id 从 1 连续编号")
+    desc = SYMPTOM_TOOL_SCHEMA["function"]["description"]
+    missing = [i for i in ids if ("%d=" % i) not in desc]
+    _assert_eq(missing, [], "这些编号没写进工具 description → 模型看不见这个选项")
+
+
+def _path_of(sid, query, fn):
+    """跑一轮 trace 并取回该轮的 path（写入侧那条路径，别按会话名捞——会捞到旧日期的目录）。"""
+    reset_trace(sid)
+    trace_store.begin_turn(sid, query)
+    fn()
+    trace_store.end_turn()
+    rows = trace_reader.load(trace_store._path(sid))
+    return (rows[0].get("path") or []) if rows else []
+
+
+def test_symptom_mapping_leaves_trace():
+    """症状映射来源要落 trace：规则命中带 kw、两条都没命中记 miss（分得清"词表没覆盖"与"模型归类错"）。"""
+    import tools.llm_tool as lt
+    real = lt.chat_with_tools
+    try:
+        lt.chat_with_tools = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm"))
+        path = _path_of("sym1", "它不动了", lambda: sops.repair._extract_symptom("它不动了", {}))
+        node = next((n for n in path if n.get("node") == "sop.symptom"), None)
+        _assert(node is not None, "规则命中留 sop.symptom 节点")
+        _assert_eq(((node or {}).get("out") or {}).get("via"), "rule", "via=rule")
+        _assert_eq(((node or {}).get("out") or {}).get("kw"), "不动", "带命中的口语词")
+
+        path = _path_of("sym2", "说不上来", lambda: sops.repair._extract_symptom("嗯…说不上来", {}))
+        node = next((n for n in path if n.get("node") == "sop.symptom"), None)
+        _assert_eq((node or {}).get("status"), "miss", "两条都没命中 → status=miss")
+    finally:
+        lt.chat_with_tools = real
+        sops.base._sessions = {}
+
+
 TESTS = [
     test_extract_symptom_rule,
     test_repair_trigger,
     test_repair_sop_flow,
     test_repair_sop_ask_fallback,
+    test_symptom_maps_in_sync,
+    test_symptom_mapping_leaves_trace,
 ]
 
 

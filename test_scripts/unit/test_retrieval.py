@@ -54,11 +54,11 @@ def test_domain_scoring_and_filter():
     """域路由新形态（2026-09-24 打分式）：打分排序 + 平局按优先级 + 可选双域 filter。
 
     与 _route_domain 的分工：后者保留旧语义（只给 top1 主文件，供 _window_domain 与兼容
-    调用点用）；**实际检索走 _domain_filter**，两域咬得近时会返回 `$in` 两文件。
+    调用点用）；实际检索走 _domain_filter，两域咬得近时会返回 $in 两文件。
     """
     from tools.agent import _domain_filter, _domain_scores, _route_domain
 
-    # 打分 = 命中词的**长度之和**（词越长越具体）；同分按历史优先级
+    # 打分 = 命中词的长度之和（词越长越具体）；同分按历史优先级
     _assert_eq(_domain_scores("为什么买不染一尘")[0][0], "brand", "品牌优先于「买」误判的选购")
     _assert_eq(_domain_scores("机器人不动了怎么办"), [("repair", 2.0)], "单域：不动→维修")
     _assert_eq(_domain_scores("今天天气怎么样"), [], "无域命中")

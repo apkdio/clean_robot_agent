@@ -7,7 +7,8 @@
   - _match_yes_no（SOP 退出确认门的三态判断：是 / 不是 / 认不出）
   - 角色扮演 / 指令注入拦截（ask_stream 最先判断，直接拒绝，不调 LLM）
   - 危险现象安全拦截（ask_stream 第二判断，立即停机话术，不调 LLM）
-  - 注入正则负例（正常问题不误伤）"""
+  - 注入正则负例（正常问题不误伤）
+  - 域外拒答门：判成 other 但能路由到知识域 → 不拒答（拒答只留给确认域外）"""
 import sys
 import os
 import sys
@@ -144,6 +145,37 @@ def test_intent_head_unavailable_degrades():
         ir._head, ir._labels, ir._head_unavailable, torch.load = saved
 
 
+# ──────────────────────────────────────────────────────────────
+# 6. 域外拒答门：判成 other 但能路由到知识域 → 不拒答（ADR-35）
+# ──────────────────────────────────────────────────────────────
+
+class _EmptyRetriever:
+    """0 命中的检索桩：这个门只看"走没走 RAG"，不需要真检索（也就不拖慢单测）。"""
+
+    def search_with_scores(self, query, filter=None, trace_out=None):
+        return []
+
+
+def test_refuse_only_when_out_of_domain():
+    from config.word_dict_config import NO_ANSWER_REPLIES, REFUSE_OFFTOPIC_REPLY as REFUSE
+
+    _assert(agent_mod._route_domain("边刷多久换一次"), "域内问题路由得到域（分类头误判 other 的正是这类）")
+    _assert(agent_mod._route_domain("今天天气怎么样") is None, "域外问题路由不到域")
+
+    import tools.intent_router as ir
+    saved, saved_retriever = ir.route_intent_with_margin, agent_mod._get_retriever
+    ir.route_intent_with_margin = lambda q: ("other", 0.9)   # 高置信 other：不会被低置信降级那条救回
+    agent_mod._get_retriever = lambda: _EmptyRetriever()
+    try:
+        r = "".join(ask_stream("边刷多久换一次", "t-refuse")).strip()
+        _assert(r in NO_ANSWER_REPLIES, "域内 + other → 交给 RAG（0 召回走兜底话术），不再硬拒答")
+        _assert(r != REFUSE, "不复用拒答话术")
+        _assert_eq("".join(ask_stream("今天天气怎么样", "t-refuse2")).strip(), REFUSE,
+                   "域外 + other → 仍然拒答")
+    finally:
+        ir.route_intent_with_margin, agent_mod._get_retriever = saved, saved_retriever
+
+
 TESTS = [
     test_detect_emotion,
     test_strip_emotion,
@@ -155,6 +187,7 @@ TESTS = [
     test_danger_negative,
     test_purchase_duration_guard,
     test_intent_head_unavailable_degrades,
+    test_refuse_only_when_out_of_domain,
 ]
 
 

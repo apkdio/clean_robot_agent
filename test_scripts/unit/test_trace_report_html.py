@@ -1,6 +1,6 @@
 """trace HTML 报告测试：合成一份最小 trace，验数据整形与渲染（纯规则，不调模型）。
 
-重点盯两件会导致"页面空白"的事：① 旁路 chunks 是**一轮一条、片段在嵌套列表里**（曾按"一行一片"读，取到全空）；
+重点盯两件会导致"页面空白"的事：① 旁路 chunks 是一轮一条、片段在嵌套列表里（曾按"一行一片"读，取到全空）；
 ② 无召回的轮次不该渲染片段区。
 """
 import json
@@ -144,6 +144,28 @@ def test_details_render_as_tables():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_ops_decision_is_visible():
+    """操作判别器的判定要看得见：文本视图一行 + HTML 一张表（新链路最关键的判定，读不到就白记）。"""
+    from config.word_dict_config import TRACE_NODE_LABELS
+
+    root = tempfile.mkdtemp(prefix="trace_html_")
+    try:
+        rec = _turn(1, "离我最近的维修点", "start_sop")
+        rec["route"]["ops"] = {"ops": "service_point/sop/date/domain", "n": 4,
+                               "state": "ambiguous", "winner": "service_point", "why": "threshold"}
+        _write(root, [rec])
+        text = "\n".join(html_report._turn_lines_nested(rec, TRACE_NODE_LABELS))
+        _assert_in("操作: service_point/sop/date/domain", text, "文本视图给出一行判定")
+        _assert_in("胜者=service_point", text, "胜者也读得到")
+
+        view = html_report.session_view(root, "%s_%s_1500" % (SID, DAY), DATE, 1500)
+        page = html_report.render([view], DATE, root)
+        _assert_in("<caption>route.ops · 操作判别</caption>", page, "HTML 里成一张表")
+        _assert_in("threshold", page, "触发原因逐项列出")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_twice_retrieval_table():
     """撤域二次召回真触发时才出表，触发项（域内 top1 / 阈值 / 兜底池）逐项列出。"""
     root = tempfile.mkdtemp(prefix="trace_html_")
@@ -206,6 +228,7 @@ def test_out_dir_layout_by_date():
 TESTS = [
     test_chunks_are_flattened_per_turn,
     test_session_view_and_render,
+    test_ops_decision_is_visible,
     test_latest_date_and_empty_chunks,
     test_details_render_as_tables,
     test_twice_retrieval_table,

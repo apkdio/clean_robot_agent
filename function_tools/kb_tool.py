@@ -1,13 +1,13 @@
 """知识库检索工具（LLM 工具编排用）。
 
-与 `model_tool.find_models`（结构化直出）互补：这里返回**原文片段**，由生成环节组织成答案。
+与 model_tool.find_models（结构化直出）互补：这里返回原文片段，由生成环节组织成答案。
 召回仍走既有的 HybridRetriever（双路 + RRF + 精排 + 阈值 + 域定向二次召回），工具不另开一套
 ——两套索引/阈值会各说各话。
 
 设计见 notes/OPTIMIZATION_ROADMAP.md 的 P1-5 §10：模型只负责「选工具 + 选域 + 给检索式」。
 
-`query_summarization` 是**改写的落点**：编排上线后改写搭检索这趟车（同一次调用里出结果），
-所以不再有独立的改写工具 / 改写层；编排关闭时改写仍由 agent 侧的规则层 `_rewrite_query` 负责。
+query_summarization 是改写的落点：编排上线后改写搭检索这趟车（同一次调用里出结果），
+所以不再有独立的改写工具 / 改写层；编排关闭时改写仍由 agent 侧的规则层 _rewrite_query 负责。
 """
 
 from __future__ import annotations
@@ -56,11 +56,11 @@ def retrieval_query_of(args: Dict) -> str:
 def search_kb_by_args(args: Dict, retriever) -> List:
     """执行 search_kb，返回召回的 Document 列表（与 agent 既有链路同构）。
 
-    `retriever` 由调用方注入：Agent 侧复用它那份 HybridRetriever 单例。工具内部**不自己建实例**
+    retriever 由调用方注入：Agent 侧复用它那份 HybridRetriever 单例。工具内部不自己建实例
     ——带索引的检索器多一份会翻倍内存，还会与热更新后的索引不同步。
 
-    domain 是**软约束**（与 agent 侧域路由同构）：域内精排 top1 低于 `rerank.score_threshold` 时，
-    检索器会自己撤掉 filter 再跑一遍全库并合并两池（见 `hybrid_retriever.search` 的决策记录）。
+    domain 是软约束（与 agent 侧域路由同构）：域内精排 top1 低于 rerank.score_threshold 时，
+    检索器会自己撤掉 filter 再跑一遍全库并合并两池（见 hybrid_retriever.search 的决策记录）。
     所以填了 domain 也可能返回其他域的片段——这是设计行为，不要把它“修”成硬过滤。
     domain 不在白名单里（模型编的）时按全库检索，不抛异常：漏召回比报错更好降级。
     """

@@ -1,8 +1,8 @@
 """统一的「待确认」状态存储：SOP 退出确认、网点问城市、网点重名选序号。
 
-Redis 存 `sop:pending:{session_id}`（带 TTL）；无 Redis 时降级内存并做时间戳校验。
-`kind` 取值：confirm_exit（答是/不是）、confirm_enter（要不要走引导）；
-`confirm_enter` 用于「进入 SOP 的确认门」（弱触发才问）。
+Redis 存 sop:pending:{session_id}（带 TTL）；无 Redis 时降级内存并做时间戳校验。
+kind 取值：confirm_exit（答是/不是）、confirm_enter（要不要走引导）；
+confirm_enter 用于「进入 SOP 的确认门」（弱触发才问）。
 """
 
 from __future__ import annotations
@@ -51,12 +51,12 @@ def get(session_id: str) -> dict | None:
 
 
 def set(session_id: str, kind: str, **data) -> dict:
-    """写待确认状态（带 TTL）；`retry` 缺省为 0。"""
+    """写待确认状态（带 TTL）；retry 缺省为 0。"""
     return _write(session_id, dict(data, kind=kind, retry=int(data.get("retry") or 0)))
 
 
 def bump_retry(session_id: str) -> Optional[dict]:
-    """`retry` +1（用于"再问一次"）；没有状态时返回 None。"""
+    """retry +1（用于"再问一次"）；没有状态时返回 None。"""
     state = get(session_id)
     if not state:
         return None

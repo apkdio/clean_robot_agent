@@ -72,7 +72,7 @@ def get_all_model_names() -> List[str]:
 def search_models_by_names(model_names: str) -> List[Dict]:
     """根据型号名（逗号分隔，LLM 提取结果）检索型号详情。
 
-    两段式匹配（见 BC-20260921-06）：① 去品牌前缀后**以查询名结尾**算精确命中，
+    两段式匹配（见 BC-20260921-06）：① 去品牌前缀后以查询名结尾算精确命中，
     任一 key 精确命中时只返回精确结果（「净界 P2」不再带出 P2 Lite / P2 Pro）；
     ② 精确全未命中才退回子串匹配，兼容 LLM 偶发把系列名当型号（「云顶 X」）。
     """
@@ -270,7 +270,7 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
     scopes = _scope_list(args.get("scope"))
     rels = [s for s in scopes if s in _SCOPE_RELATIVE]
     if rels:
-        # 多维度同时满足：「更新更便宜的」= 比上一轮更新 **且** 更便宜
+        # 多维度同时满足：「更新更便宜的」= 比上一轮更新 且 更便宜
         for rel in rels:
             models = _filter_relative(models, prev_models, rel)
     elif any(s in ("prev", "last") for s in scopes):
@@ -278,7 +278,7 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
         by_name = {m.get("name"): m for m in models}
         models = [by_name.get(m.get("name"), m) for m in (prev_models or [])]
 
-    # 预算优先按**原话**用规则解析：模型见到货币单位会把方向词吃掉，方向/单位/浮动交给规则
+    # 预算优先按原话用规则解析：模型见到货币单位会把方向词吃掉，方向/单位/浮动交给规则
     bmin = bmax = 0
     phrase = str(args.get("budget") or "").strip()
     if phrase:

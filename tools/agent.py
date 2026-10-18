@@ -103,12 +103,12 @@ def _rag_retrieval_cfg() -> dict:
 
 
 def _domain_margin() -> float:
-    """`retrieval.domain_margin`：低于它就把 top2 域一起搜；0 = 关闭（始终单域）。"""
+    """retrieval.domain_margin：低于它就把 top2 域一起搜；0 = 关闭（始终单域）。"""
     return float(_rag_retrieval_cfg().get("domain_margin", 0) or 0)
 
 
 def _domain_scores(query: str) -> list:
-    """给每个知识域打分：命中词的**长度之和**（词越长越具体，权重越高）。
+    """给每个知识域打分：命中词的长度之和（词越长越具体，权重越高）。
 
     返回 [(域键, 分数)]，分数降序、同分按历史优先级排。
     打分而不是"命中即返回"，是为了承认多个域可能同时相关
@@ -124,7 +124,7 @@ def _domain_scores(query: str) -> list:
         hit = [w for w in words if w in query]
         if hit:
             scores[name] = float(sum(len(w) for w in hit))
-    # 选购咨询是**组合式**判定（选购动作词 + 咨询词都命中才算），语义沿用 is_consulting
+    # 选购咨询是组合式判定（选购动作词 + 咨询词都命中才算），语义沿用 is_consulting
     buy = [w for w in BUY_WORDS if w in query]
     consult = [w for w in CONSULT_WORDS if w in query]
     if buy and consult:
@@ -133,7 +133,7 @@ def _domain_scores(query: str) -> list:
 
 
 def _route_domain(query: str):
-    """按 query 内容路由到对应知识域的**主文件**（识别不准返回 None → 全库兜底）。
+    """按 query 内容路由到对应知识域的主文件（识别不准返回 None → 全库兜底）。
 
     保留旧签名与返回形态（文件名）：_window_domain 与检索评测都依赖它。
     """
@@ -144,8 +144,8 @@ def _route_domain(query: str):
 def _domain_filter(query: str):
     """域路由 → 检索 filter 取值 + 路径说明。
 
-    top1 领先达到 `retrieval.domain_margin` → 只搜主域；
-    两域咬得很近（margin 低于阈值）→ 把两个域的文件一起搜（`$in`），
+    top1 领先达到 retrieval.domain_margin → 只搜主域；
+    两域咬得很近（margin 低于阈值）→ 把两个域的文件一起搜（$in），
     避免"先命中的域把另一个域排掉"。
     """
     ranked = _domain_scores(query)
@@ -294,7 +294,7 @@ def _window_domain(session_id: str) -> str | None:
 
 
 def _recent_carry_count(session_id: str) -> int:
-    """最近**连续**几条客服回复是安全承接（同一告警最多承接 `context.safety_carry_max` 次）。
+    """最近连续几条客服回复是安全承接（同一告警最多承接 context.safety_carry_max 次）。
     """
     n = 0
     for m in reversed(_window_messages(session_id)):
@@ -550,10 +550,10 @@ def _enter_sop(session_id: str, sop_id: str, query: str, **detail) -> str:
 
 
 def _reenter_sop_on_retry(session_id: str, query: str) -> tuple:
-    """「重新回答」时判断要不要重开 SOP，返回 `(是否接管, 要回给用户的话)`。
+    """「重新回答」时判断要不要重开 SOP，返回 (是否接管, 要回给用户的话)。
 
-    只接管一种情形：**上一轮是已结束的 SOP 轮**（判据取自上一轮 trace 的 `sop` 块与 `branch`，
-    不靠 query 猜）。重开时送纪念在会话 meta 里的**入口 query**，而不是这一句槽位答案；
+    只接管一种情形：上一轮是已结束的 SOP 轮（判据取自上一轮 trace 的 sop 块与 branch，
+    不靠 query 猜）。重开时送纪念在会话 meta 里的入口 query，而不是这一句槽位答案；
     入口 query 若是弱触发，照样先过确认门。SOP 还活跃时由上面的活跃分支处理，不走这里。
     """
     from sops import sop_needs_enter_confirm
@@ -572,7 +572,7 @@ def _reenter_sop_on_retry(session_id: str, query: str) -> tuple:
     logger.info("[Retry] 重开 SOP: %s（入口 query=%s）", sop_id, entry[:40])
     if sop_needs_enter_confirm(sop_id, entry):
         pending_store.set(session_id, "confirm_enter", sop=sop_id, query=entry)
-        trace_store.node("sop.pending", in_={"kind": "confirm_enter", "retry": True})
+        trace_store.node("sop.pending", in_={"kind": "confirm_enter", "retry": True, "entry": entry[:40]})
         _log_behavior("ask_clarify", kind="confirm_enter", via="retry")
         return True, _ENTER_CONFIRM.format(sop=_sop_name(sop_id))
     return True, _enter_sop(session_id, sop_id, entry, via="retry")
@@ -639,7 +639,7 @@ def _shadow_probe(query: str, session_id: str, chain_category: str, chain_detail
 
 
 def ask_stream(query: str, session_id: str = "default", lng=None, lat=None, retry: bool = False):
-    """流式问答入口：开一轮 trace，交给 `_ask_stream`，收尾时落盘。"""
+    """流式问答入口：开一轮 trace，交给 _ask_stream，收尾时落盘。"""
     trace_store.begin_turn(session_id, query, retry=True if retry else None)
     set_log_session(session_id)
     completed = False
@@ -752,7 +752,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
                     # 答「是」→ 退出，这一句本身没有别的诉求
                     yield f"好的，已退出「{sop_name}」环节～"
                     return
-                # 两次都没踩中「是/不是」→ 直接退出，**不对这一句做二次意图理解**
+                # 两次都没踩中「是/不是」→ 直接退出，不对这一句做二次意图理解
                 # （已明确提示过回复「是/不是」；用户真有需求会重新说，避免"退出后又被系统自作主张处理一遍"）
                 yield f"好的，已退出「{sop_name}」环节～有新的问题可以直接问我。"
                 return
@@ -817,10 +817,13 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
         retry = int(pending.get("retry") or 0)
         sop_id = pending.get("sop") or "purchase"
         sop_name = _sop_name(sop_id)
+        entry = pending.get("query") or query
+        # 这一轮只答「是/不是」，真正被处理的入口 query 存在待确认里——落 trace 才追得回去
+        trace_store.node("sop.enter_gate", in_={"answer": query[:40], "entry": entry[:40]})
         if ans is True:
             pending_store.clear(session_id)
             # 用当初那句弱触发 query 预填首槽，用户已经说过的信息不重复问
-            reply = _enter_sop(session_id, sop_id, pending.get("query") or query, via="confirm_enter")
+            reply = _enter_sop(session_id, sop_id, entry, via="confirm_enter")
             if reply:
                 yield reply
             return
@@ -896,79 +899,91 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
         else:
             logger.info("[Intent] low-confidence other (margin=%.3f) 无可承接话题 → 维持拒答", margin)
 
-    # 追问检测：基于上一轮推荐结果回答（"有没有更新的""有没有更便宜的"等）
-    if intent in ("robot", "unknown"):
+    # 操作判别器判定后按表序派发；判定失败只告警、按原链路继续。
+    try:
+        from tools.operations import note_ops
+        op_note = note_ops(q, intent=intent, margin=margin)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[Ops] 判别失败，回退原链路：%s", e)
+        op_note = {"usable": []}
+
+    # 各操作的执行体：原分支体原样搬进来，只把 yield 换成 return。
+    # 返回值：话术 / ""（命中但没话说，也接管本轮）/ _NOT_MINE（不是该管的，试下一个）
+    _NOT_MINE = object()
+
+    def _exec_followup(_sid, _q, _declined):
         from sops import handle_followup
-        followup_reply = handle_followup(session_id, q)
-        if followup_reply:
+        reply = handle_followup(_sid, _q)
+        if reply:
             trace_store.node("followup", status="hit")
-            _shadow_probe(q, session_id, "model_query", "追问筛选")
+            _shadow_probe(_q, _sid, "model_query", "追问筛选")
             _log_behavior("structured_answer", kind="followup")
-            yield followup_reply
-            return
+        return reply or _NOT_MINE
 
-    # "这两个有什么区别？" "它怎么样" 型号查询兜底：命中触发词 → LLM 提取型号名 → 精准检索详情
-    if intent in ("robot", "unknown"):
-        model_reply = _resolve_model_query(session_id, q)
-        if model_reply:
+    def _exec_model(_sid, _q, _declined):
+        reply = _resolve_model_query(_sid, _q)
+        if reply:
             trace_store.node("model_query", status="hit")
-            _shadow_probe(q, session_id, "model_query", "型号/对比兜底")
+            _shadow_probe(_q, _sid, "model_query", "型号/对比兜底")
             _log_behavior("structured_answer", kind="model_detail")
-            yield model_reply
-            return
+        return reply or _NOT_MINE
 
-    # 系列查询：系列名 + 枚举意图词 → 枚举该系列型号直出（不走 SOP）
-    if intent in ("robot", "unknown"):
-        series_reply = _resolve_series_query(q)
-        if series_reply:
+    def _exec_series(_sid, _q, _declined):
+        reply = _resolve_series_query(_q)
+        if reply:
             trace_store.node("series_query", status="hit")
-            _shadow_probe(q, session_id, "model_query", "系列枚举")
+            _shadow_probe(_q, _sid, "model_query", "系列枚举")
             _log_behavior("structured_answer", kind="series")
-            yield series_reply
-            return
+        return reply or _NOT_MINE
 
-    # 售后网点：网点词信号强，不依赖 intent（"离我最近的维修点"可能被分类器误判 other）
-    # 前端有坐标 → 直接作答；否则交给网点 SOP 问城市（重名再问一次序号）
-    if match_sop(q, "service_point"):
+    def _exec_service_point(_sid, _q, _declined):
+        # 网点词信号强，不依赖 intent（"离我最近的维修点"可能被分类器误判 other）
+        # 前端有坐标 → 直接作答；否则交给网点 SOP 问城市（重名再问一次序号）
         has_coords = lng is not None and lat is not None
         trace_store.node("service_point", status="hit",
                          out={"mode": "coords" if has_coords else "sop"})
-        _shadow_probe(q, session_id, "service_point", "网点查询")
+        _shadow_probe(_q, _sid, "service_point", "网点查询")
         if has_coords:
             from function_tools.service_point_tool import search_service_points, format_service_points
             points, origin = search_service_points(lng=lng, lat=lat)
             _log_behavior("structured_answer", kind="service_point")
-            yield format_service_points(points, origin)
-            return
-        reply = _enter_sop(session_id, "service_point", q)
-        if reply:
-            yield reply
-        return
+            return format_service_points(points, origin)
+        return _enter_sop(_sid, "service_point", _q)
 
-    # SOP 触发：robot/unknown 意图 + 命中场景 trigger（guards 已由 match_sop 评估）
-    if intent in ("robot", "unknown") and not enter_declined_turn:
-        sop_id = match_sop(q)
-        weak = bool(sop_id) and sop_needs_enter_confirm(sop_id, q)
-        if sop_id:
-            trace_store.node("sop.match", status="hit", out={"sop": sop_id, "weak": weak})
+    def _exec_sop(_sid, _q, declined):
+        if declined:                       # 本轮刚拒过进入引导 → 只跳过本轮这道门
+            return _NOT_MINE
+        sop_id = match_sop(_q)
+        if not sop_id:
+            return _NOT_MINE
+        weak = sop_needs_enter_confirm(sop_id, _q)
+        trace_store.node("sop.match", status="hit", out={"sop": sop_id, "weak": weak})
         # 弱触发：先问一句要不要走引导；用户拒绝过该 SOP 且这次仍是弱信号 → 不打扰，走正常作答
-        if sop_id and weak:
-            if is_enter_declined(session_id, sop_id):
+        if weak:
+            if is_enter_declined(_sid, sop_id):
                 logger.info("[SOP] enter declined before, skip gate: %s", sop_id)
                 trace_store.step("sop_gate", skipped="declined", sop=sop_id)
-                sop_id = None
-            else:
-                pending_store.set(session_id, "confirm_enter", sop=sop_id, query=q)
-                _log_behavior("ask_clarify", kind="confirm_enter")
-                yield _ENTER_CONFIRM.format(sop=_sop_name(sop_id))
-                return
-        if sop_id:
-            reply = _enter_sop(session_id, sop_id, q)
-            if reply:
-                yield reply
-            return
+                return _NOT_MINE
+            pending_store.set(_sid, "confirm_enter", sop=sop_id, query=_q)
+            _log_behavior("ask_clarify", kind="confirm_enter")
+            return _ENTER_CONFIRM.format(sop=_sop_name(sop_id))
+        return _enter_sop(_sid, sop_id, _q)
 
-    # 领域外：礼貌拒答
+    _OP_EXEC = {"followup": _exec_followup, "model": _exec_model, "series": _exec_series,
+                "service_point": _exec_service_point, "sop": _exec_sop}
+    # 按表序派发：命中即接管，不是该管的试下一个；日期/结构化/域路由仍走下面的原分支
+    for _name in op_note["usable"]:
+        _exec = _OP_EXEC.get(_name)
+        if _exec is None:
+            continue
+        _reply = _exec(session_id, q, enter_declined_turn)
+        if _reply is _NOT_MINE:
+            continue
+        if _reply:
+            yield _reply
+        return
+
+    # 领域外：礼貌拒答（能路由到知识域的不拒答，交给下面的 RAG）
     if intent == "other":
         # 维修强词兜底："维修""故障"等即使被分类器误判 other 也进 repair SOP
         from config.word_dict_config import REPAIR_STRONG_WORDS
@@ -979,9 +994,14 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None, ret
                 if reply:
                     yield reply
                 return
-        _log_behavior("refuse_offtopic")
-        yield _REFUSE_OFFTOPIC_REPLY
-        return
+        # 命中知识域词表说明确实在问扫地机器人（只是被分类头判成 other）→ 交给 RAG；只有连域词都不沾才拒答。
+        if _route_domain(q):
+            logger.info("[Intent] other 但命中知识域 → 不拒答，交给 RAG：%s", q[:40])
+            trace_store.node("guard.refuse", status="skipped", by="domain_hit")
+        else:
+            _log_behavior("refuse_offtopic")
+            yield _REFUSE_OFFTOPIC_REPLY
+            return
 
     # 闲聊问候：自然回应，跳过检索
     if intent == "casual":

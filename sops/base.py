@@ -83,7 +83,7 @@ def _session_key(session_id: str) -> str:
 
 
 def make_session(sop_id: str, step: int = 0, slots: dict = None, retry_count: int = 0) -> dict:
-    """造一份带定义指纹的会话状态（`_start` 与测试注入共用，避免手搓状态漏指纹）。"""
+    """造一份带定义指纹的会话状态（_start 与测试注入共用，避免手搓状态漏指纹）。"""
     return {"sop_id": sop_id, "def_ver": (SOPS.get(sop_id) or {}).get("def_ver"),
             "step": int(step), "slots": dict(slots or {}), "retry_count": int(retry_count)}
 
@@ -97,7 +97,7 @@ def _same_def(session: dict) -> bool:
 def _load_session(session_id: str):
     """读会话状态；与当前 SOP 定义对不上就丢掉它（代码改过 SOP、Redis 里的旧状态还在）。
 
-    状态的 `step` 是步骤下标、`slots` 是槽位键名，定义一动就会指向别的步骤，续跑必然串场；
+    状态的 step 是步骤下标、slots 是槽位键名，定义一动就会指向别的步骤，续跑必然串场；
     这类状态一律作废，本轮按「没有活跃 SOP」正常作答，并留一条 WARNING 便于对账。
     """
     from tools.redis_store import get_redis, json_loads, sop_ttl
@@ -106,7 +106,7 @@ def _load_session(session_id: str):
         raw = r.get(_session_key(session_id))
         session = json_loads(raw) if raw else None
     else:
-        # 降级的内存态没有 Redis 的 TTL，得自己算：`ts` 每轮重盖，与 `SET ... EX` 一样是滑动窗口
+        # 降级的内存态没有 Redis 的 TTL，得自己算：ts 每轮重盖，与 SET ... EX 一样是滑动窗口
         session = _sessions.get(session_id)
         if session and time.time() - float(session.get("ts") or 0) > sop_ttl():
             logger.warning("[SOP] 本地降级会话已过期，作废：sop=%s（session=%s）",
@@ -117,7 +117,7 @@ def _load_session(session_id: str):
         cur = (SOPS.get(session.get("sop_id") or "") or {}).get("def_ver") or "未注册"
         logger.warning("[SOP] SOP 定义已变，作废旧状态：sop=%s 状态指纹=%s 现定义=%s（session=%s）",
                        session.get("sop_id"), session.get("def_ver") or "无", cur, session_id)
-        # 留下痕（节点与状态都在闭集里；`by` 的新取值见 notes/TRACE.md）
+        # 留下痕（节点与状态都在闭集里；by 的新取值见 notes/TRACE.md）
         trace_store.node("sop.active", status="skipped", by="stale_def",
                          in_={"sop": session.get("sop_id"),
                               "def": "%s→%s" % (session.get("def_ver") or "无", cur)})
@@ -308,8 +308,9 @@ def _run(session_id: str, user_input: str):
                 session["retry_count"] = 0
                 user_input = None
                 logger.info("[SOP] %s slot %s = %s", sop["id"], step["slot"], value)
-                flow.append({"i": session["step"] - 1, "type": "ask",
-                             "slot": step.get("slot"), "outcome": "filled"})
+                flow.append({"i": session["step"] - 1, "type": "ask", "slot": step.get("slot"),
+                             "outcome": "filled",
+                             "value": value if len(str(value)) <= 40 else str(value)[:40] + "…"})
                 continue
 
             elif step["type"] == "action":
@@ -353,6 +354,9 @@ def _run(session_id: str, user_input: str):
         # 异常照常向上抛——外层 ask_stream 出兜底话术、trace 记 error
         logger.warning("[SOP] %s 第 %s 步执行失败（%s）：%s",
                        sop["id"], session["step"], type(e).__name__, e)
+        cur = steps[session["step"]] if session["step"] < len(steps) else {}
+        trace_store.node("sop.step_error", status="error",
+                         in_={"step": session["step"], "type": cur.get("type"), "slot": cur.get("slot")})
         ended = True        # 让下面的 finally 不再把状态写回去
         _end(session_id)
         raise
@@ -451,7 +455,7 @@ def handle_followup(session_id: str, query: str):
 
     # 相对上一轮展示范围的追问：更便宜 / 更贵 / 更新 / 更旧
     # 找到第一个命中四个"更加"域的词
-    # 多个相对维度可并列（「更新更便宜的」= 更新 **且** 更便宜），逐个收窄；
+    # 多个相对维度可并列（「更新更便宜的」= 更新 且 更便宜），逐个收窄；
     # 裸「更新」不进球表（与「固件更新」撞），但「更X更Y」结构无歧义，用 regex 兜
     newer_hit = any(w in query for w in NEWER_WORDS) or bool(re.search(r"更新更(?:便宜|贵|新|旧)", query))
     rels = [k for k, hit in (("cheaper", any(w in query for w in CHEAPER_WORDS)),

@@ -2,7 +2,7 @@
 
 本包中的每个工具都通过 function calling（bind_tools）暴露给 LLM。
 一个工具应提供：
-  - `*_TOOL_SCHEMA`：OpenAI 格式的 function schema，供 LLM 决策是否调用
+  - *_TOOL_SCHEMA：OpenAI 格式的 function schema，供 LLM 决策是否调用
   - 执行函数：真正执行工具逻辑，由 agent 拿到 LLM 的 tool_call 后调用
 
 当前工具：

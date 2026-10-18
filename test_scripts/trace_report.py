@@ -1,7 +1,7 @@
 """读主链路 trace，按会话列出每一轮的走向——「从哪一轮开始跑偏」的一眼视图。
 
-trace 由 `tools/trace_store.py` 落盘（默认 `logs/trace/<YYYYMMDD>/<session_id>_<YYYYMMDD>_<HHMM>/<同名>.jsonl`，
-日期目录 + 一会话一目录、当天一份文件；`TRACE_DIR` 可覆盖）。本脚本**只读**，不改任何数据、不调模型。
+trace 由 tools/trace_store.py 落盘（默认 logs/trace/<YYYYMMDD>/<session_id>_<YYYYMMDD>_<HHMM>/<同名>.jsonl，
+日期目录 + 一会话一目录、当天一份文件；TRACE_DIR 可覆盖）。本脚本只读，不改任何数据、不调模型。
 
 用法：解释器用 .venv\\Scripts\\python.exe
 
@@ -21,7 +21,7 @@ trace 由 `tools/trace_store.py` 落盘（默认 `logs/trace/<YYYYMMDD>/<session
     python test_scripts/trace_report.py --html                       # 最近有 trace 的一天
     python test_scripts/trace_report.py --html --date 2026-10-15 --out-dir temp/reports
     python test_scripts/trace_report.py --html --dir temp/trace_test --out /tmp/x.html
-默认落点 reports/<YYYYMMDD>/trace_<YYYYMMDD>.html（`--out-dir` 换根目录，`--out` 直接给整路径，不再加日期层）。
+默认落点 reports/<YYYYMMDD>/trace_<YYYYMMDD>.html（--out-dir 换根目录，--out 直接给整路径，不再加日期层）。
 
 默认按分层视图打印：进门判断 / 有序路径 / 检索各遍与来源分布 / SOP 动作链 / 出口；
 没有分层块的记录自动回退到平铺视图。字段含义见 notes/TRACE.md。
@@ -39,7 +39,7 @@ for _p in (_ROOT,):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-# 刻意不 import `_runner`：它会设 TRACE_DIR 等测试隔离变量，而这里读的是真实 trace（--dir 可覆盖）。
+# 刻意不 import _runner：它会设 TRACE_DIR 等测试隔离变量，而这里读的是真实 trace（--dir 可覆盖）。
 from tools import trace_store  # noqa: E402
 from test_scripts import trace_reader  # noqa: E402
 
@@ -147,6 +147,11 @@ def _turn_lines_nested(rec: dict, labels: dict) -> list:
             gate += "→%s" % intent["downgrade"]
     out.append("      进门: " + gate)
 
+    # 操作判别器给出的候选与裁决（与下面"路径"里的执行体对照看）
+    ops = route.get("ops") or {}
+    if ops:
+        out.append("      操作: %s  裁决=%s  胜者=%s" % (ops.get("ops"), ops.get("state"), ops.get("winner")))
+
     path = rec.get("path") or []
     if path:
         steps = []
@@ -222,7 +227,7 @@ def _turn_lines_nested(rec: dict, labels: dict) -> list:
 
 
 def _render_turn(rec: dict, flat: bool = False) -> list:
-    """默认走分层视图；没有分层块或 `--flat` 时走平铺。"""
+    """默认走分层视图；没有分层块或 --flat 时走平铺。"""
     if flat or not (rec.get("branch") or rec.get("path")):
         return _turn_lines(rec)
     from config.word_dict_config import TRACE_NODE_LABELS
@@ -230,7 +235,7 @@ def _render_turn(rec: dict, flat: bool = False) -> list:
 
 
 def _print_session(session_id: str, paths: list, flat: bool = False) -> None:
-    """打印该会话的 trace；`paths` 按日期升序，一天一段。"""
+    """打印该会话的 trace；paths 按日期升序，一天一段。"""
     total = 0
     for path in paths:
         rows = _load(path)
@@ -363,7 +368,7 @@ def _print_feedback(session_id: str, path: str) -> None:
 
 
 # ──────────────────────────────────────────────────────────────
-# HTML 报告（`--html`）：把某天渲染成一份自包含页面，打开即看、不引外部 CDN
+# HTML 报告（--html）：把某天渲染成一份自包含页面，打开即看、不引外部 CDN
 # ──────────────────────────────────────────────────────────────
 
 BRANCH_COLORS = {
@@ -426,6 +431,7 @@ def turn_view(rec: dict, chunks: list, feedback: dict, max_chunk: int) -> dict:
         "rewrite": rewrite, "passes": ret.get("passes") or [], "merge": ret.get("merge") or {},
         "twice": ret.get("twice_retrieval") or {},
         "sop": rec.get("sop") or {}, "sop_gate": rec.get("sop_gate") or {}, "shadow": shadow,
+        "ops": (rec.get("route") or {}).get("ops") or {},
         "path": rec.get("path") or [], "answer": rec.get("answer") or {}, "ms": ms,
         "chunks": views, "feedback": feedback, "slow": (ms.get("total") or 0) >= _SLOW_MS,
         "norm": bool((rewrite.get("normalize") or {}).get("changed")),
@@ -603,6 +609,7 @@ TEMPLATE = """{% macro kvtable(title, d) -%}
         {% if t.twice and t.twice.active %}{{ kvtable('twice_retrieval · 撤域二次召回', t.twice) }}{% endif %}
         {% if t.shadow %}{{ kvtable('shadow · 影子决策', t.shadow) }}{% endif %}
         {% if t.sop_gate %}{{ kvtable('sop_gate · SOP 门', t.sop_gate) }}{% endif %}
+        {% if t.ops %}{{ kvtable('route.ops · 操作判别', t.ops) }}{% endif %}
       </details>
       {% if t.chunks %}
       <details><summary>召回片段 {{ t.chunks|length }} 片（正文）</summary>

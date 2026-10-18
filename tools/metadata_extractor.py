@@ -1,7 +1,7 @@
 """结构化元数据提取：chunk 文本 → metadata（入库时），用户 query → Chroma filter（检索时）。
 
 让 RAG 流水线在不改动向量检索核心的前提下，精确处理预算、价格区间、发布时间等结构化查询。
-命名约定：`extract_*` 用于入库侧，`query_*` 用于检索侧。
+命名约定：extract_* 用于入库侧，query_* 用于检索侧。
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ def extract_publish_date(text: str) -> Dict:
     return {"publish_date": int(f"{y}{mo:02d}{d:02d}")}
 
 
-# 规格行（格式模板强制）：`- 吸力：5500Pa｜导航：LDS激光｜避障：结构光`
+# 规格行（格式模板强制）：- 吸力：5500Pa｜导航：LDS激光｜避障：结构光
 # 只认含分隔符 ｜ 的行，或以 - 开头的行，避免命中正文里的冒号。
 _SPEC_PAIR_RE = re.compile(r"([^：:｜|\-\s][^：:｜|]{0,7})[：:]\s*([^｜|\n]{1,40})")
 # 数值 + 单位；单位允许中文（分钟 / 毫升），否则「续航：160分钟」抽不出数值。
@@ -88,7 +88,7 @@ def _spec_number(value: str):
 
 
 def extract_spec_metadata(text: str) -> Dict:
-    """从规格行提取**通用**参数 metadata：`param_<键>`（原文）+ `param_<键>_num`（可解析为数值时）。
+    """从规格行提取通用参数 metadata：param_<键>（原文）+ param_<键>_num（可解析为数值时）。
     """
     out: Dict = {}
     for line in text.split("\n"):
@@ -109,7 +109,7 @@ def extract_spec_metadata(text: str) -> Dict:
 
 
 def param_inventory() -> Dict:
-    """从**已入库的 metadata** 派生参数清单（键 → 值枚举 / 数值区间 / 覆盖条数）。
+    """从已入库的 metadata 派生参数清单（键 → 值枚举 / 数值区间 / 覆盖条数）。
     """
     from tools.vector_store import get_vector_store  # 函数内导入：vector_store 依赖本模块，避免循环导入
 
@@ -261,7 +261,7 @@ def _enumerate_models_from_store(filter: dict, require_field: str) -> list[Dict]
 
 
 def get_all_model_records() -> list[Dict]:
-    """全量型号记录：`extract_model_info` 的字段 + 该 chunk 的全部 `param_*`（通用规格）。
+    """全量型号记录：extract_model_info 的字段 + 该 chunk 的全部 param_*（通用规格）。
     """
     from tools.vector_store import search_by_filter
 
@@ -425,7 +425,7 @@ def extract_price_constraint(query: str) -> Optional[tuple]:
 
 
 def build_filter(query: str) -> Optional[Dict]:
-    """从用户 query 构建 Chroma `where` 过滤条件。
+    """从用户 query 构建 Chroma where 过滤条件。
 
     未检测到结构化约束（普通 RAG 查询）时返回 None。
     """

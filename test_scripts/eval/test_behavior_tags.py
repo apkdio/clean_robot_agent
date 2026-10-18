@@ -1,12 +1,12 @@
-"""行为闭集（trace 的 `branch`）与评测判据的契约测试：不依赖 LLM / Chroma，纯规则。
+"""行为闭集（trace 的 branch）与评测判据的契约测试：不依赖 LLM / Chroma，纯规则。
 
 覆盖：
-  - 闭集只有一份：harness 的行为闭集取自 `config/word_dict_config.py::BEHAVIOR_BY_TAG`，无副本
-  - 闭集覆盖全部硬行为（硬行为都能从 `branch` 判出来）
-  - `_check_case` 的硬行为四态：branch 命中 / 不一致 / 未记（分「无观测」与「tag 未登记」）/ 闭集外
-  - 本轨只判行为：`must_contain_any` / `must_not_contain` 不参与判定
+  - 闭集只有一份：harness 的行为闭集取自 config/word_dict_config.py::BEHAVIOR_BY_TAG，无副本
+  - 闭集覆盖全部硬行为（硬行为都能从 branch 判出来）
+  - _check_case 的硬行为四态：branch 命中 / 不一致 / 未记（分「无观测」与「tag 未登记」）/ 闭集外
+  - 本轨只判行为：must_contain_any / must_not_contain 不参与判定
   - 评测集里每条期望行为都在闭集内（或属两个无专属 branch 的软行为期望）
-  - 主链路 trace（`tools/trace_store.py`）：一轮一条记录、分层块 + 兼容投影、落在隔离目录、best-effort
+  - 主链路 trace（tools/trace_store.py）：一轮一条记录、分层块 + 兼容投影、落在隔离目录、best-effort
 """
 import os
 import sys
@@ -177,7 +177,7 @@ def test_trace_best_effort():
 
 
 def test_trace_report_flags():
-    """逐轮读数器（`test_scripts/trace_report.py`）的启发式标记与行渲染，纯函数直接测。"""
+    """逐轮读数器（test_scripts/trace_report.py）的启发式标记与行渲染，纯函数直接测。"""
     from test_scripts import trace_report
 
     _assert_in("aborted 未跑完", trace_report._flags({"aborted": True}), "未跑完的轮会被标出")
@@ -195,7 +195,7 @@ def test_trace_report_flags():
 def test_golden_schema_and_context():
     """评测集自身的自检：一行一条 case、归因取枚举、fixed 语义、上下文可达。
 
-    放这里是为了**免跑 20 分钟才发现写错**（带 --e2e 的实跑很贵）。评测集是本地数据，缺失时跳过。
+    放这里是为了免跑 20 分钟才发现写错（带 --e2e 的实跑很贵）。评测集是本地数据，缺失时跳过。
     """
     if not os.path.isfile(ctx_eval._GOLDEN_FILE):
         return
@@ -406,6 +406,41 @@ def test_context_set_filter_and_cost():
                  "fast 的回放成本低于全量")
 
 
+def test_emitted_tags_and_nodes_are_registered():
+    """静态登记核查：源码里实际写出的行为 tag / trace 节点与状态，必须在闭集表里登记。
+
+    读写侧都容忍未登记的词（读侧回落原名、评测只报「tag 未登记」），所以要等运行时踩到才发现；
+    这里直接扫 tools/ sops/ function_tools/ 的字面量——新增埋点忘了登记会当场红。
+    """
+    import re
+
+    from config.word_dict_config import BEHAVIOR_BY_TAG, TRACE_NODE_LABELS, TRACE_NODE_STATUSES
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    src = {}
+    for sub in ("tools", "sops", "function_tools"):
+        d = os.path.join(root, sub)
+        if not os.path.isdir(d):
+            continue
+        for fn in os.listdir(d):
+            if fn.endswith(".py"):
+                with open(os.path.join(d, fn), encoding="utf-8") as f:
+                    src[os.path.join(sub, fn)] = f.read()
+
+    tags, nodes, statuses = set(), set(), set()
+    for text in src.values():
+        tags |= set(re.findall(r'_log_behavior\("([a-z_]+)"', text))
+        nodes |= set(re.findall(r'trace_store\.node\("([a-z._]+)"', text))
+        for line in text.splitlines():          # 状态与节点写在同一条调用里（本项目是一行）
+            if "trace_store.node(" in line:
+                statuses |= set(re.findall(r'status="([a-z]+)"', line))
+
+    _assert_true(tags and nodes, "扫到了实际发出的 tag 与节点（否则是扫描逻辑失效，不是真没问题）")
+    _assert_eq(sorted(tags - set(BEHAVIOR_BY_TAG)), [], "发出的行为 tag 都在 BEHAVIOR_BY_TAG 里登记")
+    _assert_eq(sorted(nodes - set(TRACE_NODE_LABELS)), [], "写入的 trace 节点都在 TRACE_NODE_LABELS 里登记")
+    _assert_eq(sorted(statuses - set(TRACE_NODE_STATUSES)), [], "写入的节点状态都在 TRACE_NODE_STATUSES 里")
+
+
 TESTS = [
     test_branch_closed_set_from_config,
     test_branch_covers_behaviours,
@@ -423,6 +458,7 @@ TESTS = [
     test_golden_schema_and_context,
     test_context_sets_defined,
     test_context_set_filter_and_cost,
+    test_emitted_tags_and_nodes_are_registered,
     test_branch_text,
     test_feedback_reason_enum,
 ]

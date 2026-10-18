@@ -48,10 +48,10 @@ class HybridRetriever:
 
     def _retrieve(self, query: str, filter: dict | None,
                   facts: dict | None = None) -> List[Tuple[Document, float, Dict]]:
-        """一次召回：双路 → RRF → 精排，返回**未按阈值过滤**的有序候选。
+        """一次召回：双路 → RRF → 精排，返回未按阈值过滤的有序候选。
 
         返回 [(doc, score, meta), ...]（分数降序），交给 search() 决定怎么用；
-        传入 `facts` 时把这一遍的各路条数与精排进出写进去（trace 用，不改行为）。
+        传入 facts 时把这一遍的各路条数与精排进出写进去（trace 用，不改行为）。
         """
         retrieval_cfg = _rag_cfg.get("retrieval", {})
         rerank_cfg = _rag_cfg.get("rerank", {})
@@ -88,19 +88,19 @@ class HybridRetriever:
     def search(self, query: str, filter: dict | None = None) -> List[Document]:
         """双路召回 + RRF + 精排，返回 Document 列表（数量由 retrieval.final_top_k 控制）。
 
-        同上，只要文档；需要分数与来源时用 `search_with_scores()`。
+        同上，只要文档；需要分数与来源时用 search_with_scores()。
         """
         return [doc for doc, _score, _meta in self.search_with_scores(query, filter=filter)]
 
     def search_with_scores(
         self, query: str, filter: dict | None = None, trace_out: dict | None = None
     ) -> List[Tuple[Document, float, Dict]]:
-        """与 `search()` 同一条链路，额外返回每条的分数与来源 meta（供 trace 记录片段）。
+        """与 search() 同一条链路，额外返回每条的分数与来源 meta（供 trace 记录片段）。
 
-        `filter` 按**软约束**处理：带 filter 召回后若精排 top1 低于
-        `rerank.score_threshold`，则撤掉 filter 再召回一次全库，两池交给 `_merge_pools`
+        filter 按软约束处理：带 filter 召回后若精排 top1 低于
+        rerank.score_threshold，则撤掉 filter 再召回一次全库，两池交给 _merge_pools
         合并。这条路径不再按绝对阈值砍分。filter 为 None 时只有一遍召回，硬阈值照旧挡领域外。
-        传入 `trace_out` 时把两遍召回与最终候选的来源分布写进去（trace 用，不改行为）。
+        传入 trace_out 时把两遍召回与最终候选的来源分布写进去（trace 用，不改行为）。
         选型依据（两个直觉写法为何被否决）见 notes/project_detail.md 的决策记录。
         """
         if not self.sparse.is_ready:
@@ -183,7 +183,7 @@ class HybridRetriever:
         两个直觉写法都实测否决：纯按精排分排序会让域内整池被另一个域的高分噪声整池挤掉；
         纯按位次融合会把高置信的正确结果拉下来。故取中间——按分排序保住高置信结果，
         同时限制兜底池名额（兜底只补漏，不该占掉半个以上的 Prompt）。
-        另两条约束：**合并而非替换**（域内池有全库池没有的相关条目）；
+        另两条约束：合并而非替换（域内池有全库池没有的相关条目）；
         两池都召回的条目算第一遍池的，不占兜底名额。
         实测数据见 notes/BADCASES.md 与 notes/project_detail.md 的决策记录。
         """

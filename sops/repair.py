@@ -5,6 +5,7 @@ from config.word_dict_config import SYMPTOM_MAP, REPAIR_TRIGGER, REPAIR_WEAK_TRI
 
 from tools.llm_tool import get_small_model_name
 from tools.log_tool import get_logger
+from tools import trace_store
 
 # 故障现象兜底用的小模型（默认 3b 更快；精度不够可在 agent.yaml 调 llm.small_model）
 _SYMPTOM_TOOL_MODEL = get_small_model_name()
@@ -20,6 +21,8 @@ def _extract_symptom(text: str, slots: dict):
     for kw, query in SYMPTOM_MAP.items():
         if kw in text:
             logger.info(f"[Repair] symptom {kw}: {query}")
+            trace_store.node("sop.symptom", in_={"text": text[:40]},
+                             out={"query": query, "via": "rule", "kw": kw})
             return query
     logger.warning("[Repair] Keyword match failed! Using LLM to match!")
 
@@ -40,10 +43,15 @@ def _extract_symptom(text: str, slots: dict):
             query = symptom_id_to_query(args)
             if query:
                 logger.info(f"[Repair] LLM modify query: {query}")
+                trace_store.node("sop.symptom", in_={"text": text[:40]},
+                                 out={"query": query, "via": "llm",
+                                      "symptom_id": (args or {}).get("symptom_id")})
                 return query
             logger.warning("[Repair] LLM modify query failed!")
     except Exception as e:
         logger.warning("[Repair] symptom tool calling failed: %s", e)
+    # 两条路都没命中：也留一条，便于区分「词表没覆盖」与「模型归类错」
+    trace_store.node("sop.symptom", status="miss", in_={"text": text[:40]})
     return None
 
 

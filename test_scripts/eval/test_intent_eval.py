@@ -1,19 +1,19 @@
-"""意图分类评测：逐条断言 `route_intent` 的四分类标签。
+"""意图分类评测：逐条断言 route_intent 的四分类标签。
 
-口径以 `data/datasets/README.md`（2026-09-23 修订）为准，本评测集**不另立标准**。
-评测集在 `data/eval/intent/`（**本地数据，已 gitignore**）。
+口径以 data/datasets/README.md（2026-09-23 修订）为准，本评测集不另立标准。
+评测集在 data/eval/intent/（本地数据，已 gitignore）。
 
 与训练脚本内置测试集的区别：
-  - **独立来源**：真实会话用户轮 + 人工清单 + 按口径构造；与训练集**零重叠**（本模块硬断言）
-  - **固定可复现、带基线**：换分类头 / 换训练集即换基线（环境快照记两者指纹）
-  - **逐条可归因**：混淆矩阵 + 按来源分组的准确率 + 「高置信错判」清单
+  - 独立来源：真实会话用户轮 + 人工清单 + 按口径构造；与训练集零重叠（本模块硬断言）
+  - 固定可复现、带基线：换分类头 / 换训练集即换基线（环境快照记两者指纹）
+  - 逐条可归因：混淆矩阵 + 按来源分组的准确率 + 「高置信错判」清单
 
-本轨只评「这句话该判成什么」，**不评答得好不好**——答案质量属下游，另议。
+本轨只评「这句话该判成什么」，不评答得好不好——答案质量属下游，另议。
 
 指标：
-  - 总体准确率与各类 P/R/F1（只统计 `status=confirmed`；`tentative` 单列、不计入）
+  - 总体准确率与各类 P/R/F1（只统计 status=confirmed；tentative 单列、不计入）
   - 混淆矩阵（行=期望，列=实判）
-  - 高置信错判：判错 **且** `margin ≥ intent.high_conf_margin` —— 模型很确信地错，最危险
+  - 高置信错判：判错 且 margin ≥ intent.high_conf_margin —— 模型很确信地错，最危险
 
 运行（需 torch + Ollama bge-m3 + 已训练的分类头）：
   .venv\\Scripts\\python.exe test_scripts/eval/test_intent_eval.py --e2e
@@ -160,7 +160,7 @@ def _file_sha256(path):
 
 
 def _env_meta():
-    """**本轨的关键环境就是「哪个分类头 + 哪版训练集」** —— 任一变化即应视为新基线。"""
+    """本轨的关键环境就是「哪个分类头 + 哪版训练集」 —— 任一变化即应视为新基线。"""
     def short(path):
         return _file_sha256(path)[:8] if os.path.isfile(path) else "missing"
     return {"created_at": time.strftime("%Y-%m-%d %H:%M:%S"),

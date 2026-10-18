@@ -1,6 +1,6 @@
 """trace 读取层：命令行读数器与它自带的 HTML 报告（trace_report.py）共用。
 
-刻意不 import `test_scripts._runner`——它会设 TRACE_DIR 等测试隔离变量，而这里读的是真实 trace
+刻意不 import test_scripts._runner——它会设 TRACE_DIR 等测试隔离变量，而这里读的是真实 trace
 （--dir 可指到评测隔离目录）。
 """
 
@@ -20,7 +20,7 @@ def root_dir(arg_dir: str = "") -> str:
 
 
 def session_dir(root: str, session_id: str) -> str:
-    """解析会话目录（认日期层与旧布局）：会话名本身或 `<会话名>_*`；找不到返回按会话名的路径。"""
+    """解析会话目录（认日期层与旧布局）：会话名本身或 <会话名>_*；找不到返回按会话名的路径。"""
     exact = os.path.join(root, session_id)
     if os.path.isdir(exact):
         return exact
@@ -32,9 +32,9 @@ def session_dir(root: str, session_id: str) -> str:
 
 
 def session_files(root: str, session_id: str, kind: str = "", date: str = "") -> list:
-    """该会话在 root 下的 trace 文件（`kind` 空 = 主文件，非空 = 旁路证据），按文件名升序。
+    """该会话在 root 下的 trace 文件（kind 空 = 主文件，非空 = 旁路证据），按文件名升序。
 
-    `date` 非空时只留那一天（按文件名里的 YYYYMMDD）；一个会话可能跨多天。
+    date 非空时只留那一天（按文件名里的 YYYYMMDD）；一个会话可能跨多天。
     """
     suffix = (".%s.jsonl" % kind) if kind else ".jsonl"
     want_day = date.replace("-", "")
@@ -93,7 +93,7 @@ def effective_feedback(rows: list) -> dict:
 def chunks_by_turn(rows: list) -> dict:
     """每轮的召回片段（按 rank 升序）。
 
-    旁路文件是**一轮一条记录**（`{"turn_index": n, "chunks": [...]}`），片段在嵌套列表里——
+    旁路文件是一轮一条记录（{"turn_index": n, "chunks": [...]}），片段在嵌套列表里——
     别当成「一行一片」。
     """
     out = {}

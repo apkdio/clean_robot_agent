@@ -1,7 +1,7 @@
 """服务网点查询工具。
 
 城市名 → 经纬度由 geonamescache 离线解析，网点数据存
-`data/service_point/service_points.json`，不进向量库——网点查询是「精确匹配 + 距离排序」，
+data/service_point/service_points.json，不进向量库——网点查询是「精确匹配 + 距离排序」，
 经纬度对 embedding 不友好。
 """
 

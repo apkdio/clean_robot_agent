@@ -65,10 +65,10 @@ def _resolve_file_level() -> int:
     """文件日志级别，优先级：环境变量 LOG_LEVEL > agent.yaml behavior.verbose_log > INFO。
 
     默认 INFO 是为了避免检索结果的 DEBUG 详情（top-N chunk 内容）撑大日志文件；
-    需要排查检索问题时，把 `agent.yaml` 的 `behavior.verbose_log` 设为 true 即可，
-    也可临时用环境变量 `LOG_LEVEL=DEBUG`（优先级更高、无需改配置）。
+    需要排查检索问题时，把 agent.yaml 的 behavior.verbose_log 设为 true 即可，
+    也可临时用环境变量 LOG_LEVEL=DEBUG（优先级更高、无需改配置）。
 
-    只影响**文件**日志；控制台始终按 INFO 输出，避免调试细节刷屏。
+    只影响文件日志；控制台始终按 INFO 输出，避免调试细节刷屏。
     """
     env_level = os.environ.get("LOG_LEVEL", "").strip().upper()
     if env_level:

@@ -61,8 +61,8 @@ def get_vector_store() -> Chroma:
 def store_fingerprint() -> str:
     """索引指纹：逐 chunk 的 (文件名, 文件 sha256) 排序后的摘要。
 
-    条数、文件名、**文件内容**任一变化都会变。只数 chunk 条数会漏掉「改了正文但条数不变」
-    （改价格 / 改参数 / 改错字），那会让 `models.pkl` 的型号价格与 BM25 的关键词索引一直用旧数据。
+    条数、文件名、文件内容任一变化都会变。只数 chunk 条数会漏掉「改了正文但条数不变」
+    （改价格 / 改参数 / 改错字），那会让 models.pkl 的型号价格与 BM25 的关键词索引一直用旧数据。
     """
     import hashlib
 
@@ -82,7 +82,7 @@ def ids_of_file(file_name: str) -> list:
 def ingest_file(file_path: str, source_tag: str = "") -> dict:
     """解析、分块并把单个文件向量化入库，返回 {status, file, chunks, sha256, elapsed}。
 
-    同一文件重复调用 = **替换**：先抓旧 chunk 的 id，入库成功后再删——
+    同一文件重复调用 = 替换：先抓旧 chunk 的 id，入库成功后再删——
     失败时旧 chunk 原样留着（不留「0 chunk」空洞），成功时不会叠加重复条目。
     """
     import time

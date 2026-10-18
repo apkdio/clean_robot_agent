@@ -1,20 +1,20 @@
 """检索质量评测：golden set + 核心指标（P1-1）。
 
-评测集位于 `data/eval/retrieval/`（**本地数据目录，已 gitignore，不随仓库发布**）：
-  - `golden.jsonl`：每条 `{id, query, type, ...}`，覆盖五类：
+评测集位于 data/eval/retrieval/（本地数据目录，已 gitignore，不随仓库发布）：
+  - golden.jsonl：每条 {id, query, type, ...}，覆盖五类：
       - domain        ：域路由 + 域过滤检索（expect_file + expect_keyword）
       - model         ：型号精准（expect_model，检索具体型号域）
       - budget        ：预算过滤（expect_models，结构化直出）
       - time          ：时间过滤（expect_models，结构化直出）
       - out_of_domain ：领域外（期望零召回）
-  - `baseline.json`：基线快照（`--save-baseline` 写、`--compare` 读），记录覆盖的 id 段、逐条结果，
+  - baseline.json：基线快照（--save-baseline 写、--compare 读），记录覆盖的 id 段、逐条结果，
     以及采集时的环境（代码提交 + 未提交改动、知识库指纹、配置指纹与关键阈值、索引是否跟上知识库）
-  - `README.md`：构建准则与扩充方法（同目录本地文档）
+  - README.md：构建准则与扩充方法（同目录本地文档）
 
-id 是版本锚点：评测集**只增不删**，因此 id 单调递增、一次分配永不变更 —— **id 区间即批次**
-（批次 1 = R001-R070），新增条目从 R071 起。`--only` 按区间跑，`--compare` 按 id 逐条回归。
+id 是版本锚点：评测集只增不删，因此 id 单调递增、一次分配永不变更 —— id 区间即批次
+（批次 1 = R001-R070），新增条目从 R071 起。--only 按区间跑，--compare 按 id 逐条回归。
 
-评测集缺失时本模块自动跳过、不报错，不影响 `run_tests.py` 其它模块。
+评测集缺失时本模块自动跳过、不报错，不影响 run_tests.py 其它模块。
 
 指标：
   - 域路由准确率      ：domain 类 query 的 top1 域命中 expect_file 比例（口径同旧基线）
@@ -71,7 +71,7 @@ def _load_golden():
 # ──────────────────────────────────────────────────────────────
 
 def _id_num(entry_id):
-    """`R012` → 12；非本格式返回 None。"""
+    """R012 → 12；非本格式返回 None。"""
     m = re.fullmatch(r"R(\d+)", entry_id or "")
     return int(m.group(1)) if m else None
 
@@ -81,7 +81,7 @@ def _id_sort_key(entry_id):
 
 
 def _parse_id_spec(spec):
-    """`R001-R070` / `R005` / `R001-R010,R020` → [(lo, hi), ...]（闭区间，按数字比较）。"""
+    """R001-R070 / R005 / R001-R010,R020 → [(lo, hi), ...]（闭区间，按数字比较）。"""
     ranges = []
     for part in (spec or "").split(","):
         part = part.strip()
@@ -114,7 +114,7 @@ def _validate_ids(entries):
 
 
 def _arg_value(flag):
-    """取 `--flag value` 形式的参数值（无值时返回 None）。"""
+    """取 --flag value 形式的参数值（无值时返回 None）。"""
     if flag in sys.argv:
         i = sys.argv.index(flag)
         if i + 1 < len(sys.argv):
@@ -127,7 +127,7 @@ def _short_name(name):
 
 
 def _searched_files(domain_value):
-    """把 `_domain_filter` 的取值还原成被搜索的文件集合（字符串 / `$in` / None）。"""
+    """把 _domain_filter 的取值还原成被搜索的文件集合（字符串 / $in / None）。"""
     if not domain_value:
         return set()
     if isinstance(domain_value, dict):
@@ -191,7 +191,7 @@ def _compute(entries, hr):
 
         if t == "domain":
             route_total += 1
-            # 忠实于 agent 的**实际检索路径**：走 _domain_filter（top1 领先则单域；
+            # 忠实于 agent 的实际检索路径：走 _domain_filter（top1 领先则单域；
             # 两域咬得近则 $in 双域；无域则全库兜底），而不是旧的单文件 filter。
             domain_value, via = _domain_filter(q)
             route = _route_domain(q)
@@ -315,7 +315,7 @@ def _digest(pairs):
 
 
 def _git(*args):
-    """跑一条 git 命令，返回**原始** stdout（不做 strip：porcelain 首行行首是状态位）；失败返回 None。"""
+    """跑一条 git 命令，返回原始 stdout（不做 strip：porcelain 首行行首是状态位）；失败返回 None。"""
     try:
         out = subprocess.run(["git", "-C", _ROOT, *args], capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.SubprocessError):
@@ -331,15 +331,15 @@ def _code_label(code):
 def _code_meta():
     """代码工程状态：提交号 + 未提交改动清单（本项目常在未提交状态下跑评测，必须记下来）。"""
     porcelain = _git("status", "--porcelain") or ""
-    # porcelain 每行是 `XY path`：行首两个状态位不能先 strip 掉，否则路径第一个字符被吃掉
+    # porcelain 每行是 XY path：行首两个状态位不能先 strip 掉，否则路径第一个字符被吃掉
     files = sorted(line[3:].strip() for line in porcelain.splitlines() if len(line) > 3)
     commit = (_git("rev-parse", "--short", "HEAD") or "").strip() or "unknown"
     return {"commit": commit, "dirty": bool(files), "changed": files}
 
 
 def _kb_meta():
-    """知识库版本：优先读热更新写的 `data/state/kb_metadata.jsonl` 最后一行（= 索引里现在是什么）；
-    没有该文件时回退到现场扫描（复用热更新的 `scan_files`，算法不漂）。"""
+    """知识库版本：优先读热更新写的 data/state/kb_metadata.jsonl 最后一行（= 索引里现在是什么）；
+    没有该文件时回退到现场扫描（复用热更新的 scan_files，算法不漂）。"""
     from tools.config_tool import get_data_dir
     from tools.hot_ingest import kb_fingerprint, load_kb_metadata, metadata_path, scan_files
 
@@ -373,7 +373,7 @@ def _config_meta():
 
 
 def _index_file_shas(names) -> dict:
-    """索引里每个文件当前带的 `file_sha256` 集合（chunk 入库时写入；老 chunk 可能没这个键）。"""
+    """索引里每个文件当前带的 file_sha256 集合（chunk 入库时写入；老 chunk 可能没这个键）。"""
     from tools.vector_store import get_vector_store
 
     store = get_vector_store()
@@ -389,7 +389,7 @@ def _index_file_shas(names) -> dict:
 
 
 def _print_index_warning() -> None:
-    """索引与版本记录对不上时，在任何轨的汇总里都喊一声——别只在 `--compare` 时才可见。"""
+    """索引与版本记录对不上时，在任何轨的汇总里都喊一声——别只在 --compare 时才可见。"""
     idx = _index_meta()
     if idx.get("in_sync") is True:
         return
@@ -579,7 +579,7 @@ def _compare_baseline(metrics, records):
 def _kb_metadata_selfcheck():
     """知识库版本记录自检：有记录就断言它对得上算法（短指纹能由 file_list 复算出来）。
 
-    这份记录是「索引里现在是什么」的唯一凭据，本轨的 `env.kb` 也直接读它；指纹算法改了却沿用旧记录时，
+    这份记录是「索引里现在是什么」的唯一凭据，本轨的 env.kb 也直接读它；指纹算法改了却沿用旧记录时，
     环境比对会静默失真——这里当场报出来。没有记录不算失败（等一次热更新即可）。
     """
     from tools.hot_ingest import (KB_METADATA_VERSION, kb_fingerprint, kb_metadata_version,

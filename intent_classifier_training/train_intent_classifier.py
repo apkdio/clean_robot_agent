@@ -3,9 +3,9 @@
 流程：
   1. 加载 data/datasets/intent_dataset.jsonl（字段口径见 data/datasets/README.md）
   2. 使用本地 Ollama bge-m3（1024 维）对每个样本进行 embedding
-  3. 划分训练集/测试集：按类别分层抽 20%；`multiturn_real`（真实会话追问）全部进测试集
+  3. 划分训练集/测试集：按类别分层抽 20%；multiturn_real（真实会话追问）全部进测试集
   4. 训练 Linear(1024 → 4)，用训练集里再切出的 15% 验证集选最佳权重
-  5. 评估准确率 + 每个类别的 F1 + **按来源分组的准确率**
+  5. 评估准确率 + 每个类别的 F1 + 按来源分组的准确率
   6. 将分类头权重与标签映射保存到 data/bgm_model/
 """
 
@@ -72,7 +72,7 @@ def main():
     print(f"embedding 形状: {X.shape}")
 
     # 分层划分训练/测试集：确保每个类别都同时出现在两个集合中。
-    # 例外：source=multiturn_real 的样本（真实会话里的追问）**全部划入测试集**——
+    # 例外：source=multiturn_real 的样本（真实会话里的追问）全部划入测试集——
     # 它们是最贴近线上多轮场景的一小撮，混进训练集就等于拿同一批样本自证。
     n = len(rows)
     train_idx, test_idx = [], []

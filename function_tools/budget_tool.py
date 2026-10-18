@@ -39,7 +39,7 @@ BUDGET_TOOL_SCHEMA = {
 
 
 def budget_args_to_filter(args: Dict) -> Optional[Dict]:
-    """把 LLM 返回的 {budget_max} 转成 Chroma `where` 过滤条件。
+    """把 LLM 返回的 {budget_max} 转成 Chroma where 过滤条件。
 
     budget_max 为空 / 0 / 非数字 → None（视为无预算，走全库兜底）。
     """

@@ -295,7 +295,7 @@ def test_stale_def_state_recorded_in_trace():
                             [{"id": "extra", "type": "reply", "template": "补充说明"}]))
     _assert(not sops.base.has_active_sop("s1"), "状态被作废")
     trace_store.end_turn(reply="（单测）")
-    rows = trace_reader.load(trace_reader.session_files(trace_reader.root_dir(), "s1")[0])
+    rows = trace_reader.load(trace_store._path("s1"))      # 写入侧那条路径；别按会话名捞（会捞到旧日期的目录）
     path = (rows[0].get("path") or []) if rows else []
     _assert(any(n.get("node") == "sop.active" and n.get("status") == "skipped"
                 and n.get("by") == "stale_def" for n in path),
@@ -325,12 +325,21 @@ def test_local_session_expires_without_redis():
 
 
 def test_step_exception_ends_sop():
-    """步骤函数抛异常：向上抛（外层兜底）+ 结束会话（不留半截状态、下轮不重跑同一步）。"""
+    """步骤函数抛异常：向上抛（外层兜底）+ 结束会话（不留半截状态、下轮不重跑同一步）+ trace 留痕。"""
     _cleanup()
     sops.base.register(_BOOM_SOP)
+    reset_trace("s1")
+    trace_store.begin_turn("s1", "随便")
     _assert_raises(RuntimeError, lambda: sops.base.start_sop("s1", "sop_boom_action", "随便"),
                    "步骤异常照常向上抛")
     _assert(not sops.base.has_active_sop("s1"), "异常后会话已结束（不会被 finally 写回去）")
+    trace_store.end_turn()
+    rows = trace_reader.load(trace_store._path("s1"))      # 同写入侧路径（见上一条用例的说明）
+    path = (rows[0].get("path") or []) if rows else []
+    node = next((n for n in path if n.get("node") == "sop.step_error"), None)
+    _assert(node is not None, "trace 里有 sop.step_error 节点（能看出是第几步、哪个步骤炸的）")
+    _assert_eq((node or {}).get("status"), "error", "节点状态是 error")
+    _assert_eq(((node or {}).get("in") or {}).get("type"), "action", "in 带失败步骤的类型")
     _assert_eq(sops.base.continue_sop("s1", "再说一遍"), None, "下一轮不再停在同一步重复失败")
     _cleanup()
 

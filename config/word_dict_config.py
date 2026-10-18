@@ -1,10 +1,10 @@
 """词表配置中心。
 
 集中管理项目中散落的业务词表（情绪词、触发词、关键词、映射等），
-方便查找和修改。各模块通过 `from config.word_dict_config import XXX` 引用。
+方便查找和修改。各模块通过 from config.word_dict_config import XXX 引用。
 
 约定：
-  - *_WORDS     词列表（用于 `any(w in query for w in XXX_WORDS)` 子串匹配）
+  - *_WORDS     词列表（用于 any(w in query for w in XXX_WORDS) 子串匹配）
   - *_TRIGGER   SOP 触发词
   - *_MAP       映射表（关键词/编号 → 目标值）
   - *_RE        词表型正则（词表写进正则的模式，如方向词 / 注入特征）
@@ -27,8 +27,8 @@ EXIT_WORDS = ["退出", "算了", "不用了", "取消", "换个问题", "换一
               "别问了", "别问", "换一个"]
 
 # ── 知识域映射（场景 → 知识库文件，即"轻量文档隔离"的域）──────────
-# 一个域可以挂**多个文件**：新增知识文件时只需在对应域下加一行，代码不用动。
-# 取值是 data/knowledge/ 下的**文件名**，与 chunk 的 file_name 元数据一致。
+# 一个域可以挂多个文件：新增知识文件时只需在对应域下加一行，代码不用动。
+# 取值是 data/knowledge/ 下的文件名，与 chunk 的 file_name 元数据一致。
 # exp: 在data/knowledge/下新增"不染一尘活动方案.txt"，属于活动域，则在下表中新加一行 "discount":["不染一尘活动方案.txt"]，同域下新增只需拓展列表即可。
 DOMAIN_FILES = {
     "brand": ["不染一尘品牌介绍.txt"],        # 品牌咨询（走 RAG）
@@ -67,7 +67,7 @@ def domain_filter(name: str):
 def validate_knowledge_domains(data_dir: str) -> list:
     """启动自检：域指向的文件是否存在、目录里有没有文件没被任何域认领。返回问题列表。
 
-    历史上 DOMAIN_MAP 用文件名做键，文件改了名就会**静默失效**（域过滤永远取不到它，
+    历史上 DOMAIN_MAP 用文件名做键，文件改了名就会静默失效（域过滤永远取不到它，
     只能靠全库兜底碰运气），所以这里显式报出来。
     """
     import os
@@ -179,6 +179,7 @@ SYMPTOM_QUERY_MAP = {
     8: "建图不完整怎么办",
     9: "清扫不干净怎么办",
     10: "拖布有异味怎么办",
+    11: "拖地后地面有明显水痕",     # 与 SYMPTOM_MAP 的值集合必须一致（单测兜，见 test_repair_sop）
 }
 
 # ── 追问处理 ─────────────────────────────────────────────────────
@@ -404,7 +405,7 @@ QUERY_SYNONYMS = {"扫托": "扫拖"}
 
 
 # ── trace 闭集（记录侧只存键，渲染侧查中文；见 notes/TRACE.md）─────
-# 行为闭集：`[Behavior]` tag → 本轮唯一出口。评测轨与 trace 的 branch 共用这一张表。
+# 行为闭集：[Behavior] tag → 本轮唯一出口。评测轨与 trace 的 branch 共用这一张表。
 BEHAVIOR_BY_TAG = {
     "stop_use_safety": "safety_alert",
     "carry_safety": "safety_carry",
@@ -429,7 +430,11 @@ TRACE_NODE_LABELS = {
     "route.intent": "意图分类",
     "sop.active": "活跃 SOP",
     "sop.pending": "待确认状态",
+    "sop.step_error": "SOP 步骤异常",
+    "sop.symptom": "症状映射",
+    "sop.enter_gate": "进入门入口",
     "guard.safety_carry": "安全承接",
+    "guard.refuse": "域外拒答门",
     "followup": "追问筛选",
     "model_query": "型号查询",
     "series_query": "系列枚举",
@@ -444,4 +449,4 @@ TRACE_NODE_LABELS = {
 }
 
 # 节点状态：ok=执行 / hit=命中并出口 / skipped=走到但未执行 / degraded=降级执行 / error=异常
-TRACE_NODE_STATUSES = ("ok", "hit", "skipped", "degraded", "error")
+TRACE_NODE_STATUSES = ("ok", "hit", "skipped", "degraded", "error", "miss")

@@ -1,9 +1,9 @@
 """工具注册：收敛「暴露给模型的工具」白名单（P1-5 编排层用）。
 
-暴露面只 3 个：`find_models`（结构化直出）/ `search_kb`（检索）/ `find_nearest_service_point`（网点）。
-其余工具（`extract_models` / `calc_date_range` / `extract_budget` / `classify_symptom`）退成
-**内部函数或校验器**：工具越多，选错的概率越高——实测把 `find_models` + `extract_models` +
-`calc_date_range` 一起给 7b，问型号时它会选 `calc_date_range`。
+暴露面只 3 个：find_models（结构化直出）/ search_kb（检索）/ find_nearest_service_point（网点）。
+其余工具（extract_models / calc_date_range / extract_budget / classify_symptom）退成
+内部函数或校验器：工具越多，选错的概率越高——实测把 find_models + extract_models +
+calc_date_range 一起给 7b，问型号时它会选 calc_date_range。
 """
 
 from __future__ import annotations
@@ -38,9 +38,9 @@ def build_tool_schemas(names: List[str] | None = None) -> List[Dict]:
 
 
 def orchestration_mode() -> str:
-    """`agent.yaml tools.orchestration`：off（默认，走现有 if 链）/ shadow（选路只记日志）/ on（选路生效）。
+    """agent.yaml tools.orchestration：off（默认，走现有 if 链）/ shadow（选路只记日志）/ on（选路生效）。
 
-    取值请写成**带引号的字符串**：YAML 会把裸 `off` / `on` 解析成布尔（实测裸 `off` 读出来是 False），
+    取值请写成带引号的字符串：YAML 会把裸 off / on 解析成布尔（实测裸 off 读出来是 False），
     这里做一次归一化，避免开关“看着是 off、读出来是 false”。
     """
     from tools.config_tool import load_config
@@ -57,7 +57,7 @@ def orchestration_mode() -> str:
 
 
 def shadow_sample() -> float:
-    """`agent.yaml tools.shadow_sample`：影子模式采样率（0~1），默认 1.0。
+    """agent.yaml tools.shadow_sample：影子模式采样率（0~1），默认 1.0。
 
     影子模式每轮多打一次 7b 调用（延迟 +1~3s），全量跑有成本 → 观察期可用采样控制。
     """

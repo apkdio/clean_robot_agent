@@ -1,17 +1,17 @@
 """会话级 trace：每轮问答落一条结构化记录。
 
-同目录下另有三份**旁路证据**（放在该会话的目录里，文件名同主干、后缀区分）：
-  - `<sid>_<YYYYMMDD>_<HHMM>.chunks.jsonl`：本轮召回片段全文（含排序与分数），由 `chunks()` 触发、`end_turn()` 落盘；
-  - `<sid>_<YYYYMMDD>_<HHMM>.shadow.jsonl`：影子决策对照（跑在 daemon 线程，晚于本轮结束，故独立追加）；
-  - `<sid>_<YYYYMMDD>_<HHMM>.feedback.jsonl`：前端「有用/无用」标注，落在**被标注轮次那天**的文件里。
-布局：`<TRACE_DIR>/<YYYYMMDD>/<session_id>_<YYYYMMDD>_<HHMM>/<session_id>_<YYYYMMDD>_<HHMM>[.<kind>].jsonl`——
-先是**日期目录**（按会话首条 trace 那天归放，与 `data/context/` 一致，便于按天筛 case），
+同目录下另有三份旁路证据（放在该会话的目录里，文件名同主干、后缀区分）：
+  - <sid>_<YYYYMMDD>_<HHMM>.chunks.jsonl：本轮召回片段全文（含排序与分数），由 chunks() 触发、end_turn() 落盘；
+  - <sid>_<YYYYMMDD>_<HHMM>.shadow.jsonl：影子决策对照（跑在 daemon 线程，晚于本轮结束，故独立追加）；
+  - <sid>_<YYYYMMDD>_<HHMM>.feedback.jsonl：前端「有用/无用」标注，落在被标注轮次那天的文件里。
+布局：<TRACE_DIR>/<YYYYMMDD>/<session_id>_<YYYYMMDD>_<HHMM>/<session_id>_<YYYYMMDD>_<HHMM>[.<kind>].jsonl——
+先是日期目录（按会话首条 trace 那天归放，与 data/context/ 一致，便于按天筛 case），
 再是一个会话一个目录，目录名与文件名都带时间（目录时间 = 该会话首条 trace，文件名时间 = 写入当天）；
-一天一份，跨天换新文件。读取侧（`session_dirs()`）同时认日期层与迁移前直接挂在根下的旧目录。
-trace 行里只留指路字段（`steps.retrieve.chunks_log` / `steps.shadow.log`），正文不进 trace。
+一天一份，跨天换新文件。读取侧（session_dirs()）同时认日期层与迁移前直接挂在根下的旧目录。
+trace 行里只留指路字段（steps.retrieve.chunks_log / steps.shadow.log），正文不进 trace。
 
-记录与执行同构：`route` 进门判断、`branch` 本轮唯一出口、`path[]` 有序节点、`retrieval` 召回过程、
-`sop` 流程进度、`answer` 出口；字段值只存事实（数字 / 布尔 / 枚举 / 标识符），人话由读侧渲染。
+记录与执行同构：route 进门判断、branch 本轮唯一出口、path[] 有序节点、retrieval 召回过程、
+sop 流程进度、answer 出口；字段值只存事实（数字 / 布尔 / 枚举 / 标识符），人话由读侧渲染。
 """
 
 import json
@@ -25,12 +25,12 @@ from config.word_dict_config import BEHAVIOR_BY_TAG
 from tools.log_tool import log_path
 
 TRACE_VERSION = 3
-# 轮次记录（主干）的 schema 版本；落盘字段名仍是 `v`，靠所在文件区分是谁的版本。结构见 notes/TRACE.md。
+# 轮次记录（主干）的 schema 版本；落盘字段名仍是 v，靠所在文件区分是谁的版本。结构见 notes/TRACE.md。
 # 本轮记录 = 稳定核 {v, ts, session_id, turn_index, query, retry, tag, tags, detail, aborted, error}
 #   + 分层块 {route, branch, path, retrieval, sop, sop_gate, shadow, answer} + ms
 #   + 兼容投影 {steps}（老读侧仍按它取数）
 SIDE_VERSION = 1
-# 三份旁路证据（chunks / shadow / feedback）共用的 schema 版本，字段名同为 `v`
+# 三份旁路证据（chunks / shadow / feedback）共用的 schema 版本，字段名同为 v
 # 旁路证据形如 {v, ts, session_id, turn_index, query, ...}
 CHUNK_KIND = "chunks"
 SHADOW_KIND = "shadow"
@@ -67,7 +67,7 @@ def _path(session_id: str, kind: str = "", day: str = "", create: bool = False) 
 
 
 def _root_dir() -> str:
-    """trace 根目录（`TRACE_DIR` 可覆盖）。"""
+    """trace 根目录（TRACE_DIR 可覆盖）。"""
     return os.environ.get("TRACE_DIR") or os.path.join(log_path, "trace")
 
 
@@ -77,7 +77,7 @@ _DATE_DIR = re.compile(r"^\d{8}$")
 def session_dirs(root: str = "") -> list:
     """root 下的全部会话目录，按路径升序。
 
-    新的会话落在日期目录 `<root>/<YYYYMMDD>/<会话目录>/`，迁移前的旧目录直接挂在 root 下；
+    新的会话落在日期目录 <root>/<YYYYMMDD>/<会话目录>/，迁移前的旧目录直接挂在 root 下；
     这里两种都认，读侧（trace_report / 离线脚本 / 会话查找）统一走它。
     """
     base = root or _root_dir()
@@ -98,7 +98,7 @@ def session_dirs(root: str = "") -> list:
 
 
 def _session_dir(session_id: str, create: bool = False, stamp: str = "") -> str:
-    """该会话的 trace 目录：`<root>/<YYYYMMDD>/<session_id>_<YYYYMMDD>_<HHMM>/`（时间 = 该会话首条 trace）。
+    """该会话的 trace 目录：<root>/<YYYYMMDD>/<session_id>_<YYYYMMDD>_<HHMM>/（时间 = 该会话首条 trace）。
     """
     sid = session_id or "default"
     cached = _dir_cache.get(sid)
@@ -152,7 +152,7 @@ def _rename_legacy_dir(path: str, sid: str) -> str:
 
 
 def _stem_of(session_id: str, day: str, create: bool, session_dir: str, stamp: str = "") -> str:
-    """该会话某天的文件名主干 `<sid>_<YYYYMMDD>_<HHMM>`：已存在则沿用，否则按当前时间新建。"""
+    """该会话某天的文件名主干 <sid>_<YYYYMMDD>_<HHMM>：已存在则沿用，否则按当前时间新建。"""
     key = (session_id or "default", day)
     if key in _stem_cache:
         return _stem_cache[key]
@@ -173,7 +173,7 @@ def _stem_of(session_id: str, day: str, create: bool, session_dir: str, stamp: s
 
 
 def day_files(session_id: str, kind: str = "") -> list:
-    """该会话的 `(YYYYMMDD, 路径)` 列表，按日期升序（一个会话可能跨多天）。
+    """该会话的 (YYYYMMDD, 路径) 列表，按日期升序（一个会话可能跨多天）。
     """
     out = []
     session_dir = _session_dir(session_id)
@@ -228,7 +228,7 @@ def _seed(session_id: str, key) -> None:
 def begin_turn(session_id: str, query: str, retry: bool = None) -> None:
     """开一轮并补写上一轮；同一句 query 连续出现＝「重新回答」，记 retry=True。
 
-    `retry` 显式给定时以它为准——前端点「重新回答」走的是同一条 query，
+    retry 显式给定时以它为准——前端点「重新回答」走的是同一条 query，
     只靠"和上一句相同"会跟"用户自己又重复了一遍"混在一起。
     """
     try:
@@ -271,7 +271,7 @@ def begin_turn(session_id: str, query: str, retry: bool = None) -> None:
 
 
 def step(name: str, **fields) -> None:
-    """记一个环节（`steps` 加一个 key），并同步到分层块。"""
+    """记一个环节（steps 加一个 key），并同步到分层块。"""
     turn = getattr(_local, "turn", None)
     if not turn:
         return
@@ -382,7 +382,7 @@ def retrieval(**facts) -> None:
 
 
 def note_behavior(tag: str, detail: dict = None) -> None:
-    """记一个行为标签：`tag` 取最后一次（主行为），`tags` 保留全序列。"""
+    """记一个行为标签：tag 取最后一次（主行为），tags 保留全序列。"""
     turn = getattr(_local, "turn", None)
     if not turn:
         return
@@ -437,7 +437,7 @@ def brief(obj, max_str: int = 40):
 
 
 def _as_triple(item):
-    """兼容 `(doc, score, meta)` 与裸 doc 两种输入。"""
+    """兼容 (doc, score, meta) 与裸 doc 两种输入。"""
     if isinstance(item, tuple) and len(item) == 3:
         return item[0], item[1], item[2]
     return item, None, None
@@ -465,7 +465,7 @@ def chunk_brief(ranked, n: int = 3) -> list:
 
 
 def chunk_records(ranked, max_chars: int = CHUNK_MAX_CHARS) -> list:
-    """`(doc, score, meta)` 列表 → 旁路文件里的片段记录（全文 + 排序 + 分数）。"""
+    """(doc, score, meta) 列表 → 旁路文件里的片段记录（全文 + 排序 + 分数）。"""
     out = []
     for rank, item in enumerate(list(ranked), 1):
         doc, score, meta = _as_triple(item)
@@ -489,7 +489,7 @@ def chunk_records(ranked, max_chars: int = CHUNK_MAX_CHARS) -> list:
 
 
 def chunks(ranked) -> None:
-    """记本轮召回的片段（含全文），由 `end_turn()` 落到 `<sid>.chunks.jsonl`。"""
+    """记本轮召回的片段（含全文），由 end_turn() 落到 <sid>.chunks.jsonl。"""
     turn = getattr(_local, "turn", None)
     if not turn:
         return
@@ -506,7 +506,7 @@ def current_turn() -> dict:
 
 
 def turn_anchor() -> dict:
-    """当前轮的锚点 `{date, turn_index}`（不在轮次里时为空）——写进上下文消息，供日后精确回标。"""
+    """当前轮的锚点 {date, turn_index}（不在轮次里时为空）——写进上下文消息，供日后精确回标。"""
     turn = getattr(_local, "turn", None) or {}
     if turn.get("turn_index") is None:
         return {}
@@ -516,7 +516,7 @@ def turn_anchor() -> dict:
 def find_turn_by_index(session_id: str, date: str, turn_index) -> dict:
     """按锚点直接取该轮（不用 query 猜轮次）；找不到返回空。
 
-    除定位字段外还给 `branch` / `sop` / `sop_gate`——「重新回答」要据此判断上一轮是不是 SOP 轮。
+    除定位字段外还给 branch / sop / sop_gate——「重新回答」要据此判断上一轮是不是 SOP 轮。
     """
     if not session_id or not date or turn_index is None:
         return {}
@@ -553,11 +553,11 @@ def shadow_turn(ctx: dict, record: dict) -> None:
 
 
 def find_turn(session_id: str, query: str, days: int = FEEDBACK_LOOKBACK_DAYS) -> dict:
-    """按 query 找该会话最近的一轮（从今天往回 `days` 天；跳过 aborted）。
+    """按 query 找该会话最近的一轮（从今天往回 days 天；跳过 aborted）。
 
     前端标注只有会话与原话，没有轮次号，靠它定位；返回
-    `{session_id, date, turn_index, query, tag}`，找不到返回 `{}`（可直接当
-    `feedback_turn` 的 `ctx` 用）。
+    {session_id, date, turn_index, query, tag}，找不到返回 {}（可直接当
+    feedback_turn 的 ctx 用）。
     """
     for offset in range(days):
         day_s = (datetime.now() - timedelta(days=offset)).strftime("%Y-%m-%d")
@@ -585,9 +585,9 @@ def find_turn(session_id: str, query: str, days: int = FEEDBACK_LOOKBACK_DAYS) -
 
 
 def feedback_turn(ctx: dict, rating: str, reason: str = "", note: str = "") -> None:
-    """把「有用/无用」标注落到该轮所在日期目录的 `<sid>.feedback.jsonl`。
+    """把「有用/无用」标注落到该轮所在日期目录的 <sid>.feedback.jsonl。
 
-    `ctx` 来自 `find_turn`；写入 best-effort，失败不影响接口。
+    ctx 来自 find_turn；写入 best-effort，失败不影响接口。
     """
     sid = (ctx or {}).get("session_id")
     if not sid or not (ctx or {}).get("date"):
@@ -620,7 +620,7 @@ def feedback_of(session_id: str, date: str, turn_index: int) -> dict:
 
 
 def effective_feedbacks(session_id: str, date: str = "") -> dict:
-    """该会话（某天）每轮的**生效**标注：同一轮有多条时取最后一条（改过以后写的为准）。"""
+    """该会话（某天）每轮的生效标注：同一轮有多条时取最后一条（改过以后写的为准）。"""
     out = {}
     want = date.replace("-", "")
     for day, path in day_files(session_id, FEEDBACK_KIND):
@@ -645,7 +645,7 @@ def effective_feedbacks(session_id: str, date: str = "") -> dict:
 def end_turn(aborted: bool = False, reply: str = "") -> None:
     """收尾并落盘（幂等）；写失败只吞掉。
 
-    召回片段正文写旁路文件，trace 行只留指路字段（`steps.retrieve.chunks_log` / `retrieval.evidence`）。
+    召回片段正文写旁路文件，trace 行只留指路字段（steps.retrieve.chunks_log / retrieval.evidence）。
     """
     turn = getattr(_local, "turn", None)
     if not turn:
@@ -683,7 +683,7 @@ def end_turn(aborted: bool = False, reply: str = "") -> None:
 
 
 def _finalize(turn: dict, reply: str) -> None:
-    """收尾补齐出口信息：折算唯一出口、补 `answer`；本轮没检索就补一条 skipped 节点。"""
+    """收尾补齐出口信息：折算唯一出口、补 answer；本轮没检索就补一条 skipped 节点。"""
     tag = turn.get("tag")
     if tag:
         turn["branch"] = BEHAVIOR_BY_TAG.get(tag)

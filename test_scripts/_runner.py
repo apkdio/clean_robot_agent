@@ -1,13 +1,13 @@
 """测试公共基础设施：路径注入 + 断言 + 计数汇总 + e2e 门控。
 
-所有 test_*.py 模块通过 ``from test_scripts._runner import *`` 复用本文件提供的：
-  - 路径注入：把项目根目录加入 sys.path，保证 ``import tools/sops/config/function_tools``
+所有 test_*.py 模块通过 from test_scripts._runner import * 复用本文件提供的：
+  - 路径注入：把项目根目录加入 sys.path，保证 import tools/sops/config/function_tools
     下的包导入都能正确解析（各入口脚本自行插入项目根，此处兜底）。
   - 断言函数：_assert / _assert_eq / _assert_true / _assert_false /
     _assert_in / _assert_not_in / _assert_raises。
   - 计数与汇总：reset / run_tests / summary。
-  - e2e 门控：E2E 标志（由命令行 ``--e2e`` 决定）与 @e2e 装饰器；
-    依赖 Ollama / Chroma / torch 的集成用例默认跳过，加 ``--e2e`` 才执行。
+  - e2e 门控：E2E 标志（由命令行 --e2e 决定）与 @e2e 装饰器；
+    依赖 Ollama / Chroma / torch 的集成用例默认跳过，加 --e2e 才执行。
 """
 
 import json
@@ -37,7 +37,7 @@ os.environ.setdefault("CONTEXT_DIR", "data/test_context")
 os.environ.setdefault("CONTEXT_META_DIR", "data/test_context_metadata")
 os.environ.setdefault("TRACE_DIR", "temp/trace_test")   # trace 也隔离，避免污染真实 logs/trace/
 
-# 上一段那句「_runner 总先于其它模块被导入」是**隐含约定**，破了会静默失效
+# 上一段那句「_runner 总先于其它模块被导入」是隐含约定，破了会静默失效
 _EARLY_IMPORTED = [m for m in ("tools.context_store", "tools.vector_store") if m in sys.modules]
 if _EARLY_IMPORTED:
     raise RuntimeError(
@@ -178,10 +178,10 @@ def stats():
 
 
 def disable_shadow():
-    """评测期间关掉主链路的影子探针（`tools/agent.py::_shadow_probe`）。
+    """评测期间关掉主链路的影子探针（tools/agent.py::_shadow_probe）。
 
     影子只落日志、不参与被测行为，却要额外跑一次 LLM 决策（实测每轮 +75~125s），
-    白白占住主链路要用的算力。返回 restore 回调，请在 `finally` 里复现——“run_tests.py
+    白白占住主链路要用的算力。返回 restore 回调，请在 finally 里复现——“run_tests.py
     在同一个进程里顺序跑多个模块，漏复现会污染后面的模块。
     """
     from tools import agent as agent_mod
@@ -191,17 +191,17 @@ def disable_shadow():
     return lambda: setattr(agent_mod, "_shadow_probe", original)
 
 
-# 双重导入（裸名 + `tools.` 前缀）曾会加载出两份带状态的模块，两者都能 import 成功。
+# 双重导入（裸名 + tools. 前缀）曾会加载出两份带状态的模块，两者都能 import 成功。
 # 项目里踩过：context_store 两份实例 → 喂给 LLM 的历史缺 assistant 一侧。
 # 已随「全项目统一完整导入」消除（见 docs/project_detail.md §八）：此处不再需要守卫。
 
 
 def reset_trace(session_id: str) -> None:
-    """清掉某个会话的 trace：删当天落盘文件 + 清 `trace_store` 的进程内计数。
+    """清掉某个会话的 trace：删当天落盘文件 + 清 trace_store 的进程内计数。
 
-    评测会跨行复用同一个 sid，不清就会：① 文件跨次运行累积；② `turn_index` 接着上次的行数数
-    （`_seq` 只在首次种入）。trace 不是判定依据，这里全 best-effort；若将来内部结构改名，
-    这里只会静默失效——真要长期依赖，应让 `trace_store` 提供一个公开的 reset。
+    评测会跨行复用同一个 sid，不清就会：① 文件跨次运行累积；② turn_index 接着上次的行数数
+    （_seq 只在首次种入）。trace 不是判定依据，这里全 best-effort；若将来内部结构改名，
+    这里只会静默失效——真要长期依赖，应让 trace_store 提供一个公开的 reset。
     """
     try:
         from tools import trace_store
@@ -221,7 +221,7 @@ def reset_trace(session_id: str) -> None:
 
 
 def read_last_turn(session_id: str) -> dict:
-    """读某会话当天 trace 的最后一条记录（评测失败归因用）；读不到返回 `{}`。"""
+    """读某会话当天 trace 的最后一条记录（评测失败归因用）；读不到返回 {}。"""
     try:
         from tools import trace_store
 

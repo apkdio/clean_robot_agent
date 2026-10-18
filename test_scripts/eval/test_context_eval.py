@@ -1,26 +1,26 @@
 """多轮对话上下文评测：回放真实会话前缀 → 断言当前轮的出口行为（P0-3；评测集 data/eval/context/golden.jsonl）。
 
-评测集 `data/eval/context/golden.jsonl`（**本地数据，已 gitignore**；从真实会话整理，
-结构与用法见同目录 `README.md`）。一行 = 一条标注（case），上下文按 `session_id` 现取。
+评测集 data/eval/context/golden.jsonl（本地数据，已 gitignore；从真实会话整理，
+结构与用法见同目录 README.md）。一行 = 一条标注（case），上下文按 session_id 现取。
 
-harness 对每条 case：回放前缀重建上下文与 SOP 状态，再发 `case.query`，
-按 `expect.behaviour`（出口行为）判定——读主链路 trace 记录的 `branch`（本轮唯一出口）。
-数据里的 `must_contain_any` / `must_not_contain` 保留不动但**暂不参与判定**：
+harness 对每条 case：回放前缀重建上下文与 SOP 状态，再发 case.query，
+按 expect.behaviour（出口行为）判定——读主链路 trace 记录的 branch（本轮唯一出口）。
+数据里的 must_contain_any / must_not_contain 保留不动但暂不参与判定：
 话术断言会随文案漂移，而「行为对不对」与「话里有没有某个词」是两回事——后者属内容级，归检索轨与人工复核。
 
-判定口径：`branch` 是记录侧按 `config/word_dict_config.py::BEHAVIOR_BY_TAG` 折算出的**唯一出口**
-（`[Behavior]` tag → 行为），取值构成闭集、可断言。不按日志行判定：一轮可能有多个 tag，
+判定口径：branch 是记录侧按 config/word_dict_config.py::BEHAVIOR_BY_TAG 折算出的唯一出口
+（[Behavior] tag → 行为），取值构成闭集、可断言。不按日志行判定：一轮可能有多个 tag，
 真正结束这一轮的是最后一个出口。
 
 两类断言的分工：
-  - **硬行为**（`safety_alert` / `safety_carry` / `refuse` / `no_answer_fallback` / `structured` / `answer`）
-    → 进**回归门**。
-  - **软行为**（`chitchat` / `clarify` / `slot_filled` / `scope_guard`）→ **一律不判失败**：它们本来就没有
+  - 硬行为（safety_alert / safety_carry / refuse / no_answer_fallback / structured / answer）
+    → 进回归门。
+  - 软行为（chitchat / clarify / slot_filled / scope_guard）→ 一律不判失败：它们本来就没有
     唯一正确答案（“闲聊该怎么回”），所以只输出「软行为复核清单」（本次回复 + 偏离点）交人工 / LLM 复核；
-    `branch` 与期望行为对不上时也列进清单（同一份复核，依旧不判失败）。
+    branch 与期望行为对不上时也列进清单（同一份复核，依旧不判失败）。
 
 通过语义（xfail 风格，仅对硬行为生效）：
-  - `verdict=pass` 或 `fixed: true` → **必过**；失败 = 回归（硬失败）。
+  - verdict=pass 或 fixed: true → 必过；失败 = 回归（硬失败）。
   - 其余（未修 badcase）→ 通过记 xpass（已修复），失败记 xfail（仍存在）；都不算回归。
 
 运行（需 Ollama + Chroma）：
@@ -56,7 +56,7 @@ _PREV_BASELINE_FILE = os.path.join(_ROOT, "data", "eval", "context", "baseline.p
 # 唯一还靠文本的地方：回放「孤儿危险告警轮」时用它认出那条 assistant 回复（见 _replay_prefix）
 _DANGER_ALERT_MARK = "请立即停止使用"
 
-# 出口行为闭集 = 记录侧 trace 的 `branch` 取值（含流程类的 4 个），在 config/word_dict_config.py 登记。
+# 出口行为闭集 = 记录侧 trace 的 branch 取值（含流程类的 4 个），在 config/word_dict_config.py 登记。
 # 行为轨只认这一份表，不再自带副本——两处各存一张是会漂移的。
 _BEHAVIOURS = set(BEHAVIOR_BY_TAG.values())
 
@@ -64,7 +64,7 @@ _BEHAVIOURS = set(BEHAVIOR_BY_TAG.values())
 _HARD_BEHAVIOURS = {"safety_alert", "safety_carry", "refuse",
                     "no_answer_fallback", "structured", "answer"}
 # 没有唯一正确答案的软行为 → 不判失败；branch 对不上只进复核清单
-# （`scope_guard` / `slot_filled` 两个期望没有专属 branch，只从期望侧出现）
+# （scope_guard / slot_filled 两个期望没有专属 branch，只从期望侧出现）
 _SOFT_BEHAVIOURS = {"chitchat", "clarify", "slot_filled", "scope_guard"}
 
 # 期望行为 → 可接受的 branch（软行为的「行为对得上吗」提示用；硬行为判定是相等比较）。
@@ -85,22 +85,22 @@ _CONTEXT_ROOT = None      # 真实会话目录（惰性解析，见 _real_contex
 
 
 def _real_context_root() -> str:
-    """真实会话目录。**不能用 `context_store._CONTEXT_DIR`**：评测进程里 `_runner` 为隔离被测写入
-    把它指到了 `data/test_context`，而评测集要读的是**真实**会话（契约测试会当场报出读不到）。
+    """真实会话目录。不能用 context_store._CONTEXT_DIR：评测进程里 _runner 为隔离被测写入
+    把它指到了 data/test_context，而评测集要读的是真实会话（契约测试会当场报出读不到）。
     """
     global _CONTEXT_ROOT
     if _CONTEXT_ROOT is None:
-        from tools.path_tool import get_abs_path   # 与 `context_store` 同一个路径助手，但不读 CONTEXT_DIR
+        from tools.path_tool import get_abs_path   # 与 context_store 同一个路径助手，但不读 CONTEXT_DIR
 
         _CONTEXT_ROOT = get_abs_path("data/context")
     return _CONTEXT_ROOT
 
 
 def _session_file(session_id: str) -> str:
-    """按 session_id 找会话文件：评测集自带的 `sessions/` 优先，再在真实会话目录里找。
+    """按 session_id 找会话文件：评测集自带的 sessions/ 优先，再在真实会话目录里找。
 
-    目录布局与命名都兼容：`<day>/<stem>.jsonl` 与根下 `<stem>.jsonl`；stem 有 `<sid>`（旧）
-    与 `<sid>_<YYYYMMDD>_<HHMM>`（新）两种。
+    目录布局与命名都兼容：<day>/<stem>.jsonl 与根下 <stem>.jsonl；stem 有 <sid>（旧）
+    与 <sid>_<YYYYMMDD>_<HHMM>（新）两种。
     """
     own = os.path.join(_SESS_DIR, "%s.jsonl" % session_id)
     if os.path.isfile(own):
@@ -124,7 +124,7 @@ def _session_file(session_id: str) -> str:
 
 
 def _turns_of(row: dict) -> list:
-    """会话消息：老行自带 `turns` 就用它，否则按 session_id 现读会话文件（行里不再内嵌上下文）。"""
+    """会话消息：老行自带 turns 就用它，否则按 session_id 现读会话文件（行里不再内嵌上下文）。"""
     if row.get("turns"):
         return row["turns"]
     path = _session_file(row.get("session_id") or "")
@@ -143,10 +143,10 @@ def _turns_of(row: dict) -> list:
 
 
 def _load_golden():
-    """读评测集：**一行一条 case**，按 `session_id` 分组返回（回放按会话走）。
+    """读评测集：一行一条 case，按 session_id 分组返回（回放按会话走）。
 
-    兼容两种行形态：新形态只带 `session_id` + `query_index`（上下文按 session_id 现取，行里不内嵌）；
-    旧形态（迁移前，见 `golden.prev.jsonl`）一行一个会话，自带 `turns` 与 `cases[]`。
+    兼容两种行形态：新形态只带 session_id + query_index（上下文按 session_id 现取，行里不内嵌）；
+    旧形态（迁移前，见 golden.prev.jsonl）一行一个会话，自带 turns 与 cases[]。
     """
     with open(_GOLDEN_FILE, encoding="utf-8") as f:
         text = f.read()
@@ -168,7 +168,7 @@ def _load_golden():
 
 
 def _validate_golden(rows) -> None:
-    """评测集自检：归因取值、`fixed` 语义、会话上下文可达——写错当场报出来，别等跑完 20 分钟。"""
+    """评测集自检：归因取值、fixed 语义、会话上下文可达——写错当场报出来，别等跑完 20 分钟。"""
     from config.word_dict_config import FEEDBACK_REASON_KEYS
 
     cases = [c for row in rows for c in row["cases"]]
@@ -186,9 +186,9 @@ def _branch_text(branch) -> str:
 
 
 def _check_case(expect: dict, branch, tag=None) -> list:
-    """返回问题清单（空 = 通过）。**判据只有出口行为**（读 trace 的 `branch`）。
+    """返回问题清单（空 = 通过）。判据只有出口行为（读 trace 的 branch）。
 
-    `must_contain_any` / `must_not_contain` 暂不参与判定：它们判的是“话里有没有某个词”，
+    must_contain_any / must_not_contain 暂不参与判定：它们判的是“话里有没有某个词”，
     与“这一轮被处置成哪类行为”是两回事（内容级问题归检索轨与人工复核）。
     """
     problems = []
@@ -216,8 +216,8 @@ def _check_case(expect: dict, branch, tag=None) -> list:
 def _ask(sid: str, query: str):
     """发一轮，返回 (回复, 本轮 trace 记录)。
 
-    判定读记录里的 `branch`（唯一出口），失败归因读 `path` / `route` / `retrieval`——同一份记录，
-    不再是两处证据。`end_turn()` 在本轮生成器消费完时落盘，所以返回时记录已在。
+    判定读记录里的 branch（唯一出口），失败归因读 path / route / retrieval——同一份记录，
+    不再是两处证据。end_turn() 在本轮生成器消费完时落盘，所以返回时记录已在。
     """
     from tools.agent import ask_stream
 
@@ -228,11 +228,11 @@ def _ask(sid: str, query: str):
 def _replay_prefix(sid: str, turns: list, lo: int, hi: int):
     """回放 turns[lo:hi] 重建上下文与状态。
 
-    user 轮真跑一遍（驱动 SOP 状态、落盘、按内容打 danger 标记），其回复用**当前系统**生成的
+    user 轮真跑一遍（驱动 SOP 状态、落盘、按内容打 danger 标记），其回复用当前系统生成的
     结果落盘（而非数据里的历史 actual）——否则上一条被修复的回复不会影响下一条的承接判定。
     assistant 轮已被上一条 user 轮的生成结果代表，跳过。
 
-    例外：危险告警轮可能缺触发它的 user 消息（见数据 `anomalies`，当时的 guard 在落盘前
+    例外：危险告警轮可能缺触发它的 user 消息（见数据 anomalies，当时的 guard 在落盘前
     return），此时补一条带 danger 标记的占位 user 消息，否则后续「安全承接」无从触发。
     """
     from tools.context_store import append_message
@@ -265,7 +265,7 @@ def _run_row(row: dict) -> list:
     # Redis 键 + 内存降级都要清，否则同一 sid 上一行的残留会污染下一行。
     clear_pending(sid)
     # 主链路 trace（tools/trace_store.py）也按 sid 落盘，同一 sid 跨行复用——先清掉上轮的落盘与
-    # 进程内计数，否则 `turn_index` 会接着前一次运行数、文件也会累积。
+    # 进程内计数，否则 turn_index 会接着前一次运行数、文件也会累积。
     reset_trace(sid)
     # 上一次运行若被中断，会话文件会留在盘上（收尾才删）——开头也删一次，让中断后的重跑自愈。
     delete_session(sid)
@@ -309,7 +309,7 @@ def _run_row(row: dict) -> list:
 
 
 def _reason_text(key) -> str:
-    """归因展示：`wrong_route「答非所问」`；空值 = 正例基线。与前端 feedback 同一套 key。"""
+    """归因展示：wrong_route「答非所问」；空值 = 正例基线。与前端 feedback 同一套 key。"""
     if not key:
         return "正例"
     try:
@@ -323,7 +323,7 @@ def _reason_text(key) -> str:
 def _trace_brief(record: dict) -> str:
     """把一条 trace 记录压成一行人读摘要（失败归因用）；没有 trace 返回空串。
 
-    主读 v3 分层块（`route` / `retrieval` / `path`），缺失时回落到 v2 投影 `steps`——
+    主读 v3 分层块（route / retrieval / path），缺失时回落到 v2 投影 steps——
     存量 v2 记录也看得懂。
     """
     if not record:
@@ -365,7 +365,7 @@ def _node_text(node: dict) -> str:
 
 
 def _trace_version() -> str:
-    """主链路 trace 的记录版本（`tools/trace_store.py::TRACE_VERSION`），写进报告便于日后对齐。"""
+    """主链路 trace 的记录版本（tools/trace_store.py::TRACE_VERSION），写进报告便于日后对齐。"""
     try:
         from tools import trace_store
 
@@ -408,7 +408,7 @@ def _print_detail(results):
 
 
 def _review_path():
-    """复核文件路径：`data/eval/output/<YYYYMMDD>/<HHMM>.md`（同一分钟重复跑则加 -2 / -3）。"""
+    """复核文件路径：data/eval/output/<YYYYMMDD>/<HHMM>.md（同一分钟重复跑则加 -2 / -3）。"""
     day_dir = os.path.join(_REVIEW_DIR, time.strftime("%Y%m%d"))
     os.makedirs(day_dir, exist_ok=True)
     stamp = time.strftime("%H%M")
@@ -421,7 +421,7 @@ def _review_path():
 
 
 def _write_review(rows, results, hard_results, soft_results, must_pass, regressions):
-    """把**软行为复核清单**落盘——复核是人工 / LLM 的活，得能拿出去看。
+    """把软行为复核清单落盘——复核是人工 / LLM 的活，得能拿出去看。
 
     软行为没有唯一正确答案，所以文件里只摆事实：期望行为 + 实际 branch + 本次回复 + 偏离点 + 归档判据。
     """
@@ -473,7 +473,7 @@ def _write_review(rows, results, hard_results, soft_results, must_pass, regressi
 def _env_meta() -> dict:
     """本轨的环境指纹：复用检索轨那套（代码 / 知识库 / 配置 / 索引），
 
-    再补本轨特有的三项——**分类头与训练集**（意图判错会直接改变出口行为）、trace 记录版本。
+    再补本轨特有的三项——分类头与训练集（意图判错会直接改变出口行为）、trace 记录版本。
     """
     from test_scripts.eval import test_retrieval_eval as retr
     from tools import trace_store
@@ -492,9 +492,9 @@ def _env_meta() -> dict:
 
 
 def _baseline_payload(rows, results) -> dict:
-    """基线内容：聚合计数 + `ids` + `per_id`（每条「与期望行为是否一致」）+ `env`。
+    """基线内容：聚合计数 + ids + per_id（每条「与期望行为是否一致」）+ env。
 
-    `per_id` 的口径：硬行为比 `branch` 是否等于期望、软行为比是否落在接受集内，
+    per_id 的口径：硬行为比 branch 是否等于期望、软行为比是否落在接受集内，
     取不到出口（没记 branch / 未登记）也算不一致。软行为那条只是参考，不当门禁。
     """
     hard = [r for r in results if r["hard"]]
@@ -571,7 +571,7 @@ def _print_env_compare(env, base_env) -> None:
 def _compare_baseline(rows, results) -> None:
     """与基线逐条比 + 核对环境。
 
-    分类与检索轨一致，但**「回归」只认必过条目**：必过变红才是红灯；
+    分类与检索轨一致，但「回归」只认必过条目：必过变红才是红灯；
     未修 badcase 从「已转通过」退回失败单列「退步」——是信息，不是门禁失败。
     """
     if not os.path.isfile(_BASELINE_FILE):
@@ -604,14 +604,14 @@ def _compare_baseline(rows, results) -> None:
 # ──────────────────────────────────────────────────────────────
 
 def _arg_value(flag: str) -> str:
-    """取 `--flag value` 的值；没给返回空串。"""
+    """取 --flag value 的值；没给返回空串。"""
     if flag in sys.argv and len(sys.argv) > sys.argv.index(flag) + 1:
         return sys.argv[sys.argv.index(flag) + 1]
     return ""
 
 
 def _latest_batch() -> str:
-    """评测集里最新的那批日期（id 形如 `CTX-<YYYYMMDD>-<序号>`）。"""
+    """评测集里最新的那批日期（id 形如 CTX-<YYYYMMDD>-<序号>）。"""
     dates = [i.split("-")[1] for i in _all_case_ids() if i.count("-") >= 2]
     return max(dates) if dates else ""
 
@@ -655,7 +655,7 @@ def _replay_turns(rows) -> int:
 
 
 def _select_sets(rows, names=(), ids=()):
-    """按集合名 / id（支持 `前缀*`）过滤；两者都给就取交集。返回 (rows, 说明文字)。"""
+    """按集合名 / id（支持 前缀*）过滤；两者都给就取交集。返回 (rows, 说明文字)。"""
     bad = set(names) - set(_SETS)
     if bad:
         raise ValueError("未知集合：%s（可用：%s）"

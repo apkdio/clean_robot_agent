@@ -217,7 +217,7 @@ def test_enumerate_models_by_series():
 
 
 class _FakeCollection:
-    """只为 `store_fingerprint` 造的假 collection：只实现它用到的 get()。"""
+    """只为 store_fingerprint 造的假 collection：只实现它用到的 get()。"""
 
     def __init__(self, rows):
         self._rows = rows                      # [(file_name, file_sha256), ...]

@@ -1,13 +1,13 @@
 """编排层骨架（P1-5）：只出"决策"，不执行、不改动现有链路。
 
-一轮请求里，现有 if 链照常把答案给用户；本模块只在旁边做一次**并行的决策尝试**——
+一轮请求里，现有 if 链照常把答案给用户；本模块只在旁边做一次并行的决策尝试——
 让模型在工具白名单里选工具、填参数，然后把决策对象交给调用方（影子阶段用于落日志、离线阶段用于对照）。
 刻意不做的事：不 import agent、不执行任何工具、不产生任何面向用户的输出。
 
 先有它的理由：影子阶段要"在真实流量上并行做一遍决定"，离线沙盘也要复用同一套决策逻辑，
-两处都需要一个**可独立调用、无副作用**的函数。
+两处都需要一个可独立调用、无副作用的函数。
 
-决策类目（`TASK_CATEGORIES`）：链路侧是离散分支，FC 侧是工具名，两边映射到同一张表上才谈得上
+决策类目（TASK_CATEGORIES）：链路侧是离散分支，FC 侧是工具名，两边映射到同一张表上才谈得上
 "选路准确率"。SOP 与硬拦截没有对应工具——那几类本来就不该由 FC 决定（状态机留代码）。
 """
 
@@ -22,11 +22,11 @@ from tools.log_tool import get_logger
 
 logger = get_logger(name="orchestrator")
 
-# 为什么分两张表：“要不要检索 / 要不要拒答”**不由 FC 决定**——那是砸词表硬规则（危险/注入）
-# 与意图分类（含低置信承接）的活（A 类主路）。FC 只在**已经确定要走检索或结构化筛选**的轮次里参与，
-# 贡献的是“用哪个工具 + 填什么参数”，其中 `search_kb` 的实际价值是 `query_summarization`（检索式）
-# 与 `domain`（域）——这两件事意图分类从来没做过，今天靠余弦选轮拼接 + 词表域路由。
-# 所以 `fc_eligible=False` 的类目压根不调 `decide()`，也就谈不上“拿 FC 再查一遍意图”。
+# 为什么分两张表：“要不要检索 / 要不要拒答”不由 FC 决定——那是砸词表硬规则（危险/注入）
+# 与意图分类（含低置信承接）的活（A 类主路）。FC 只在已经确定要走检索或结构化筛选的轮次里参与，
+# 贡献的是“用哪个工具 + 填什么参数”，其中 search_kb 的实际价值是 query_summarization（检索式）
+# 与 domain（域）——这两件事意图分类从来没做过，今天靠余弦选轮拼接 + 词表域路由。
+# 所以 fc_eligible=False 的类目压根不调 decide()，也就谈不上“拿 FC 再查一遍意图”。
 CHAIN_CATEGORIES: Dict[str, Dict] = {
     "kb_search": {"label": "知识库检索问答", "fc_eligible": True,
                   "fc_value": "检索式（query_summarization）+ 域（domain）"},
@@ -52,12 +52,12 @@ ABSTAIN = "no_tool"
 
 
 def category_of_tool(tool: Optional[str]) -> str:
-    """工具名 → 类目；None / 白名单外 → `ABSTAIN`（弃权，本轮不采用工具）。"""
+    """工具名 → 类目；None / 白名单外 → ABSTAIN（弃权，本轮不采用工具）。"""
     return TOOL_CATEGORIES.get(tool or "", ABSTAIN)
 
 
 def chain_fc_eligible(category: str) -> bool:
-    """该类链路的轮次是否该调 `decide()`。状态机 / 硬拦截 / 情绪 / 拒答一律不调。"""
+    """该类链路的轮次是否该调 decide()。状态机 / 硬拦截 / 情绪 / 拒答一律不调。"""
     return bool((CHAIN_CATEGORIES.get(category) or {}).get("fc_eligible", False))
 
 
@@ -110,14 +110,14 @@ _SYSTEM = (
 
 def decide(query: str, effective_query: str = "", history_block: str = "",
            domain_hint: Optional[str] = None, model: str = "") -> Decision:
-    """让模型做一次决策（**不执行**任何工具）。
+    """让模型做一次决策（不执行任何工具）。
 
-    `effective_query` 是 agent 侧改写后的自足问句（有就给模型参考）；
-    `domain_hint` 是词表域路由给出的域键（无则 None）——影子/离线阶段用来和模型选的 `domain` 比对，
-    不一致记进 `notes`，不在这里裁决（裁决口径见 §11 词表分工）。
+    effective_query 是 agent 侧改写后的自足问句（有就给模型参考）；
+    domain_hint 是词表域路由给出的域键（无则 None）——影子/离线阶段用来和模型选的 domain 比对，
+    不一致记进 notes，不在这里裁决（裁决口径见 §11 词表分工）。
 
-    消息形态刻意做成**自然对话**：历史放 system 块，当前这一句就是 human 消息本身
-    （不做「用户当前这一句：…」这种标签——实测模型会把标签一起拄进 `query` 参数）。
+    消息形态刻意做成自然对话：历史放 system 块，当前这一句就是 human 消息本身
+    （不做「用户当前这一句：…」这种标签——实测模型会把标签一起拄进 query 参数）。
     """
     from function_tools.model_tool import validate_find_models_args
     from function_tools.registry import build_tool_schemas, tool_names
@@ -178,7 +178,7 @@ def decide(query: str, effective_query: str = "", history_block: str = "",
 
 def shadow_record(decision: Decision, origin: str, chain_category: str,
                   chain_detail: str = "") -> dict:
-    """影子决策的结构化对照（与 `shadow_line` 同一口径，供 trace 旁路文件落盘）。"""
+    """影子决策的结构化对照（与 shadow_line 同一口径，供 trace 旁路文件落盘）。"""
     rec = dict(decision.to_log())
     rec.update({
         "query": origin,
@@ -193,7 +193,7 @@ def shadow_line(decision: Decision, origin: str, chain_category: str,
                 chain_detail: str = "") -> str:
     """影子/离线对照的一行日志：链路怎么判、FC 会怎么判、是否一致。
 
-    格式固定，便于事后 grep 统计（`[Shadow]` 前缀）。
+    格式固定，便于事后 grep 统计（[Shadow] 前缀）。
     """
     fc = decision.tool or "-"
     if decision.args:

@@ -3,11 +3,11 @@
 每轮追加一条消息，文件保留全量（持久化、重启可恢复），内存缓存与读取保留最近
 6 轮（12 条消息）供指代消解与 LLM 拼接。
 
-文件布局（按会话**创建日期**分目录，便于归档与清理）：
+文件布局（按会话创建日期分目录，便于归档与清理）：
   data/context/<YYYYMMDD>/<session_id>_<YYYYMMDD_HHMM>.jsonl          每行一条 JSON 消息
   data/context_meta/<YYYYMMDD>/<session_id>_<YYYYMMDD_HHMM>.meta.json 标题 / 上一轮推荐
 
-日期取**会话创建时间**（文件名后缀），跨零点续聊仍留在创建当天的目录里。
+日期取会话创建时间（文件名后缀），跨零点续聊仍留在创建当天的目录里。
 兼容历史布局：早期平铺在 data/context/ 下的文件（含无时间戳的 <session_id>.jsonl）仍可读写，
 新会话一律写入日期子目录。
 """
@@ -78,7 +78,7 @@ def _date_dir_of(stem: str) -> str | None:
 def _iter_data_files():
     """遍历所有会话 jsonl，yield (完整路径, 文件名主干, 日期子目录名或 "")。
 
-    两种布局都扫：新的 `data/context/<YYYYMMDD>/<stem>.jsonl`，与历史的 `data/context/<stem>.jsonl`。
+    两种布局都扫：新的 data/context/<YYYYMMDD>/<stem>.jsonl，与历史的 data/context/<stem>.jsonl。
     """
     if not os.path.isdir(_CONTEXT_DIR):
         return
@@ -296,7 +296,7 @@ def rollback_last_user_message(session_id: str):
 def get_recent(session_id: str, n: int = None) -> list:
     """取最近 n 条消息（默认 6 轮 = 12 条）。
 
-    内存缓存只是**滚动窗口**（_MAX_MESSAGES 条），所以请求超过窗口长度时必须
+    内存缓存只是滚动窗口（_MAX_MESSAGES 条），所以请求超过窗口长度时必须
     回读文件：否则会被静默截断 —— 前端历史接口原本取 n=1000 想拿全量，实际只
     拿到窗口里的 12 条，导致多轮会话的前几轮在界面上凭空消失。
     """
@@ -349,7 +349,7 @@ def _declined_sops(value) -> list:
 
 
 def set_enter_declined(session_id: str, declined: bool = True, sop_id: str = None):
-    """记下用户拒绝了「进入引导」，**按 SOP 记**：拒了选购不影响维修下次再问。
+    """记下用户拒绝了「进入引导」，按 SOP 记：拒了选购不影响维修下次再问。
 
     declined=False 撤标记（给 sop_id 只撤该条，不给则全撤）；declined=True 且不给 sop_id
     记成会话级，与历史行为一致。
