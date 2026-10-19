@@ -6,6 +6,9 @@ import re
 
 from config.word_dict_config import SERVICE_POINT_CONSULT_WORDS, SERVICE_POINT_WORDS
 from sops.base import register
+from tools.log_tool import get_logger
+
+logger = get_logger(name="sops_service_point")
 
 
 def _is_consult(query: str) -> bool:
@@ -44,8 +47,9 @@ def _extract_city_by_llm(text: str) -> list:
             tc = tool_calls[0]
             args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
             return geocode_city((args.get("location") or "").strip())
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        # 抽城市失败=槽位收不到，下一步会重问；留一行才好区分"模型抽不出"与"没有城市"
+        logger.warning("[ServicePoint] LLM 抽城市失败，按未识别处理：%s", e)
     return []
 
 

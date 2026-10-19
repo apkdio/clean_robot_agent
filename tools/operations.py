@@ -118,8 +118,15 @@ def note_ops(query: str, *, intent: str = None, margin: float = None) -> dict:
     raw = probe(query)
     state, winner = resolve(raw, intent=intent, margin=margin)
     usable = [o for o in raw if _allowed(o, intent)]
+    if not usable:
+        why = "none"
+    elif len(usable) == 1:
+        why = "single"
+    elif state == "ambiguous":
+        why = "threshold"
+    else:
+        why = "order"
     note = {"ops": "/".join(usable) or "-", "n": len(usable), "state": state,
-            "winner": winner or "-",
-            "why": "single" if len(usable) == 1 else ("threshold" if state == "ambiguous" else "order")}
+            "winner": winner or "-", "why": why}
     trace_store.route("ops", **note)
     return {"ops": raw, "usable": usable, **note}

@@ -43,6 +43,9 @@ def _read_text_file(file_path: str) -> list[Document]:
         try:
             with open(file_path, "r", encoding=encoding) as f:
                 content = f.read()
+            # BOM 在 utf-8 下能正常解码（\ufEFF 是合法字符）但会黏在首个标题前，
+            # 让条目识别错位——统一剥掉
+            content = content.lstrip("\ufeff")
             docs.append(Document(page_content=content, metadata={"source": file_path}))
             return docs
         except UnicodeDecodeError:

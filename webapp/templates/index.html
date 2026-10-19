@@ -328,8 +328,10 @@
             <div class="dz-icon"><i class="fa-solid fa-file-lines"></i></div>
             <div class="dz-text">拖拽文件到此处或点击选择</div>
             <div class="dz-hint">.txt .md .pdf .csv .docx .pptx .xlsx</div>
+            <!-- accept 与后端入库白名单保持一致（rag.yaml supported_exts）：
+                 多列的扩展名后端一律 400，用户选中也是白选 -->
             <input type="file" id="fileInput" multiple
-                   accept=".txt,.md,.markdown,.asciidoc,.adoc,.pdf,.csv,.docx,.doc,.pptx,.ppt,.xlsx,.xls" />
+                   accept=".txt,.md,.pdf,.csv,.docx,.pptx,.xlsx" />
           </div>
           <div class="file-list" id="fileList"></div>
           <div class="actions-row">
@@ -641,6 +643,7 @@
     try {
       const r = await fetch('/api/reset', { method:'POST' });
       const d = await r.json();
+      if (!r.ok) { klog(`❌ ${d.message || r.status}`, 'error'); return; }
       klog(`✅ 已清除 ${d.deleted} chunks`, 'ok');
       await loadStats();
     } catch(err) { klog(`❌ ${err}`, 'error'); }
@@ -677,7 +680,7 @@
     chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
   });
 
-  async function streamAnswer(query, botDiv, bubble, retry, isRetry) {
+  async function streamAnswer(query, botDiv, bubble, retry, isRetry, userBubble) {
     const sidAtSend = sessionId;   // 本轮属于哪个会话：回答期间可能被切走
     // 重发复用的是同一个气泡：先把该气泡尾随的评价条摘掉——否则新旧两条并排，
     // 旧那条还写着「已记录」，看着像这次重发已经标过了。
@@ -694,6 +697,7 @@
 
     let streamedText = '';
     let stoppedByUser = false;
+    let lastAnchor = null;   // meta 帧里的本轮锚点（date + turn_index），评价用
 
     try {
       // 查网点时尝试获取定位（授权一次后缓存），失败静默降级到城市提取
@@ -708,6 +712,18 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, session_id: sessionId, lng, lat, retry: !!isRetry })
       });
+      // 非 2xx（如 409 busy）不是 SSE 流，getReader 会解析不出任何帧、气泡永远转圈
+      if (!r.ok) {
+        let msg = `请求失败（${r.status}）`;
+        try {
+          const j = await r.json();
+          if (j && j.message) msg = j.message;
+        } catch (e) { /* 保持默认文案 */ }
+        streamedText = msg;
+        bubble.innerHTML = md(msg);
+        scrollBottom();
+        return;
+      }
 
       const reader = r.body.getReader();
       const decoder = new TextDecoder();
@@ -728,8 +744,20 @@
               try {
                 const meta = JSON.parse(m[1]);
                 if (meta && meta.sop_active && retry) retry.style.display = 'none';
+                // 保存本轮锚点：实时评价带上它，重复提问时不再靠 query 猜轮次（会标错）
+                if (meta && meta.anchor) lastAnchor = meta.anchor;
               } catch (e) { /* 帧坏了不影响回答 */ }
             }
+            continue;
+          }
+          // 错误帧（后端 event: error）：错误轮不落上下文，前端只提示、不挂评价条
+          if (part.startsWith('event: error')) {
+            const m = part.match(/\ndata: ([\s\S]*)$/);
+            let msg = '生成失败，请重试';
+            if (m) { try { msg = JSON.parse(m[1]); } catch (e) { /* 用默认文案 */ } }
+            streamedText = msg;
+            bubble.innerHTML = md(msg);
+            scrollBottom();
             continue;
           }
           if (part.startsWith('data: ')) {
@@ -747,8 +775,12 @@
       }
 
       if (stoppedByUser) {
-        bubble.innerHTML = md(streamedText + '\n\n（已停止）');
-        scrollBottom();
+        // 与后端回滚同一语义（「这一轮没发生」）：整对气泡移除，
+        // trace 里仍留 aborted 记录做证据；刷新后历史（jsonl 已回滚）与实时视图一致
+        if (sidAtSend === sessionId) userBubble.remove();
+        botDiv.remove();
+        if (retry) retry.remove();
+        return;
       }
     } catch (err) {
       bubble.innerHTML = md('抱歉，连接失败，请检查服务是否启动。');
@@ -757,8 +789,9 @@
     // 回答期间切了会话：旧气泡已不在页面上，别再往里挂东西
     if (sidAtSend !== sessionId) return;
     if (retry) retry.style.display = '';
-    // 回答完成后挂评价条（被停止的轮次在 trace 里是 aborted，不挂）
-    if (!stoppedByUser && retry) retry.after(makeFeedbackBar(query, sidAtSend));
+    // 回答完成后挂评价条（被停止的轮次在 trace 里是 aborted，不挂）；
+    // 实时轮带上 meta 帧的锚点，重复提问也不会标到别的轮次
+    if (!stoppedByUser && retry) retry.after(makeFeedbackBar(query, sidAtSend, lastAnchor));
   }
 
   function setSendBtn(streaming) {
@@ -803,17 +836,36 @@
     botDiv.innerHTML = '<div class="avatar"><i class="fa-solid fa-robot"></i></div><div class="bubble"></div>';
     chatMessages.insertBefore(botDiv, typing);
     const bubble = botDiv.querySelector('.bubble');
+    // 停止时整对移除要用的 user 气泡引用（刚 append 的那条）
+    const userBubble = [...chatMessages.querySelectorAll('.msg.user')].pop() || null;
 
     // Retry button below the bubble
     const retry = document.createElement('div');
     retry.className = 'retry-btn';
     retry.innerHTML = '<i class="fa-solid fa-rotate-right"></i> 重新回答';
     retry.title = '使用相同问题重新回答';
-    retry.addEventListener('click', () => streamAnswer(query, botDiv, bubble, retry, true));
+    // 重发同样要走 isStreaming 状态机：不置位的话，重发期间再发新消息/再点重发
+    // 会撞服务端会话锁（409），且停止按钮对它无效
+    retry.addEventListener('click', async () => {
+      if (isStreaming) return;
+      isStreaming = true;
+      streamingSid = sessionId;
+      setSendBtn(true);
+      try {
+        await streamAnswer(query, botDiv, bubble, retry, true,
+          botDiv.previousElementSibling && botDiv.previousElementSibling.classList.contains('user')
+            ? botDiv.previousElementSibling : null);
+      } finally {
+        isStreaming = false;
+        streamingSid = null;
+        setSendBtn(false);
+        chatInput.focus();
+      }
+    });
     botDiv.after(retry);
 
     try {
-      await streamAnswer(query, botDiv, bubble, retry);
+      await streamAnswer(query, botDiv, bubble, retry, false, userBubble);
       loadSessions();
     } finally {
       isStreaming = false;
@@ -916,8 +968,22 @@
       // 回退：无 marked 时按行转义输出
       return text.split('\n').map(l => h(l)).join('<br>');
     }
+    // 先转义尖括号挡住标签注入，再让 marked 生成链接；
+    // marked v15 不清洗 URL scheme，[x](javascript:alert(1)) 会原样进 href——
+    // 渲染后把非白名单 scheme 的链接摘成纯文本
     const escaped = text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    return marked.parse(escaped);
+    const html = marked.parse(escaped);
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html;
+    tpl.content.querySelectorAll('a[href]').forEach(a => {
+      const ok = /^(https?:|mailto:)/i.test(a.getAttribute('href') || '');
+      if (!ok) {
+        const span = document.createElement('span');
+        span.textContent = a.textContent;
+        a.replaceWith(span);
+      }
+    });
+    return tpl.innerHTML;
   }
 
   function scrollBottom() {

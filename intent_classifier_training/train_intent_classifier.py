@@ -179,10 +179,13 @@ def main():
     labels_path = os.path.join(_abs(_MODEL_DIR), "labels.json")
     torch.save(model.state_dict(), head_path + ".tmp")
     os.replace(head_path + ".tmp", head_path)
+    # labels.json 带上输入维度与 embedding 模型：推理侧据此建头并在维度不符时显式报错，
+    # 否则换 embedding 模型后 load_state_dict 抛异常 → 静默降级全 unknown，很难定位
+    meta = {"labels": _LABELS, "input_dim": int(X.shape[1]), "embedding_model": "bge-m3"}
     with open(labels_path + ".tmp", "w", encoding="utf-8") as f:
-        json.dump(_LABELS, f, ensure_ascii=False)
+        json.dump(meta, f, ensure_ascii=False)
     os.replace(labels_path + ".tmp", labels_path)
-    print(f"\n模型已保存到 {_abs(_MODEL_DIR)}")
+    print(f"\n模型已保存到 {_abs(_MODEL_DIR)}（input_dim={X.shape[1]}）")
 
 
 if __name__ == "__main__":

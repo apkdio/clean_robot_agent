@@ -114,12 +114,18 @@ class HybridRetriever:
 
         facts = {}
         ranked = self._retrieve(query, filter, facts)
+        degraded = bool((facts.get("rerank") or {}).get("degraded"))
         facts["pass"] = 1
         passes = [facts]
         top1 = ranked[0][1] if ranked else 0.0
 
-        # 阈值只在精排启用时才有意义：关闭精排时 top1 是 RRF 分，量纲不同
-        if rerank_on and threshold > 0 and top1 < threshold and filter is not None:
+        # 阈值只在精排真正成功时才有意义：降级时分数是 RRF 量纲（top1 约 0.03），
+        # 按精排阈值硬砍会把无域过滤的查询整批清零
+
+        # 以下ABC均为一次检索后根据检索的结果决定下一步的分支
+        # A：rerank开启 rerank加载成功 配置阈值开 rrf后Top1分数低于阈值 存在定域召回
+        # 进入二次全库兜底召回
+        if rerank_on and not degraded and threshold > 0 and top1 < threshold and filter is not None:
             logger.warning(
                 "[Hybrid] in-domain top1=%.4f < threshold=%.2f → second pass over full KB",
                 top1, threshold,
@@ -137,7 +143,9 @@ class HybridRetriever:
             twice = {"active": True,
                      "kept": sum(1 for doc, _s, _m in ranked if doc.page_content not in first_keys),
                      "trigger": {"top1": round(top1, 4), "threshold": threshold}}
-        elif rerank_on and threshold > 0:
+        # B：rerank开启 rerank加载成功 rerank后Top1 过阈值 | 已经进行过全域召回
+        # 正常进行rerank截断
+        elif rerank_on and not degraded and threshold > 0:
             before = len(ranked)
             ranked = [item for item in ranked if item[1] >= threshold]
             logger.info(
@@ -146,6 +154,8 @@ class HybridRetriever:
             )
             twice = {"active": False, "kept": 0}
         else:
+            # C：rerank加载出现问题或rerank未开启或阈值未配置
+            # 返回RRF/Rerank原始排序，根据final_k截断
             twice = {"active": False, "kept": 0}
 
         top = ranked[:final_top_k]

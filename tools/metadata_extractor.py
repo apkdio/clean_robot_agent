@@ -152,6 +152,11 @@ def extract_model_info(doc) -> Dict:
         mm = re.search(r"系列[:：]\s*([^\n｜|，,]+)", text)
         return mm.group(1).strip() if mm else ""
 
+    # 特点是整行短语（含空格与加号），同样不能用 _field
+    def _feature() -> str:
+        mm = re.search(r"特点[:：]\s*([^\n]+)", text)
+        return mm.group(1).strip() if mm else ""
+
     return {
         "name": name,
         "series": _series(),
@@ -159,7 +164,8 @@ def extract_model_info(doc) -> Dict:
         "suction": _field("吸力"),
         "navigation": _field("导航"),
         "obstacle": _field("避障"),
-        "publish_date": _field("发布时间")
+        "publish_date": _field("发布时间"),
+        "feature": _feature(),
     }
 
 
@@ -197,6 +203,15 @@ def format_model_line(info: Dict, aspect: str = None) -> str:
     if info.get("publish_date") is not None:
         line += f"（发布日期:{info['publish_date']}）"
     return line
+
+
+def format_models(models, header: str, aspect: str = None) -> str:
+    """型号列表 → 回复文本（标题 + 每型号一行）；aspect 非空时只输出该属性维度。
+
+    型号展示是这一层的事：原先放在 sops/base，逼得 agent（上层）反向 import sops（下层）。
+    """
+    lines = [format_model_line(m, aspect) for m in (models or [])]
+    return header + "\n\n" + "\n".join(lines)
 
 
 # aspect 关键词 → aspect 中文取值（规则提取，长关键词优先）见 config/word_dict_config.py
@@ -352,31 +367,43 @@ def enumerate_models_by_series(series: str) -> list[Dict]:
 
 
 def _cn_to_int(s: str) -> Optional[int]:
-    """把简单中文数字（'一千' / '两千五'）转成 int。"""
-    total = 0
-    section = 0
-    number = 0
+    """把简单中文数字（'一千' / '两千五'）转成 int。
+
+    尾部裸数字的两种读法：「两千五」＝2500（省略了百）、「一千零一」＝1001（零提示跳位）——
+    用「单位后是否出现过零」区分：有零按个位补零读，无零按省略单位读（乘上一单位 ÷ 10）。
+    """
+    total = section = number = 0
+    last_unit = 0
+    trailing_zero = False
     for ch in s:
         if ch in _CN_NUM:
+            if _CN_NUM[ch] == 0:
+                trailing_zero = True
+                continue
             number = _CN_NUM[ch]
         elif ch in _CN_UNIT:
             unit = _CN_UNIT[ch]
             if number == 0:
                 number = 1
             section += number * unit
+            last_unit = unit
             number = 0
+            trailing_zero = False
         else:
             return None
+    if number and last_unit >= 10 and not trailing_zero:
+        number = number * (last_unit // 10)
     return total + section + number
 
 
 def extract_price_constraint(query: str) -> Optional[tuple]:
     """从 query 提取价格约束，返回 (min_price, max_price) 元组，未命中返回 None。
     """
-    # 1. 显式区间
+    # 1. 显式区间（两分支：前缀价格词 → 组1/2；尾带货币单位 → 组3/4）
     m = _PRICE_RANGE_PATTERN.search(query)
     if m:
-        return (int(float(m.group(1))), int(float(m.group(2))))
+        lo, hi = (m.group(1), m.group(2)) if m.group(1) is not None else (m.group(3), m.group(4))
+        return (int(float(lo)), int(float(hi)))
 
     # 2. 上限（以内/以下）
     m = re.search(r"(\d+)\s*(?:元|块|块钱)?\s*(?:以内|以下|之内)", query)

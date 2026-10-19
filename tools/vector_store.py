@@ -45,11 +45,9 @@ def _get_collection_name() -> str:
 
 def get_vector_store() -> Chroma:
     """返回一个基于持久化存储和本地 embedding 的 Chroma 实例。"""
-    embedding = get_embedding_model(
-        model=_chroma_cfg["embedding"]["model"],
-        base_url=_chroma_cfg["embedding"]["base_url"],
-        api_key=_chroma_cfg["embedding"]["api_key"],
-    )
+    # 不再显式传 embedding 参数：来源统一在 llm_tool 里按 chroma.yaml 解析
+    # （此前这里手传、intent_router 用默认值，两处会漂移）
+    embedding = get_embedding_model()
     return Chroma(
         collection_name=_get_collection_name(),
         embedding_function=embedding,
@@ -113,6 +111,18 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
             metadata={**doc.metadata, "source": tag, "file_name": file_name, "file_sha256": sha256},
         )
         chunks.extend(entry_chunks)
+        # 有编号条目的文档，条目之外的非空正文（导语/章节说明/普通段落）不会成为 chunk——
+        # 数出来告警，静默丢弃会让依赖概述的问答召回到一半却无处排查
+        if entry_chunks:
+            n_entries = len(entry_chunks)
+            n_lines = len([ln for ln in doc.page_content.splitlines()
+                           if ln.strip() and not ln.strip().startswith(("#", ">"))])
+            dropped = n_lines - sum(len(c.page_content.splitlines()) for c in entry_chunks)
+            if dropped > 0:
+                logger.warning(
+                    "[Ingest] %s 有 %d 行非编号正文未成 chunk（导语/概述段会被丢弃），条目数=%d",
+                    file_name, dropped, n_entries,
+                )
 
     if not chunks:
         # 没有编号条目 → 回退到通用字符切分器

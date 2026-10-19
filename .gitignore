@@ -9,6 +9,8 @@ data/eval
 data/context_meta/
 data/test_context/
 data/test_context_metadata/
+# 构建脚本的临时产物（正式训练集 data/datasets/intent_dataset.jsonl 照常提交）
+data/datasets/_generated.jsonl
 __pycache__/
 *.pyc
 

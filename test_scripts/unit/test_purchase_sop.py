@@ -371,6 +371,27 @@ def test_purchase_sop_full_flow():
     _cleanup()
 
 
+def test_pet_slot_reorders_results():
+    """有宠物时养宠友好机型排前（L-01）：问话承诺过「优先推荐防毛发缠绕机型」，
+    排序兑现承诺；无宠物时排序不动。词表信号来自知识库「特点」行（feature 字段）。"""
+    from sops.purchase import _search
+    from config.word_dict_config import PET_FRIENDLY_WORDS
+
+    if not _models_ready():
+        _skip("无型号数据（Chroma/pkl 缓存缺失）")
+        return
+
+    no_pet = _search({"budget": (None, 30000), "has_pet": False})["models"]
+    with_pet = _search({"budget": (None, 30000), "has_pet": True})["models"]
+    _assert_eq(sorted(m["name"] for m in no_pet), sorted(m["name"] for m in with_pet),
+               "宠物槽不改变命中集合（只重排）")
+    tops = [m for m in with_pet if any(w in (m.get("feature") or "") for w in PET_FRIENDLY_WORDS)]
+    others = [m for m in with_pet if not any(w in (m.get("feature") or "") for w in PET_FRIENDLY_WORDS)]
+    expected = [m["name"] for m in tops + others]
+    _assert_eq([m["name"] for m in with_pet], expected, "养宠友好机型整体排前（稳定排序）")
+    _assert(tops, "词表在当前知识库有命中（否则断言失效而非真通过）")
+
+
 TESTS = [
     test_register_and_match,
     test_purchase_trigger_and_guards,
@@ -378,6 +399,7 @@ TESTS = [
     test_continue_no_session,
     test_end_sop,
     test_full_flow,
+    test_pet_slot_reorders_results,
     test_extract_has_pet,
     test_extract_budget_bare_number,
     test_result_reply,

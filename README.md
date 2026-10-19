@@ -10,14 +10,14 @@
 - **query 入口归一化**：进链路先做纯规则清洗（标点、空格、全半角、同义词映射如「扫托→扫拖」，也兼容型号名不带空格的写法「云顶X2」）；清洗后的文本用于 SOP 触发、域路由与检索，**判到领域外或低置信闲聊时会拿原文再判一次**，两遍里任一遍判域内就按域内走（宁可多检索一轮，也不误拒答）；原文仍用于生成与对话记录，整条链路可用开关一键关闭
 - **结构化查询**：识别"预算 1000 以内""净白 S 系列"等约束，通过 Chroma metadata 过滤精确枚举预算内/系列内产品；支持"云顶 X2 多少钱"等型号属性精准查询；型号名**精确优先**（问"P2"不会连带返回 P2 Lite / P2 Pro，系列名仍可多命中）
 - **工具调用**：LLM function calling，内置日期/预算/故障分类/型号提取/售后网点五个工具，支持"最近半年""一千来块"等口语化结构化提取；预算同时识别"2000吧"这类语气词尾音
-- **多轮 SOP 引导**：选购推荐、故障排查等场景按标准流程多轮引导，进入时给开场提示；**弱触发会先问一句是否要走引导**（进入确认门），流程内说退出也要先确认（退出确认门）；支持追问（比较新/更便宜/最贵）与最近发布查询；**「重新回答」按上一轮出口决定重算**——上一轮是 SOP 收尾轮就重开该流程（入口是弱触发照样先过确认门），SOP 中途不给重发。槽位收口语短答（预算「800」按上限、宠物「不」/「没」算没有）；筛出 0 款时给"预算内暂时没有 + 下一步"的成品话术，**不点型号与价格**（型号与价格只允许来自知识库原文）
+- **多轮 SOP 引导**：选购推荐、故障排查等场景按标准流程多轮引导，进入时给开场提示；**弱触发会先问一句是否要走引导**（进入确认门），流程内说退出也要先确认（退出确认门）；支持追问（比较新/更便宜/最贵）与最近发布查询；**「重新回答」按上一轮出口决定重算**——上一轮是 SOP 收尾轮就重开该流程（入口是弱触发照样先过确认门），SOP 中途不给重发；重答按**覆盖上一轮**处理，同一句不会在历史里落两遍、也不留两版回答。槽位收口语短答（预算「800」按上限、宠物「不」/「没」算没有）；筛出 0 款时给"预算内暂时没有 + 下一步"的成品话术，**不点型号与价格**（型号与价格只允许来自知识库原文）
 - **售后网点定位**：识别"最近的售后网点"等查询，通过 geonamescache 离线解析城市经纬度 + Haversine 距离排序返回最近网点，重名城市（如"洛阳"）多轮消歧（走 SOP 状态机：先问城市，重名再问一次序号）
 - **Redis 可选接入**：SOP 会话状态、会话并发锁、热更新摄入锁迁移到 Redis（分布式锁/跨实例共享），未配置 Redis 时自动降级到本地内存，功能不受影响（降级的内存态同样按 TTL 过期，不会永远不失效）
 - **知识库分域**：按场景（品牌/选购/型号/故障/售后/维护/操作 7 域）定向检索对应知识域（型号类问题走结构化直出、不靠域过滤），避免跨域词带偏召回
 - **品牌化**：全面转型"不染一尘"品牌专属客服；品牌咨询、售后咨询走 RAG 直答，安全危险现象前置拦截（除书面词外，也包含火星、焦味、噼啪等**口语同义表达**），且告警后的追问会被拉回安全话题（**不看意图分类结果**，只有高置信的域内问题才放行）；公司 / 招聘类问题一律礼貌回避、不编造信息
-- **情绪安抚**：识别负面情绪（投诉/烦躁等）前置安抚，只安抚不拦截
+- **情绪安抚**：识别负面情绪（投诉/烦躁等）前置安抚，只安抚、不拦截也不改写问题
 - **流式输出**：SSE 流式返回答案，前端逐字渲染
-- **知识库热更新**：每 30 分钟自动扫描 `data/knowledge/`，检测文件增删改并增量入库；每次同步后记一行「当前知识库版本」（逐文件 sha256 + chunk 数）到 `data/state/kb_metadata.jsonl`，可当版本历史，评测环境核对也读它
+- **知识库热更新**：每 30 分钟自动扫描 `data/knowledge/`，检测文件增删改并增量入库；每次同步后记一行「当前知识库版本」（逐文件 sha256 + chunk 数）到 `data/state/kb_metadata.jsonl`，可当版本历史，评测环境核对也读它（热更新线程随 `python webapp/app.py` 启动；改用 WSGI 部署需自行起线程）
 - **多轮友好**：领域外问题礼貌拒答；判成 other 但**能命中知识域词表**的不拒答、交给检索（无主语域内问句容易被分类头判偏，靠这层兜住）；模糊问题软引导，闲聊自然回应
 - **低置信追问承接**：追问句的指代在上文时分类头会判不准；命中「低置信或判成闲聊 + 上文有可承接话题」就不硬拒答——安全话题（冒烟/漏电/火星/焦味等）直接承接并复述处理方式，其余先用上文改写 query 再检索；检索确实无果时给兜底话术，不凭自身知识作答
 - **多会话与上下文**：按会话（session_id）隔离多轮对话，对话持久化到本地（jsonl + meta），支持新建/切换/删除历史会话，首轮回答后自动生成 LLM 语义标题与更新时间；自由指代通过拼接历史由 LLM 自主消解
@@ -44,6 +44,7 @@ clean_robot_agent/
 │   ├── chroma.yaml              # Chroma/embedding 配置
 │   ├── prompts.yaml             # Prompt 文件路径
 │   ├── context.yaml             # 上下文承接与查询改写（低置信阈值、改写开关）
+│   ├── redis.yaml               # Redis 连接与各 TTL（可选，缺失即走本地内存降级）
 │   ├── word_dict_config.py      # 词表配置中心（情绪/退出/域/触发/症状/型号系列/词表型正则/固定话术等集中管理）
 │   └── *_template.yaml          # 对应模板（含注释说明，复制后填值）
 ├── data/
@@ -56,7 +57,7 @@ clean_robot_agent/
 │   ├── pkl/                     # BM25 pickle 缓存
 │   ├── state/                   # 热更新 sha256 快照 + kb_metadata.jsonl（知识库版本记录）
 │   ├── vector_store/            # Chroma 持久化向量库
-│   └── eval/                    # 评测集与基线：retrieval/ 单轮检索 · context/ 多轮行为（本地数据，已 gitignore）
+│   └── eval/                    # 评测集与基线：retrieval/ 单轮检索 · context/ 多轮行为 · intent/ 意图分类（本地数据，已 gitignore）
 ├── prompts/                     # Prompt 模板（system/摘要/报告）
 ├── tools/                       # 核心工具模块（详见下节）
 ├── function_tools/              # LLM 工具调用（function calling）工具
@@ -70,14 +71,14 @@ clean_robot_agent/
 ├── sops/                        # SOP 标准操作流程（多轮引导）
 │   ├── base.py                  # 会话状态（按 session_id 隔离，带定义指纹）+ 执行器 + 知识域定义
 │   ├── purchase.py              # 选购推荐 SOP
-│   └── repair.py                # 故障排查 SOP
+│   ├── repair.py                # 故障排查 SOP
+│   └── service_point.py         # 售后网点 SOP（问城市 → 重名选序号）
 ├── test_scripts/                # 测试与评测（run_tests.py 只聚合 eval/ 评测轨；unit/ 功能测试暂搁置）
 │   ├── run_tests.py             # 评测入口：python run_tests.py --e2e
 │   ├── _runner.py               # 共享断言/汇总/e2e 门控/测试数据隔离
 │   ├── trace_reader.py          # trace 读取层（文本视图与 HTML 报告共用）
 │   ├── trace_report.py          # 读 trace：按会话列出每轮走向（--list/--session/--chunks/--shadow/--feedback）；--html 出 HTML 报告（落 reports/<日期>/）
 │   ├── unit/                    # 功能测试（暂搁置：不进评测入口，文件保留、可单独运行）
-│   │   ├── test_intent.py       # 意图分类（robot/other/casual/unknown，需 --e2e）
 │   │   ├── test_purchase_sop.py # 选购 SOP（SOP 状态机 + 选购推荐流程）
 │   │   ├── test_repair_sop.py   # 故障排查 SOP（症状映射 + 流程）
 │   │   ├── test_context.py      # 上下文存储（append/get_recent/meta/UUID 校验）
@@ -90,6 +91,8 @@ clean_robot_agent/
 │   │   ├── test_hot_ingest.py   # 知识库热更新（增量同步的删除/重入语义）
 │   │   ├── test_service_point_sop.py # 网点 SOP（城市解析 / 重名选序号）
 │   │   ├── test_trace_report_html.py # trace HTML 报告（数据整形 / 渲染 / 边界）
+│   │   ├── test_review_fixes.py # 代码 review 修复回归（依赖降级 / 日期闸门 / 上传净化 / 重答与历史口径）
+│   │   ├── test_webapp_routes.py # webapp 路由层契约（入参校验 / 状态码 / 并发锁拒绝）
 │   │   └── test_dialogue.py     # 多轮实战对话（正常 + 非人类，需 --e2e）
 │   └── eval/                    # 评测轨（留出集 + 基线，评测入口默认跑这些；多数需 --e2e）
 │       ├── test_behavior_tags.py   # 行为闭集（branch）与 trace 记录契约自检（纯规则，不依赖模型）
@@ -101,12 +104,13 @@ clean_robot_agent/
 │   └── train_intent_classifier.py # 分类头训练脚本
 ├── webapp/
 │   ├── app.py                   # Flask 后端（上传/问答/流式接口 + 会话 API）
-│   └── templates/index.html     # 聊天前端（新建/历史对话）
+│   ├── templates/index.html     # 聊天前端（新建/历史对话）
+│   └── static/vendor            # 前端第三方库（marked 等，随仓库提交）
 ├── requirements.txt
 └── .gitignore
 ```
 
-> `temp/`（数据处理脚本）、`Multi_Route_Retrieval/`（双路召回 demo）为独立用途遗留目录，已 gitignore，不参与运行。
+> `temp/`（数据处理脚本；页面上传的临时文件落 `temp/uploads`，摄入完即删）、`Multi_Route_Retrieval/`（双路召回 demo）为独立用途遗留目录，已 gitignore，不参与运行。
 
 ## 核心模块说明（tools）
 
@@ -129,9 +133,9 @@ clean_robot_agent/
 | `llm_tool.py` | LLM / embedding 工厂（含 function calling） |
 | `log_tool.py` | 日志（控制台彩色 + 文件，按 `logs/<模块>/<日期>/` 分目录；行上带会话标记，可按会话 grep） |
 | `config_tool.py` / `path_tool.py` / `prompts_tool.py` | 配置 / 路径 / Prompt 加载 |
-| `context_store.py` | 会话上下文：按 session_id 持久化最近 6 轮对话（jsonl）+ meta 元数据（LLM 标题）+ 会话增删查改 |
+| `context_store.py` | 会话上下文：按 session_id 持久化对话（jsonl 保留**全量**，内存与读取窗口为最近 6 轮）+ meta 元数据（LLM 标题）+ 会话增删查改 |
 | `redis_store.py` | Redis 连接封装 + 互斥锁（SET NX）+ 降级回退：无 Redis 时自动回退本地内存 |
-| `pending_store.py` | 统一待确认状态（SOP 退出确认 / 网点问城市 / 选序号）：Redis `sop:pending:{sid}` + TTL，无 Redis 降级内存并校验时间戳 |
+| `pending_store.py` | 统一待确认状态（SOP 退出确认 / 进入确认门）：Redis `sop:pending:{sid}` + TTL（≥ SOP 会话语义寿命），无 Redis 降级内存并校验时间戳 |
 | `test_hooks.py` | **仅供测试/评测**的状态注入助手（danger 窗口 / 连续承接计数 / 活跃 SOP / 待确认状态）|
 | `trace_store.py` | 会话级 trace：每轮落一条结构化记录（`logs/trace/<日期>/<会话ID>_<日期>_<时间>/<同名>.jsonl`，先按日期分目录再按会话，best-effort 不影响对话，`TRACE_DIR` 可改落点）；记录与执行同构：进门判断、本轮唯一出口、有序节点（含状态/耗时/进出事实）、两遍召回与各遍计数、最终候选的来源分布、SOP 动作链，另保留旧字段作兼容；同一会话目录下另有三份旁路文件：召回片段全文、影子决策、用户评价 |
 
@@ -162,9 +166,9 @@ clean_robot_agent/
 
 ### 1. 环境要求
 
-- Python 3.13+
+- Python 3.13（开发环境实测；仓库未声明版本约束文件）
 - [Ollama](https://ollama.com)（本地已运行）
-- 内存 ≥ 20GB（Ollama 三模型常驻：bge-m3 + qwen2.5:3b + qwen2.5:7b；精排模型再占约 2.5GB，不需要时可用 `rag.yaml` 的 `rerank.enabled: false` 省下）
+- 内存 ≥ 20GB（Ollama 三模型常驻：bge-m3 + qwen2.5:3b + qwen2.5:7b；精排模型再占约 2.2GB，不需要时可用 `rag.yaml` 的 `rerank.enabled: false` 省下）
 
 ### 2. 安装依赖
 
@@ -210,19 +214,23 @@ cp config/rag_template.yaml    config/rag.yaml
 cp config/chroma_template.yaml config/chroma.yaml
 cp config/prompts_template.yaml config/prompts.yaml
 cp config/context_template.yaml config/context.yaml
+# 可选：接 Redis（不接则相关状态自动降级本地内存）
+cp config/redis_template.yaml  config/redis.yaml
 ```
 
 ### 5. 训练意图分类头（首次必需）
 
 意图分类头（`data/bgm_model/`）是**训练产物、已 gitignore**，仓库里不包含，
-**首次运行前必须先训练**，否则启动后首次提问会报错（找不到分类头文件）：
+**首次运行前必须先训练**，否则启动后首次提问会报错（找不到分类头文件）。
+训练数据集 `data/datasets/intent_dataset.jsonl` 已随仓库提供，直接训练即可：
 
 ```bash
-python intent_classifier_training/build_intent_dataset.py
 python intent_classifier_training/train_intent_classifier.py
 ```
 
 训练会用 Ollama bge-m3 生成 embedding（需 §3 的模型已就绪），产物输出到 `data/bgm_model/`。
+`build_intent_dataset.py` 只用于从知识库重新生成种子样本，**默认写 `data/datasets/_generated.jsonl`**、
+不动正式数据集；加 `--force` 才会整份重写 `intent_dataset.jsonl`（会丢人工标注的 `source`，先备份）。
 详见下方「意图分类模型训练」。
 
 ### 6. 启动
@@ -260,14 +268,16 @@ python webapp/app.py
 ## 意图分类模型训练
 
 系统用**本地分类头**做意图分类（bge-m3 embedding + Linear 1024→4），毫秒级、不调 LLM；
-分类头文件缺失时会直接报错，**首次运行前必须先训练一次**（见「快速开始 §5」）。
+分类头文件缺失或不可用时**显式降级**（WARNING + 全部判 unknown，走软引导 + RAG），服务不会崩；
+但正常作答质量依赖它，**首次运行前必须先训练一次**（见「快速开始 §5」）。
 
 **重新训练**（当需要扩充数据集时）：
 
 ```bash
 # 1. 扩充数据集：往 data/datasets/intent_dataset.jsonl **追加**样本
 #    （字段与标注口径见 data/datasets/README.md）
-#    ⚠ 不要跑 build_intent_dataset.py：它会整份重写 jsonl 且丢掉 source 字段，会覆盖现有数据
+#    ⚠ build_intent_dataset.py 默认写 _generated.jsonl、不动正式数据集；
+#      只有显式加 --force 才会整份重写 intent_dataset.jsonl（生成样本无人工 source，覆盖前先备份）
 
 # 2. 训练分类头（bge-m3 embedding + Linear 分类器）
 python intent_classifier_training/train_intent_classifier.py
@@ -314,7 +324,6 @@ python intent_classifier_training/train_intent_classifier.py
 
 | 模块 | 覆盖范围 | 需 `--e2e` |
 |------|---------|:---------:|
-| `unit/test_intent.py` | 意图分类（robot/other/casual/unknown，常规 + 极端泛化） | ✓ |
 | `unit/test_purchase_sop.py` | 选购 SOP（状态机 + 选购推荐流程） | |
 | `unit/test_repair_sop.py` | 故障排查 SOP（症状映射 + 流程） | |
 | `unit/test_context.py` | 上下文存储（消息读写 / meta / UUID 校验 / 会话列表） | |
@@ -323,9 +332,15 @@ python intent_classifier_training/train_intent_classifier.py
 | `unit/test_retrieval.py` | 检索链路（域路由 / 分词 / 过滤 / RRF / 阈值 / 精排 / 条目切分） | 部分 |
 | `unit/test_agent_guards.py` | Agent 前置防护（情绪 / 注入 / 危险 / 退出意图 / 域外拒答门） | |
 | `unit/test_operations.py` | 操作判别器（注册表形状 / 入口判据 / 三态出口 / `route.ops` 落盘） | |
+| `unit/test_query_normalizer.py` | query 入口归一化（标点 / 空格 / 全半角 / 同义词 / 幂等） | |
+| `unit/test_hot_ingest.py` | 知识库热更新（增量同步的删除/重入语义、缓存失效） | |
+| `unit/test_service_point_sop.py` | 网点 SOP（城市解析 / 重名选序号） | |
+| `unit/test_trace_report_html.py` | trace HTML 报告（数据整形 / 渲染 / 边界） | |
+| `unit/test_review_fixes.py` | 代码 review 修复回归（依赖降级 / 日期闸门 / 上传净化 / 头部维度对账 / 重答与历史口径） | |
+| `unit/test_webapp_routes.py` | webapp 路由层契约（入参校验 / 状态码 / 并发锁拒绝，不碰模型与真实数据） | |
 | `unit/test_dialogue.py` | 多轮实战对话（正常对话 + 非人类对话） | ✓ |
 
-集成用例用 `@e2e` 装饰器标注，未加 `--e2e` 时自动跳过；评测入口缺 `--e2e` 时**不执行任何用例并明确提示**（避免 0/0 被读成“全部通过”）。意图分类是统计模型，用准确率阈值（常规 ≥90%、极端 ≥75%）断言，误判只打印、不计失败。
+集成用例用 `@e2e` 装饰器标注，未加 `--e2e` 时这些用例自动跳过；**评测入口缺 `--e2e` 时不会静默通过**——只跑不依赖模型的纯规则用例（tag 契约自检），其余全跳过，且退出码区分「全跳过」（2）与「通过」（0）。意图分类是统计模型，逐条误判只打印、不计失败，但**整体准确率有地板门禁**（跌破即判失败，避免红了也看不出来）。
 
 ### 检索质量评测
 
@@ -363,20 +378,20 @@ python intent_classifier_training/train_intent_classifier.py
 
 | 配置 | 关键项 |
 |------|--------|
-| `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关）、`behavior.verbose_log`（文件日志是否降到 DEBUG）、`behavior.query_normalize`（query 入口归一化 + 判可疑时二次判意图的总开关）、`tools.orchestration`（工具编排：`"off"` 走现有分支 / `"shadow"` 只记对照日志不执行 / `"on"` 选路生效，取值需带引号）、`tools.shadow_sample`（影子采样率） |
+| `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关）、`behavior.verbose_log`（文件日志是否降到 DEBUG）、`behavior.query_normalize`（query 入口归一化 + 判可疑时二次判意图的总开关）、`tools.orchestration`（工具编排：`"off"` 走现有分支 / `"shadow"` 只记对照日志不执行；**`"on"` 尚未接线**，取值需带引号）、`tools.shadow_sample`（影子采样率） |
 | `rag.yaml` | `chunk.chunk_size`、`retrieval.dense_top_k/sparse_top_k/final_top_k/score_threshold`、`retrieval.domain_margin`（域路由 margin 门控，0 关闭）、`rrf.*`、`rerank.*`（精排开关/模型/候选宽度/阈值）、`data_dir`（知识库源目录） |
 | `chroma.yaml` | `persist_dir`、`collection_name`、`embedding.model` |
 | `context.yaml` | `intent.low_conf_margin`（低置信降级阈值，0 关闭）、`intent.high_conf_margin`（安全告警窗口内的放行阀，0 关闭）、`context.topic_window`（回看多少条会话记录判定话题与安全告警）、`context.safety_carry_max`（同一告警最多承接几次，0 关闭）、`context.rewrite.*`（改写开关/模式/选轮相似度阈值） |
-| `redis.yaml` | `host`/`port`/`password`（Redis 连接）、`sop_ttl`（SOP 会话过期）、`pending_ttl`（待确认状态过期：SOP 退出确认 / 网点问城市）、`lock_ttl`（锁过期） |
+| `redis.yaml` | `host`/`port`/`password`（Redis 连接）、`sop_ttl`（SOP 会话过期）、`pending_ttl`（待确认状态过期：SOP 退出确认 / 进入确认门，**须 ≥ `sop_ttl`**）、`lock_ttl`（锁过期） |
 
 ## 问答流程
 
 ```mermaid
 flowchart TD
-    Q["用户提问"] --> G1["① 提示词注入检测 → 命中直接拒绝<br/>② 危险现象检测 → 命中停机转售后"]
-    G1 --> G2["③ 记录用户消息（供 RAG 拼接历史、自主消解指代）<br/>④ 负面情绪安抚（只安抚不拦截）"]
-    G2 --> N0["⑤ query 入口归一化（标点 / 空格 / 全半角 / 同义词映射，可关）"]
-    N0 --> G3{"⑥ 有活跃 SOP？"}
+    Q["用户提问"] --> N0["① query 入口归一化（标点 / 空格 / 全半角 / 同义词映射，可关）<br/>硬规则统一判归一化后文本，关键词插空格无法绕过拦截"]
+    N0 --> G1["② 提示词注入检测 → 命中直接拒绝<br/>③ 危险现象检测 → 命中停机转售后"]
+    G1 --> G2["④ 记录用户消息（供 RAG 拼接历史、自主消解指代）<br/>⑤ 负面情绪安抚（只安抚，不改写问题）"]
+    G2 --> G3{"⑥ 有活跃 SOP？"}
     G3 -->|是| S1{"SOP 内：这一句是？"}
     S1 -->|"纯退出词 / 纯符号"| S1A["退出确认门：是要退出吗？<br/>是→退出；不是→继续；两次都认不出→直接退出"]
     S1 -->|"「0」"| S1B["直接退出（开场语约定，不再确认）"]
@@ -415,7 +430,7 @@ flowchart TD
 ## 注意事项
 
 - 所有模型本地运行，无云端依赖；其中精排模型 `bge-reranker-v2-m3`（约 2.2GB）首次运行需联网下载（见「快速开始 §3」），加载失败会自动降级为“不精排”，也可在 `rag.yaml` 设 `rerank.enabled: false` 主动关闭
-- Redis 为可选依赖：未配置 `config/redis.yaml` 时，SOP 会话状态 / **待确认状态（退出确认、网点问城市）** / 并发锁 / 摄入锁自动降级到本地内存（待确认状态与 SOP 会话状态都按各自的 TTL 做时间戳/过期校验），功能不受影响
+- Redis 为可选依赖：未配置 `config/redis.yaml` 时，SOP 会话状态 / **待确认状态（退出确认、进入确认门）** / 并发锁 / 摄入锁自动降级到本地内存（待确认状态与 SOP 会话状态都按各自的 TTL 做时间戳/过期校验），功能不受影响
 - 改过 SOP 定义（步骤 / 槽位）**不需要手动清 Redis**：会话状态自带定义指纹，读时与当前定义对账、对不上就自动作废并记 WARNING（trace 里对应 `sop.active` 的 `skipped` 节点），不会拿旧下标续跑
 - `data/vector_store/`、`data/pkl/`、`data/state/`、`data/bgm_model/`、`data/context/`、`data/context_meta/` 为运行时产物，已加入 `.gitignore`
 - `data/eval/`（评测集与基线：`retrieval/` 单轮检索、`context/` 多轮行为）为本地数据，同样已加入 `.gitignore`；缺失时对应评测模块自动跳过

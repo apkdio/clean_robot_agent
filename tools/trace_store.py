@@ -691,6 +691,9 @@ def _finalize(turn: dict, reply: str) -> None:
         turn["answer"] = {"kind": turn["branch"],
                           "model": (turn.get("answer") or {}).get("model"),
                           "chars": len(reply or "")}
-        if not turn.get("retrieval"):
+        # 判"有没有检索"不能看 retrieval 块整体：入口归一化会先写 retrieval.rewrite，
+        # 让块非空——要看检索环节自己的标志（steps.retrieve 才是真跑过检索）
+        retrieved = bool(turn.get("steps", {}).get("retrieve"))
+        if not retrieved:
             turn["path"].append({"node": "retrieve", "status": "skipped",
                                  "by": turn["branch"]})

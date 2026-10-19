@@ -7,6 +7,7 @@ from sops.base import register, is_consulting, is_aftersales, is_brand
 from config.word_dict_config import (
     PURCHASE_TRIGGER, PURCHASE_WEAK_TRIGGER, PURCHASE_EMPTY_REPLIES,
     BARE_BUDGET_RE as _BARE_BUDGET_RE, BARE_NO_PET as _BARE_NO_PET,
+    PET_FRIENDLY_WORDS,
 )
 from tools.metadata_extractor import (
     extract_price_constraint,
@@ -40,7 +41,11 @@ def _extract_has_pet(text: str, slots: dict):
 
 
 def _search(slots: dict):
-    """按预算（上限或区间）检索符合条件的产品；预算未知时检索全部。"""
+    """按预算（上限或区间）检索符合条件的产品；预算未知时检索全部。
+
+    养宠家庭（has_pet 为真）按「特点」含养宠友好词表重排——问话承诺过
+    「优先推荐防毛发缠绕的机型」，不排序的话答有答无行为完全一样。
+    """
     budget = slots.get("budget")
     if budget:
         min_price, max_price = budget
@@ -60,15 +65,27 @@ def _search(slots: dict):
         filter_dict = {"file_name": {"$ne": "__never__"}}
     models = enumerate_models(filter_dict)
 
+    pet_first = bool(slots.get("has_pet"))
+    if pet_first and models:
+        def _pet_score(m):
+            feature = m.get("feature") or ""
+            return 0 if any(w in feature for w in PET_FRIENDLY_WORDS) else 1
+
+        models = sorted(models, key=_pet_score)
+
     lines = [format_model_line(m) for m in models]
-    return {"count": len(models), "list": "\n".join(lines), "models": models}
+    ctx = {"count": len(models), "list": "\n".join(lines), "models": models}
+    if pet_first and models:
+        ctx["pet_note"] = "已把养宠友好（防毛发缠绕）的机型排在前面啦～"
+    return ctx
 
 
 def _render_result(ctx: dict) -> str:
     """回复推荐结果：有结果给固定格式（型号与价格逐字来自知识库），0 款换成品话术、不出现型号与价格。"""
     if int(ctx.get("count") or 0) > 0:
-        return ("根据您的需求，共找到 {count} 款符合条件的机器人：\n\n{list}\n\n"
-                "需要我帮您对比其中某两款吗？").format(**ctx)
+        note = ("\n\n" + ctx["pet_note"]) if ctx.get("pet_note") else ""
+        return ("根据您的需求，共找到 {count} 款符合条件的机器人：\n\n{list}\n"
+                "{note}\n\n需要我帮您对比其中某两款吗？").format(note=note, **{k: v for k, v in ctx.items() if k != "pet_note"})
     return random.choice(PURCHASE_EMPTY_REPLIES)
 
 

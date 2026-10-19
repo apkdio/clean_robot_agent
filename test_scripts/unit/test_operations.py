@@ -42,6 +42,16 @@ def test_resolve_three_states():
     _assert_eq(ops.resolve([], intent="robot"), ("none", None), "没有命中 → none")
 
 
+def test_note_ops_why_none():
+    """state=none 时 why 必须是 none（S-16）：intent=other/casual 的常态轮，
+    被标成 order 会把「无可用操作」读成「按表序裁决过」。"""
+    note = ops.note_ops("谢谢你的回答", intent="casual", margin=0.9)
+    _assert_eq(note.get("state"), "none", "无可用操作 → state=none")
+    _assert_eq(note.get("why"), "none", "why=none（不再误标 order）")
+    _assert_eq(ops.note_ops("离我最近的维修点", intent="robot", margin=0.9).get("why"), "order",
+               "多命中且高置信 → why=order（不受影响）")
+
+
 def test_note_ops_writes_route_and_returns_usable():
     """判定结果落 trace 的 route.ops，并把过 allow 门的候选交给主链路派发。"""
     from tools import trace_store
@@ -63,7 +73,7 @@ def test_note_ops_writes_route_and_returns_usable():
                "casual 时没有可用操作")
 
 
-TESTS = [test_registry_shape, test_probe_hits, test_resolve_three_states,
+TESTS = [test_registry_shape, test_probe_hits, test_resolve_three_states, test_note_ops_why_none,
          test_note_ops_writes_route_and_returns_usable]
 
 

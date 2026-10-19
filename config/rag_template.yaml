@@ -49,7 +49,9 @@ rerank:
   batch_size: 8
 
 # Data source directory (files here are ingested into the vector store)
-data_dir: data
+# 必须指向知识文件目录本身：热更新递归扫描、域映射自检、训练语料收集都按它读，
+# 指到 data/ 会把 datasets/ 等非知识目录也摄进去
+data_dir: data/knowledge
 
 # Supported file extensions for ingestion
 supported_exts:

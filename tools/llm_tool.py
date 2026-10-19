@@ -1,8 +1,8 @@
 """基于本地 Ollama 的 LLM / embedding 工厂（复用 langchain_openai，base_url 指向 Ollama）。
 
 chat 模型与端点的单一真源是 config/agent.yaml 的 llm 段（model / small_model /
-base_url / api_key）；入参留空时按此解析，配置缺键则回退环境变量与内置默认。
-embedding 端点由 config/chroma.yaml 的 embedding 段提供（调用方显式传入）。
+base_url / api_key）；embedding 的单一真源是 config/chroma.yaml 的 embedding 段。
+两者都是「入参留空时按配置解析，配置缺键回退环境变量与内置默认」。
 """
 
 import os
@@ -22,6 +22,19 @@ _DEFAULT_SMALL_MODEL = os.environ.get("LLM_SMALL_MODEL", "qwen2.5:3b")
 _DEFAULT_EMBED_MODEL = os.environ.get("LLM_EMBED_MODEL", "bge-m3")
 
 _chat_cfg_cache = None
+_embedding_cfg_cache = None
+
+
+def _embedding_cfg() -> dict:
+    """chroma.yaml 的 embedding 段（读盘失败回退空 dict，走内置默认）。"""
+    global _embedding_cfg_cache
+    if _embedding_cfg_cache is None:
+        try:
+            _embedding_cfg_cache = (load_config("chroma") or {}).get("embedding") or {}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[LLM] chroma.yaml embedding 段读取失败，用内置默认：%s", e)
+            _embedding_cfg_cache = {}
+    return _embedding_cfg_cache
 
 
 def _chat_cfg() -> dict:
@@ -80,16 +93,20 @@ def get_chat_model(
 
 
 def get_embedding_model(
-    model: str = _DEFAULT_EMBED_MODEL,
-    base_url: str = _DEFAULT_BASE_URL,
-    api_key: str = _DEFAULT_API_KEY,
+    model: str = None,
+    base_url: str = None,
+    api_key: str = None,
     **kwargs,
 ) -> OpenAIEmbeddings:
     """返回连接到 Ollama 的 OpenAIEmbeddings 实例。
 
-    生产路径由调用方（vector_store）显式传入 chroma.yaml 的 embedding 段；
-    入参可用环境变量（LLM_BASE_URL / LLM_API_KEY / LLM_EMBED_MODEL）覆盖。
+    留空时按 config/chroma.yaml 的 embedding 段解析（与 chat 模型同一条口径）：
+    向量库、意图分类头、改写选轮、训练脚本共用同一来源——换 embedding 模型不会两处不一致。
     """
+    cfg = _embedding_cfg()
+    model = model or cfg.get("model") or _DEFAULT_EMBED_MODEL
+    base_url = base_url or cfg.get("base_url") or _DEFAULT_BASE_URL
+    api_key = api_key or cfg.get("api_key") or _DEFAULT_API_KEY
     logger.info(f"[Embed] init model={model}")
     return OpenAIEmbeddings(
         model=model,
@@ -105,19 +122,17 @@ def get_embedding_model(
 def stream_chat(messages: list, model: str = "", temperature: float = 0.3) -> any:
     """流式对话生成器，每次 yield 一个纯字符串文本块。
 
+    异常向上抛（不吞）：调用方据此走兜底话术并留痕——吞掉会把
+    中途失败变成静默空串，前端空白且 trace 记正常出口。
     对支持思考过程的模型（qwen3、deepseek-r1），可设 model_kwargs 为
     extra_body={"reasoning": True} 来包含推理 token。
     """
     m = model or get_chat_model_name()
     llm = get_chat_model(model=m, temperature=temperature, streaming=True)
     logger.info(f"[Stream] start model={m}")
-    try:
-        for chunk in llm.stream(messages):
-            if chunk.content:
-                yield chunk.content
-    except Exception as e:
-        logger.error(f"[Stream] failed: {e}")
-        yield ""
+    for chunk in llm.stream(messages):
+        if chunk.content:
+            yield chunk.content
 
 
 def chat_with_tools(messages: list, tools: list, model: str = "", temperature: float = 0.1):

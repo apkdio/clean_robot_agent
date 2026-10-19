@@ -429,6 +429,7 @@ def handle_followup(session_id: str, query: str):
     全局类（最近发布 / 最贵 / 最便宜）不依赖上一轮；相对类（更便宜 / 更贵 / 更新 / 更旧）
     以上一轮展示过的边界为门槛，在全库取越过边界、最接近边界的几款。
     """
+    from tools.metadata_extractor import format_models
     # 最近发布类：全局检索（不依赖上一轮上下文）
     latest_hit = any(w in query for w in LATEST_WORDS)
     vague_recent = (
@@ -439,19 +440,19 @@ def handle_followup(session_id: str, query: str):
     if latest_hit or vague_recent:
         models = _search_global("publish_date", True, "publish_date")[:5]
         save_recommend(session_id, models)
-        return _format_models(models, "最近发布的机器人有这几款：")
+        return format_models(models, "最近发布的机器人有这几款：")
 
     # 全局价格极值：最贵/最便宜 → 全局按价格排序取极值（不依赖上一轮）
     if "最贵" in query or "价格最高" in query:
         models = _search_global("price")
         if models:
             save_recommend(session_id, models[-1:])
-            return _format_models(models[-1:], "目前最贵的是这一款：")
+            return format_models(models[-1:], "目前最贵的是这一款：")
     if "最便宜" in query or "价格最低" in query:
         models = _search_global("price")
         if models:
             save_recommend(session_id, models[:1])
-            return _format_models(models[:1], "目前最便宜的是这一款：")
+            return format_models(models[:1], "目前最便宜的是这一款：")
 
     # 相对上一轮展示范围的追问：更便宜 / 更贵 / 更新 / 更旧
     # 找到第一个命中四个"更加"域的词
@@ -471,16 +472,9 @@ def handle_followup(session_id: str, query: str):
         if not got:
             return _rel_none_msg(rels)
         save_recommend(session_id, got)
-        return _format_models(got, _rel_header(rels))
+        return format_models(got, _rel_header(rels))
 
     return None
-
-
-def _format_models(models, header: str, aspect: str = None) -> str:
-    """把型号列表格式化成回复文本。aspect 指定时只输出对应属性维度。"""
-    from tools.metadata_extractor import format_model_line
-    lines = [format_model_line(m, aspect) for m in models]
-    return header + "\n\n" + "\n".join(lines)
 
 
 def _search_global(sort_key: str = "price", reverse: bool = False, require_field: str = "price"):

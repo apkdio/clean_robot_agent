@@ -283,6 +283,12 @@ def run():
     m = _metrics(records)
     _print_metrics(m)
 
+    # 阈值门禁（review §4.6）：分类头是确定性的（同一分类头 + 同一训练集给同样结果），
+    # 所以整体准确率跌破地板就是真回归。以前只打印不判失败，红了也看不出来。
+    ACCURACY_FLOOR = 0.85
+    _assert(m["accuracy"] >= ACCURACY_FLOOR,
+            f"整体准确率 {m['accuracy'] * 100:.1f}% ≥ 地板 {ACCURACY_FLOOR * 100:.0f}%")
+
     errs = _high_conf_errors(records, high)
     print(f"\n高置信错判（判错且 margin ≥ {high}）：{len(errs)} 条")
     for r in errs:

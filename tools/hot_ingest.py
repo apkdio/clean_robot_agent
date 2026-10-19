@@ -195,6 +195,15 @@ def scan_files(data_dir: str) -> dict:
             sha256 = get_file_sha256_hex(full)
             if sha256 is not None:
                 result[rel] = sha256
+    # 文件身份（chunk 的 file_name）用 basename：子目录里出现同名文件会互相覆盖 chunk、
+    # 计数错乱。当前知识目录是扁平的，这里只做检测告警，真要支持子目录须改身份键
+    seen = {}
+    for rel in result:
+        base = os.path.basename(rel)
+        if base in seen:
+            logger.warning("[HotIngest] 子目录重名文件（身份键会冲突）：%s 与 %s", seen[base], rel)
+        else:
+            seen[base] = rel
     return result
 
 
@@ -294,8 +303,33 @@ def apply_changes(data_dir: str, added: dict, changed: dict, removed: list) -> d
     return results
 
 
+def invalidate_runtime_caches() -> None:
+    """清掉散在各模块的进程内缓存（知识库变更后统一走这里）。
+
+    清单：检索器单例与上下文配置（agent）、型号名单（model_tool）、
+    chat 配置（llm_tool）、网点清单（service_point_tool）。
+    配置类缓存没有热加载通道——**改 yaml 仍需重启**；这里只是把入口收在一处，
+    免得每个调用方各记一份清单、漏掉哪个都不知道。
+    """
+    from tools import agent as _agent
+    _agent._hybrid_retriever = None
+    _agent._ctx_cfg_cache = None
+    try:
+        from tools import llm_tool as _llm
+        _llm._chat_cfg_cache = None
+        _llm._embedding_cfg_cache = None
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from function_tools import model_tool as _mt, service_point_tool as _spt
+        _mt._model_names_cache = None
+        _spt._points_cache = None
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def rebuild_sparse_index() -> None:
-    """强制重建 BM25 索引并失效型号缓存（丢弃缓存，避免复用陈旧的 pickle）。
+    """强制重建 BM25 索引并失效相关缓存（丢弃缓存，避免复用陈旧的 pickle）。
 
     热更新与手动入库都走这里：知识库变更后 BM25 与 models.pkl 都过期了。
     """
@@ -307,13 +341,7 @@ def rebuild_sparse_index() -> None:
             os.remove(cache)
     from tools.vector_store import build_hybrid_index
     build_hybrid_index()
-
-    # 重置 agent 的惰性检索器单例，使下一次查询重新加载
-    try:
-        from tools import agent
-        agent._hybrid_retriever = None
-    except Exception:
-        pass
+    invalidate_runtime_caches()
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -345,6 +373,12 @@ def run_once(data_dir: str = None) -> bool:
                 changed[rel] = new[rel]
 
         if not (added or changed or removed):
+            # 快照刚被作废而目录为空（清库场景）：索引缓存还留着旧内容，强制重建一次，
+            # 否则空目录永远走不到下方的 rebuild，旧知识永久陈旧
+            if not new and not os.path.isfile(_snapshot_path()):
+                logger.warning("[HotIngest] snapshot invalidated with empty dir, force rebuild indexes")
+                rebuild_sparse_index()
+                save_snapshot(new)
             logger.info("[HotIngest] No changes detected")
             return False
 
@@ -367,6 +401,10 @@ def run_once(data_dir: str = None) -> bool:
         if failed:
             logger.warning("[HotIngest] 本轮有 %d 个文件未同步，快照不推进：%s", len(failed), sorted(failed))
         save_snapshot({k: v for k, v in new.items() if k not in failed})
+        # 版本记录必须写"摄入后"的真实 chunk 数：apply 前取的 counts 是旧值，
+        # 新增文件会记成 0、修改文件的条数与索引对不上（评测侧据此误报不一致）
+        counts = chunks_by_file([os.path.basename(rel) for rel in new
+                                 if rel not in failed and rel not in removed])
         append_kb_metadata(kb_file_list(new, counts))
         return True
     finally:

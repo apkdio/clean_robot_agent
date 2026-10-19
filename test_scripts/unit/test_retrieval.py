@@ -124,12 +124,17 @@ def test_is_brand():
 # ──────────────────────────────────────────────────────────────
 
 def test_word_dict_integrity():
-    from config.word_dict_config import DOMAIN_MAP, SYMPTOM_MAP, SYMPTOM_QUERY_MAP
+    from config.word_dict_config import (DOMAIN_MAP, ROUTABLE_DOMAINS, NON_ROUTABLE_DOMAINS,
+                                         SYMPTOM_MAP, SYMPTOM_QUERY_MAP)
     _assert_eq(
         set(DOMAIN_MAP.keys()),
         {"brand", "consulting", "model", "repair", "aftersales", "maintain", "operation"},
         "DOMAIN_MAP 七个域",
     )
+    # 域路由口径必须覆盖全部已登记域（可路由 + 明确不可路由），否则新增域会静默不参与路由
+    _assert_eq(set(ROUTABLE_DOMAINS) | set(NON_ROUTABLE_DOMAINS), set(DOMAIN_MAP.keys()),
+               "可路由域 + 不可路由域 = 全部已登记域")
+    _assert_eq(set(ROUTABLE_DOMAINS) & set(NON_ROUTABLE_DOMAINS), set(), "两个集合不重叠")
     _assert_eq(DOMAIN_MAP["maintain"], DOMAIN_MAP["repair"], "维护与维修同文件")
     _assert(len(SYMPTOM_MAP) > 0, "SYMPTOM_MAP 非空")
     _assert(len(SYMPTOM_QUERY_MAP) > 0, "SYMPTOM_QUERY_MAP 非空")
@@ -244,6 +249,29 @@ def test_reranker_unavailable_returns_none():
         reranker._ensure_model = orig
 
 
+def test_rerank_degraded_keeps_candidates():
+    """精排降级时不按精排阈值砍候选（R-01）：降级分数是 RRF 量纲（top1 约 0.03），
+    按 0.2 硬砍会把无域过滤的查询清零成"没查到"。"""
+    from tools import hybrid_retriever as hrm
+
+    class _Doc:
+        def __init__(self, i):
+            self.page_content = "chunk%d" % i
+
+    docs = [(_Doc(i), 0.033, {}) for i in range(3)]
+    hr = hrm.HybridRetriever.__new__(hrm.HybridRetriever)   # 跳过 __init__，不碰真实索引
+    hr.sparse = type("S", (), {"is_ready": True})()
+
+    def _fake_retrieve(query, filter, facts=None):
+        if facts is not None:
+            facts.update(rerank={"model": None, "in": 3, "out": 3, "degraded": True})
+        return docs
+
+    hr._retrieve = _fake_retrieve
+    out = hr.search_with_scores("边刷多久换一次", filter=None)
+    _assert_eq(len(out), 3, "降级路径不按精排阈值砍候选")
+
+
 # ──────────────────────────────────────────────────────────────
 # 10. 端到端：阈值过滤 + 精排（需 Ollama + Chroma + 本地 reranker 模型）
 # ──────────────────────────────────────────────────────────────
@@ -342,6 +370,7 @@ TESTS = [
     test_drop_without_dense_support,
     test_bm25_cache_stale_on_content_change,
     test_reranker_unavailable_returns_none,
+    test_rerank_degraded_keeps_candidates,
     test_hybrid_domain_filter_e2e,
     test_score_threshold_filters_out_of_domain_e2e,
     test_rerank_scores_e2e,

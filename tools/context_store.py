@@ -145,7 +145,8 @@ def _update_meta(session_id: str, **fields) -> dict:
         try:
             with open(file_path, encoding="utf-8") as f:
                 data = json.load(f)
-        except Exception:
+        except Exception as e:
+            logger.warning("[Context] meta 读取失败，按空 meta 继续（%s）：%s", file_path, e)
             data = {}
     data.update(fields)
     try:
@@ -153,8 +154,8 @@ def _update_meta(session_id: str, **fields) -> dict:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
         os.replace(tmp, file_path)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[Context] meta 写入失败（本轮字段没落盘）：%s", e)
     return data
 
 

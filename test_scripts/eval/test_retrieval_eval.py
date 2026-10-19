@@ -632,7 +632,16 @@ def run():
         print(f"\n评测范围：{entries[0]['id']}–{entries[-1]['id']}（{len(entries)} 条）")
 
     from tools.metadata_extractor import get_all_models
-    _assert(len(get_all_models()) == 16, "型号数据就绪（16 个型号）")
+    catalog = {_short_name(m["name"]) for m in get_all_models()}
+    want = set()
+    for e in entries:
+        if e.get("expect_model"):
+            want.add(e["expect_model"])
+        want |= set(e.get("expect_models") or [])
+    missing = sorted(want - catalog)
+    # 相对断言：不写死"必须 16 款"（知识库加一款就误红），改成"评测集依赖的型号都在目录里"
+    _assert(bool(catalog), f"型号数据就绪（目录 {len(catalog)} 款）")
+    _assert(not missing, "评测集依赖的型号都在目录里" + (f"（缺：{missing}）" if missing else ""))
 
     from tools.hybrid_retriever import HybridRetriever
     hr = HybridRetriever()

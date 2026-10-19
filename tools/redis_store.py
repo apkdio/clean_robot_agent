@@ -7,6 +7,7 @@ key 约定：
 """
 
 import json
+import time
 
 from tools.log_tool import get_logger
 
@@ -25,14 +26,14 @@ def _load_config() -> dict:
 
 
 def get_redis():
-    """懒加载 Redis 连接（单例）。连接失败返回 None（降级）。"""
+    """懒加载 Redis 连接（单例）。包未安装或连接失败都返回 None（降级本地内存）。"""
     global _redis, _enabled
     if _enabled is False:
         return None
     if _redis is None:
-        import redis
         cfg = _load_config()
         try:
+            import redis
             client = redis.Redis(
                 host=cfg.get("host", "localhost"),
                 port=cfg.get("port", 6379),
@@ -46,6 +47,10 @@ def get_redis():
             _redis = client
             _enabled = True
             logger.info("[Redis] connected %s:%s", cfg.get("host", "localhost"), cfg.get("port", 6379))
+        except ImportError as e:
+            _redis = None
+            _enabled = False
+            logger.warning("[Redis] package not installed, fallback to local: %s", e)
         except Exception as e:
             _redis = None
             _enabled = False
@@ -71,8 +76,11 @@ def lock_ttl() -> int:
 
 
 def pending_ttl() -> int:
-    """待确认状态（SOP 退出确认 / 网点问城市等）的过期秒数。"""
-    return _cfg_int("pending_ttl", 600)
+    """待确认状态（SOP 退出确认 / 进入确认门）的过期秒数。
+
+    默认与 sop_ttl 同值：pending 先过期而 SOP 还活着时，「是」会被当成槽位输入。
+    """
+    return _cfg_int("pending_ttl", 1800)
 
 
 def json_dumps(obj) -> str:
@@ -88,7 +96,9 @@ def json_loads(s: str):
 
 # ── 互斥锁（Redis SETNX + 本地降级）──
 
-_local_locks = set()  # Redis 不可用时的本地降级锁（单进程语义）
+# key → 过期时间戳。Redis 不可用时的本地降级锁（单进程语义）；
+# 必须带过期：Redis 路径靠 EX 自动释放，本地态没有 TTL 就会永久占住（进程内死锁）
+_local_locks = {}
 
 
 def acquire_lock(key: str, ttl: int = None) -> bool:
@@ -100,11 +110,13 @@ def acquire_lock(key: str, ttl: int = None) -> bool:
     if r is not None:
         try:
             return bool(r.set(key, "1", nx=True, ex=ttl or lock_ttl()))
-        except Exception:
-            pass
-    if key in _local_locks:
+        except Exception as e:
+            logger.warning("[Redis] acquire_lock failed, fallback to local lock: %s", e)
+    now = time.time()
+    expire = _local_locks.get(key)
+    if expire is not None and expire > now:
         return False
-    _local_locks.add(key)
+    _local_locks[key] = now + (ttl or lock_ttl())
     return True
 
 
@@ -114,6 +126,6 @@ def release_lock(key: str):
     if r is not None:
         try:
             r.delete(key)
-        except Exception:
-            pass
-    _local_locks.discard(key)
+        except Exception as e:
+            logger.warning("[Redis] release_lock failed (本地也会释放): %s", e)
+    _local_locks.pop(key, None)

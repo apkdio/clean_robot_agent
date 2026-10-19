@@ -1,8 +1,8 @@
-"""统一的「待确认」状态存储：SOP 退出确认、网点问城市、网点重名选序号。
+"""统一的「待确认」状态存储：SOP 退出确认、进入确认门。
 
-Redis 存 sop:pending:{session_id}（带 TTL）；无 Redis 时降级内存并做时间戳校验。
-kind 取值：confirm_exit（答是/不是）、confirm_enter（要不要走引导）；
-confirm_enter 用于「进入 SOP 的确认门」（弱触发才问）。
+Redis 存 sop:pending:{session_id}（带 TTL，且 TTL ≥ SOP 会话 TTL）；无 Redis 时降级内存并做时间戳校验。
+kind 取值：confirm_exit（答是/不是）、confirm_enter（要不要走引导，弱触发才问）。
+（网点问城市 / 重名选序号不走这里——2026-09-30 起网点整条走 SOP 槽位。）
 """
 
 from __future__ import annotations

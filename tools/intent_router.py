@@ -46,16 +46,24 @@ def _load_model():
     if _head_unavailable:
         return None, None
 
-    import torch
     from tools.path_tool import get_abs_path
 
     # 先在局部装配完再赋值：失败时不留半个状态
-    head = torch.nn.Linear(1024, 4)
     try:
+        import torch          # import 放 try 内：torch 缺失也走这条降级，不能裸抛
+
+        with open(get_abs_path(f"{_MODEL_DIR}/{_LABELS_FILE}"), encoding="utf-8") as f:
+            meta = json.load(f)
+        # 老格式是纯标签数组；新格式带 input_dim，推理按它建头（训练侧 X.shape[1]）
+        if isinstance(meta, dict):
+            labels, input_dim = meta.get("labels"), int(meta.get("input_dim") or 0)
+        else:
+            labels, input_dim = meta, 1024
+        if not labels or input_dim <= 0:
+            raise ValueError(f"labels.json 内容不完整：{type(meta).__name__}")
+        head = torch.nn.Linear(input_dim, len(labels))
         head.load_state_dict(torch.load(get_abs_path(f"{_MODEL_DIR}/{_HEAD_FILE}"), map_location="cpu"))
         head.eval()
-        with open(get_abs_path(f"{_MODEL_DIR}/{_LABELS_FILE}"), encoding="utf-8") as f:
-            labels = json.load(f)
     except Exception as e:  # noqa: BLE001
         logger.warning("[IntentRouter] 分类头不可用，降级为 unknown：%s", e)
         _head_unavailable = True
@@ -73,21 +81,26 @@ def route_intent_with_margin(query: str) -> tuple[str, float]:
     指代对象在上文，单看这一句没有任何信号。调用方据此做低置信判定，
     而不是把 argmax 的结果当成确定结论。
     """
-    import numpy as np
-    import torch
-
     head, labels = _load_model()
     if head is None:
         # 显式降级：unknown 会走软引导 + RAG（加载失败已记 WARNING）
         return "unknown", 0.0
-    emb = _get_emb()
-    # 用 embed_documents（与训练同一条路径）而非 embed_query，
-    # 保证训练与推理的 embedding 一致。
-    vec = emb.embed_documents([query])[0]
+    try:
+        import numpy as np
+        import torch
 
-    x = torch.tensor(np.array([vec], dtype=np.float32))
-    with torch.no_grad():
-        probs = torch.softmax(head(x), dim=1)[0]
+        emb = _get_emb()
+        # 用 embed_documents（与训练同一条路径）而非 embed_query，
+        # 保证训练与推理的 embedding 一致。
+        vec = emb.embed_documents([query])[0]
+        x = torch.tensor(np.array([vec], dtype=np.float32))
+        with torch.no_grad():
+            probs = torch.softmax(head(x), dim=1)[0]
+    except Exception as e:  # noqa: BLE001
+        # embedding / 前向异常（Ollama 抖动、重启）与加载失败同走降级，
+        # 不能把整轮打成 500——unknown 走软引导 + RAG 是设计承诺
+        logger.warning("[IntentRouter] 推理失败，降级为 unknown：%s", e)
+        return "unknown", 0.0
     top2 = torch.topk(probs, k=2).values
     margin = float(top2[0] - top2[1])
 

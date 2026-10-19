@@ -6,7 +6,7 @@
   3. 跨领域歧义消解（漏水/电池）—— 之前存在歧义
   4. 扩充的 other/casual/unknown 种子词表
 
-输出：data/datasets/intent_dataset.jsonl
+输出：data/datasets/_generated.jsonl（默认；--force 才写正式数据集 intent_dataset.jsonl）
 """
 
 import json
@@ -20,7 +20,10 @@ from tools.config_tool import get_data_dir
 from tools.entry_splitter import split_numbered_entries
 from tools.file_tools import extract_file
 
-_OUT_PATH = "data/datasets/intent_dataset.jsonl"
+# 默认输出到 _generated.jsonl：正式数据集 intent_dataset.jsonl 是人工维护的受控数据，
+# 只有显式 --force 才允许整份重写（生成的样本没有人工标注的 source 字段）。
+_OUT_PATH = "data/datasets/_generated.jsonl"
+_DATASET_PATH = "data/datasets/intent_dataset.jsonl"
 
 
 def _extract_title(entry_text: str) -> str | None:
@@ -272,7 +275,10 @@ def main():
             seen.add(r["text"])
             unique.append(r)
 
-    out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), _OUT_PATH)
+    for r in unique:
+        r.setdefault("source", "generated")
+    out_rel = _DATASET_PATH if "--force" in sys.argv else _OUT_PATH
+    out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), out_rel)
     with open(out, "w", encoding="utf-8") as f:
         for r in unique:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")

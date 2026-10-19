@@ -54,6 +54,11 @@ def main():
     if not E2E:
         print("⚠ 未加 --e2e：三条数据集评测轨全部跳过，本次只跑了纯规则自检。")
         print("  加 --e2e 才是完整评测（需 Ollama + Chroma + reranker）。")
+    if grand_t == 0 or grand_s >= 3:
+        # 「数据集评测轨全跳过」不等于「评测通过」：退出码要能区分（review §4.6）。
+        # 无 --e2e、或评测集/分类头文件缺失时都落这里——只跑了纯规则自检，不能算验证过。
+        print("# 退出码 2：数据集评测轨全部跳过（没验证 ≠ 验证通过）")
+        sys.exit(2)
     sys.exit(0 if grand_p == grand_t else 1)
 
 

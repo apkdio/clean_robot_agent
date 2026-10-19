@@ -8,6 +8,7 @@
 
 import os
 import sys
+import time
 
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
@@ -21,7 +22,6 @@ from tools.config_tool import load_config
 from tools.context_store import ensure_session_id, list_sessions
 from tools.log_tool import get_logger
 from tools.vector_store import (
-    ingest_data_dir,
     ingest_file,
     list_collections_info,
     reset_collection,
@@ -29,11 +29,16 @@ from tools.vector_store import (
 
 logger = get_logger(name="webapp")
 
+# 500 一律回显这句：内部路径/异常细节只进日志，不回给前端
+_INTERNAL_ERROR_MSG = "内部错误，请查看服务端日志"
+
 app = Flask(
     __name__,
     template_folder=os.path.join(os.path.dirname(__file__), "templates"),
     static_folder=os.path.join(os.path.dirname(__file__), "static"),
 )
+# 上传体积上限（超出由 Flask 返回 413），防任意大文件打满磁盘
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024
 
 _rag_cfg = load_config("rag")
 _upload_dir = os.path.join(str(_PROJECT_ROOT), "temp", "uploads")
@@ -41,16 +46,28 @@ os.makedirs(_upload_dir, exist_ok=True)
 
 _supported_exts = tuple(_rag_cfg.get("supported_exts", [".txt", ".pdf"]))
 
-# 停止回答标志（Redis + 内存降级）
-_stop_flags = set()
+
+def _safe_upload_name(raw: str) -> str:
+    """净化上传文件名：取 basename 防路径穿越、清文件系统非法字符；非法或空名返回空串。
+
+    中文名要保留：入库后的 file_name 元数据与域路由都按知识文件名匹配。
+    """
+    name = os.path.basename((raw or "").replace("\\", "/"))
+    name = "".join(ch for ch in name if ch not in '<>:"|?*' and ord(ch) >= 32)
+    return name.strip().strip(".")[:120]
+
+# 停止回答标志（Redis + 内存降级）。本地态也要带过期：
+# 无 TTL 的残留标志会误杀下一次提问（晚到/双击的 stop 请求）
+_STOP_TTL = 120
+_stop_flags = {}   # session_id → 过期时间戳
 
 
 def _set_stop(session_id: str):
     from tools.redis_store import get_redis
     r = get_redis()
     if r is not None:
-        r.set(f"stop:{session_id}", "1", ex=120)
-    _stop_flags.add(session_id)
+        r.set(f"stop:{session_id}", "1", ex=_STOP_TTL)
+    _stop_flags[session_id] = time.time() + _STOP_TTL
 
 
 def _is_stopped(session_id: str) -> bool:
@@ -58,7 +75,13 @@ def _is_stopped(session_id: str) -> bool:
     r = get_redis()
     if r is not None:
         return bool(r.exists(f"stop:{session_id}"))
-    return session_id in _stop_flags
+    expire = _stop_flags.get(session_id)
+    if expire is None:
+        return False
+    if expire <= time.time():
+        _stop_flags.pop(session_id, None)
+        return False
+    return True
 
 
 def _clear_stop(session_id: str):
@@ -66,7 +89,23 @@ def _clear_stop(session_id: str):
     r = get_redis()
     if r is not None:
         r.delete(f"stop:{session_id}")
-    _stop_flags.discard(session_id)
+    _stop_flags.pop(session_id, None)
+
+
+def _make_stop_probe(session_id: str, min_interval: float = 0.15):
+    """节流的停止探测：流式循环每个 chunk 都查一次，Redis 可用时就是每个 chunk 一次
+    EXISTS 往返——节流到至多 ~7 次/秒，停止感知延迟上限 150ms（人不可察）。"""
+    import time as _time
+    last = [0.0]
+
+    def probe() -> bool:
+        now = _time.monotonic()
+        if now - last[0] >= min_interval:
+            last[0] = now
+            return _is_stopped(session_id)
+        return False
+
+    return probe
 
 
 @app.route("/")
@@ -132,7 +171,7 @@ def stats():
         return jsonify(info)
     except Exception as e:
         logger.error(f"[Stats] {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": _INTERNAL_ERROR_MSG}), 500
 
 
 @app.route("/api/ingest", methods=["POST"])
@@ -144,37 +183,44 @@ def ingest():
     if not upload.filename:
         return jsonify({"status": "error", "message": "Empty filename."}), 400
 
-    # 校验扩展名
-    ext = os.path.splitext(upload.filename)[1].lower()
-    if not ext.endswith(_supported_exts):
-        msg = f"Unsupported file type: {ext}. Supported: {', '.join(_supported_exts)}"
-        logger.warning(f"[Ingest] {msg}")
+    # 文件名净化后再校验扩展名；realpath 双保险确保落在 upload 目录内
+    base = _safe_upload_name(upload.filename)
+    ext = os.path.splitext(base)[1].lower()
+    if not base or not ext.endswith(_supported_exts):
+        msg = f"Unsupported or unsafe file name. Supported: {', '.join(_supported_exts)}"
+        logger.warning(f"[Ingest] {msg}: {upload.filename!r}")
         return jsonify({"status": "error", "message": msg}), 400
 
-    # 保存到 temp/uploads
-    save_path = os.path.join(_upload_dir, upload.filename)
-    upload.save(save_path)
-    logger.info(f"[Ingest] Saved upload: {save_path}")
+    # 先拿锁再落盘：两个并发同名上传会互相覆盖/删掉对方正在摄入的源文件；
+    # 锁拿不到时文件还没写盘，直接 409 不留垃圾
+    from tools.redis_store import acquire_lock, release_lock
+    if not acquire_lock("lock:ingest"):
+        return jsonify({"status": "busy", "message": "正在摄入知识库，请稍候"}), 409
 
     try:
-        # 摄入到向量库（摄入锁：与热更新/重置互斥）
-        from tools.redis_store import acquire_lock, release_lock
-        if not acquire_lock("lock:ingest"):
-            return jsonify({"status": "busy", "message": "正在摄入知识库，请稍候"}), 409
+        save_path = os.path.realpath(os.path.join(_upload_dir, base))
+        if os.path.dirname(save_path) != os.path.realpath(_upload_dir):
+            logger.warning(f"[Ingest] path escapes upload dir: {upload.filename!r}")
+            return jsonify({"status": "error", "message": "Invalid file name."}), 400
+        upload.save(save_path)
+        logger.info(f"[Ingest] Saved upload: {save_path}")
         try:
             result = ingest_file(save_path)
             if result.get("status") == "ok":
-                # 手动入库也要让索引侧跟上：重建 BM25、失效 models.pkl、重置检索器单例
-                from tools.hot_ingest import rebuild_sparse_index
+                # 手动入库也要让索引侧跟上：重建 BM25、失效 models.pkl、重置检索器单例；
+                # 快照一并作废——上传按 basename 替换会盖掉同名知识文件的 chunk，
+                # 而磁盘上的原文件哈希没变，快照与索引从此对不上，作废让下轮热更新全量对齐
+                from tools.hot_ingest import invalidate_snapshot, rebuild_sparse_index
+                invalidate_snapshot()
                 rebuild_sparse_index()
         finally:
-            release_lock("lock:ingest")
+            # 摄入完成后清理临时文件（只删自己刚命名的这个）
+            try:
+                os.remove(save_path)
+            except OSError:
+                pass
     finally:
-        # 摄入完成后清理临时文件
-        try:
-            os.remove(save_path)
-        except OSError:
-            pass
+        release_lock("lock:ingest")
 
     code = 200 if result.get("status") == "ok" else 500
     return jsonify(result), code
@@ -190,10 +236,14 @@ def reset():
         from tools.hot_ingest import invalidate_snapshot
         invalidate_snapshot()
         deleted = reset_collection()
+        # 清库后立即失效全部索引缓存（BM25/pkl/检索器单例/型号名单）：
+        # 否则进程内还留着旧知识，最长 30 分钟继续用已删内容作答
+        from tools.hot_ingest import rebuild_sparse_index
+        rebuild_sparse_index()
         return jsonify({"status": "ok", "deleted": deleted})
     except Exception as e:
         logger.error(f"[Reset] {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": _INTERNAL_ERROR_MSG}), 500
     finally:
         release_lock("lock:ingest")
 
@@ -228,30 +278,47 @@ def chat_stream():
     if not acquire_lock(lock_key): # 方法内已经实现加锁逻辑
         return jsonify({"status": "busy", "message": "正在回答中，请稍候"}), 409
 
+    # 清掉上一轮残留的停止标志：晚到/重复的 stop 请求会在流结束后留在 Redis，
+    # 不清的话下一轮在首个 chunk 前就被误停、user 消息被回滚
+    _clear_stop(session_id)
+
     logger.info(f"[Stream] query: {query[:60]}... session={session_id}")
 
     def generate():
+        completed = False
         try:
             import json
             from tools.context_store import append_message, rollback_last_user_message
             from sops.base import get_last_recommend
             parts = []
             stopped = False
+            probe = _make_stop_probe(session_id)
             try:
-                for chunk in ask_stream(query, session_id, lng=lng, lat=lat, retry=is_retry):
-                    if _is_stopped(session_id):
+                for chunk in ask_stream(query, session_id, lng=lng, lat=lat, retry=is_retry,
+                                        stop_check=probe):
+                    if probe():
                         stopped = True
                         break
                     parts.append(chunk)
                     # JSON 编码，避免 chunk 内的换行符破坏 SSE 帧格式
                     yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                # 链路在阻塞段内被停（stop_check 静默 return）也要走停止收尾，
+                # 不然这轮会被当成自然结束落盘
+                if not stopped and _is_stopped(session_id):
+                    stopped = True
             except Exception as e:
+                # 错误走独立帧 + 不落盘：错误文案若当正常回答 append，
+                # 下一轮 LLM 会把「错误: 生成失败」当客服回答、标题也会被污染
                 logger.error(f"[Stream] {e}")
-                yield f"data: {json.dumps('错误: 生成失败，请重试！', ensure_ascii=False)}\n\n"
+                yield f"event: error\ndata: {json.dumps('生成失败，请重试', ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+                completed = True
+                return
             if stopped:
                 # 停止：回滚这一轮（忽略进上下文），首句取消则会话不落地磁盘
                 rollback_last_user_message(session_id)
                 yield "data: [STOPPED]\n\n"
+                completed = True
                 return
             # 记录 assistant 完整回答 + 结构化推荐（供自由指代消解）
             full_answer = "".join(parts)
@@ -277,7 +344,16 @@ def chat_stream():
             except Exception as e:
                 logger.warning(f"[Stream] meta frame failed: {e}")
             yield "data: [DONE]\n\n"
+            completed = True
         finally:
+            # 客户端断连（GeneratorExit，BaseException 捕不住上面的 except）与
+            # 停止同一语义：回滚这轮的 user 消息，不留「问了没答」的上下文残局
+            if not completed:
+                try:
+                    from tools.context_store import rollback_last_user_message
+                    rollback_last_user_message(session_id)
+                except Exception as e:
+                    logger.warning(f"[Stream] rollback on disconnect failed: {e}")
             from tools.redis_store import release_lock
             release_lock(lock_key)
             _clear_stop(session_id)
@@ -296,51 +372,35 @@ def sessions():
         return jsonify({"status": "ok", "sessions": list_sessions()})
     except Exception as e:
         logger.error(f"[Sessions] {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": _INTERNAL_ERROR_MSG}), 500
 
 
 @app.route("/api/sessions/<sid>/messages", methods=["GET"])
 def session_messages(sid):
     """返回指定会话的完整消息（供前端加载历史对话）。"""
     from tools.context_store import get_recent
+    if sid != ensure_session_id(sid):
+        return jsonify({"status": "error", "message": "Invalid session id."}), 400
     try:
         msgs = get_recent(sid, n=1000)  # 文件保留全量，这里取足够多
         return jsonify({"status": "ok", "messages": msgs})
     except Exception as e:
         logger.error(f"[SessionMessages] {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": _INTERNAL_ERROR_MSG}), 500
 
 
 @app.route("/api/sessions/<sid>", methods=["DELETE"])
 def remove_session(sid):
     """删除指定会话。"""
     from tools.context_store import delete_session as _del_session
+    if sid != ensure_session_id(sid):
+        return jsonify({"status": "error", "message": "Invalid session id."}), 400
     try:
         ok = _del_session(sid)
         return jsonify({"status": "ok", "deleted": ok})
     except Exception as e:
         logger.error(f"[DeleteSession] {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-
-@app.route("/api/ingest/batch", methods=["POST"])
-def ingest_batch():
-    """一次性摄入知识目录中所有受支持的文件（与热更新/重置互斥，完成后重建索引）。"""
-    from tools.config_tool import get_data_dir
-    from tools.redis_store import acquire_lock, release_lock
-    data_dir = get_data_dir()
-    if not acquire_lock("lock:ingest"):
-        return jsonify({"status": "busy", "message": "正在摄入知识库，请稍候"}), 409
-    try:
-        results = ingest_data_dir(data_dir)
-        from tools.hot_ingest import rebuild_sparse_index
-        rebuild_sparse_index()
-        return jsonify({"status": "ok", "results": results})
-    except Exception as e:
-        logger.error(f"[BatchIngest] {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-    finally:
-        release_lock("lock:ingest")
+        return jsonify({"status": "error", "message": _INTERNAL_ERROR_MSG}), 500
 
 
 @app.route("/api/config", methods=["GET"])
@@ -359,7 +419,7 @@ def agent_config():
         })
     except Exception as e:
         logger.error(f"[Config] {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": _INTERNAL_ERROR_MSG}), 500
 
 
 if __name__ == "__main__":

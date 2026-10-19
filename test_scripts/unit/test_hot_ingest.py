@@ -127,6 +127,49 @@ def test_run_once_repairs_missing_and_holds_snapshot_on_failure():
             setattr(hi, k, v)
 
 
+def test_kb_metadata_counts_taken_after_apply():
+    """版本记录写摄入后的 chunk 数（R-03）：apply 前取的 counts 是旧值，
+    新增文件会记 0、修改文件条数与索引对不上，评测侧据此误报不一致。"""
+    col = _FakeCollection({"a.txt": ["x"]})
+    restore = _patch(get_vector_store=lambda: _FakeStore(col),
+                     ingest_file=lambda p, source_tag="": {"status": "ok", "chunks": 3})
+    orig = {k: getattr(hi, k) for k in ("scan_files", "load_snapshot", "save_snapshot",
+                                        "append_kb_metadata", "rebuild_sparse_index", "chunks_by_file")}
+    recorded = {}
+    calls = {"n": 0}
+
+    def _counts(names):
+        calls["n"] += 1
+        # 第一次（自愈检查，apply 前）：返回 0 触发重入；第二次（写版本记录，apply 后）：真实条数 3
+        return {"a.txt": 3} if calls["n"] >= 2 else {"a.txt": 0}
+
+    hi.scan_files = lambda d: {"a.txt": "s2"}                     # 内容变了
+    hi.load_snapshot = lambda: {"a.txt": "s1"}
+    hi.chunks_by_file = _counts
+    hi.save_snapshot = lambda snap: None
+    hi.rebuild_sparse_index = lambda: None
+
+    def _append(file_list, ts=""):
+        recorded.update(file_list)
+
+    hi.append_kb_metadata = _append
+    try:
+        import tools.redis_store as rs
+        orig_lock = (rs.acquire_lock, rs.release_lock)
+        rs.acquire_lock, rs.release_lock = (lambda name: True), (lambda name: None)
+        try:
+            hi.run_once("data/knowledge")
+        finally:
+            rs.acquire_lock, rs.release_lock = orig_lock
+        entry = recorded.get("a.txt") or {}
+        _assert_eq(entry.get("chunks"), 3, "版本记录用 apply 后的 chunk 数（不是 apply 前的旧值）")
+        _assert(entry.get("ingested") is True, "真实条数 > 0 → ingested=True（不再把新增文件记成未摄入）")
+    finally:
+        restore()
+        for k, v in orig.items():
+            setattr(hi, k, v)
+
+
 def test_change_detail_fields():
     """变更明细要能回答「谁什么时候动过」：mtime + 大小/行数 + git 状态。"""
     path = os.path.join("data", "knowledge", "不染一尘具体型号.txt")
@@ -229,6 +272,35 @@ def test_ingest_file_failure_keeps_old_chunks():
         os.remove(path)
 
 
+def test_rebuild_invalidates_model_names_cache():
+    """rebuild_sparse_index 要一并失效进程内型号名单缓存（R-06）：
+    型号增删改名后不重启也能查到，否则新型号永远不触发型号直出。"""
+    import tempfile
+
+    from function_tools import model_tool as mt
+    from tools import hot_ingest as hi
+    from tools import path_tool as pt
+    import tools.vector_store as vs
+
+    mt._model_names_cache = ["旧型号"]
+    # 把 pkl 路径指到空临时目录（isfile=False → 不真删）。
+    # 别补丁 hi.os.path.isfile——hi.os 就是全局 os 模块，会把整个进程的 isfile 打掉
+    tmp_dir = tempfile.mkdtemp()
+    saved_abs, saved_build = pt.get_abs_path, vs.build_hybrid_index
+    pt.get_abs_path = lambda p: os.path.join(tmp_dir, os.path.basename(p))
+    vs.build_hybrid_index = lambda: None         # 不真重建
+    try:
+        hi.rebuild_sparse_index()
+        _assert(mt._model_names_cache is None, "型号名单进程内缓存被失效")
+        # 坑的回归哨兵：补丁若打到全局 os.path，配置读取会连带失败（曾把 isfile 打成恒 False）
+        from tools.config_tool import load_config
+        _assert(isinstance(load_config("prompts"), dict), "补丁没波及全局 os.path（配置仍读得到）")
+    finally:
+        pt.get_abs_path = saved_abs
+        vs.build_hybrid_index = saved_build
+        mt._model_names_cache = None
+
+
 TESTS = [
     test_changed_failure_keeps_old_chunks,
     test_changed_success_replaces_old_chunks,
@@ -239,6 +311,8 @@ TESTS = [
     test_run_once_repairs_missing_and_holds_snapshot_on_failure,
     test_change_detail_fields,
     test_run_once_logs_change_detail,
+    test_rebuild_invalidates_model_names_cache,
+    test_kb_metadata_counts_taken_after_apply,
 ]
 
 

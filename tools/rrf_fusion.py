@@ -39,7 +39,7 @@ def reciprocal_rank_fusion(
     两路入参都须按各自分数降序排列，rank 由列表位置推导。
     """
     k = k if k is not None else _rrf_cfg.get("k", 60)
-    top_k = top_k if top_k is not None else _retrieval_cfg.get("final_top_k", 3)
+    top_k = top_k if top_k is not None else _retrieval_cfg.get("final_top_k", 5)   # 与 hybrid_retriever 同默认，防 yaml 缺键时两处结果不一致
     dense_weight = dense_weight if dense_weight is not None else _rrf_cfg.get("dense_weight", 1.0)
     sparse_weight = sparse_weight if sparse_weight is not None else _rrf_cfg.get("sparse_weight", 1.0)
 
