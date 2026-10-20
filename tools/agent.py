@@ -29,6 +29,9 @@ from config.word_dict_config import (
     ENTER_CONFIRM as _ENTER_CONFIRM,
     EXIT_CONFIRM as _EXIT_CONFIRM,
     INJECT_RE as _INJECT_RE,
+    OPERATION_LABELS as _OPERATION_LABELS,
+    OPS_CLARIFY as _OPS_CLARIFY,
+    OPS_CLARIFY_RETRY as _OPS_CLARIFY_RETRY,
     PURCHASE_DURATION_RE as _PURCHASE_DURATION_RE,
     REFUSE_OFFTOPIC_REPLY as _REFUSE_OFFTOPIC_REPLY,
     RELEASE_HINT_RE as _RELEASE_HINT_RE,
@@ -36,6 +39,8 @@ from config.word_dict_config import (
     SAFETY_CARRY_PREFIX as _SAFETY_CARRY_PREFIX,
     SOP_ENTER_FAILED_REPLY as _SOP_ENTER_FAILED_REPLY,
     SOP_NAMES as _SOP_NAMES,
+    SOP_REENTER_HINT as _SOP_REENTER_HINT,
+    SOP_REENTER_HINT_DEFAULT as _SOP_REENTER_HINT_DEFAULT,
     TIME_HINT_RE as _TIME_HINT_RE,
 )
 
@@ -44,6 +49,9 @@ logger = get_logger(name="agent")
 _agent_cfg = load_config("agent")
 _llm_cfg = _agent_cfg.get("llm", {})
 _behavior = _agent_cfg.get("behavior", {})
+
+# 没有执行体、属于作答管线的一段：分数排到最前就交给管线，不再试更低分的执行体
+_PIPELINE_OPS = {"date", "structured", "domain"}
 
 _hybrid_retriever = None  # 懒加载单例
 
@@ -172,13 +180,39 @@ def _is_symbols_only(query: str) -> bool:
     return not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", query)
 
 
+# 确认门答话只剥空白与基本标点；引号/括号/破折号这些留给 _EXIT_RESIDUE_RE（它剥退出词残渣时要用）
+_CONFIRM_CLEAN_RE = re.compile(r"[\s，,。.！!？?~～、]+")
+
+_CN_NUM = {"一": 1, "二": 2, "两": 2, "三": 3}
+
+
+def _match_op_choice(text: str, options: list):
+    """解析操作澄清的选择：1/2（或中文数字、"第一个"）+ 选项别名；认不出返回 None。"""
+    t = _CONFIRM_CLEAN_RE.sub("", text or "")
+    if not t:
+        return None
+    m = re.match(r"^(?:选|第)?([1-9])(?:个|项|号)?$", t)
+    if not m:
+        m = re.match(r"^(?:选|第)?([一两二三])(?:个|项|号)?$", t)
+        if m:
+            idx = _CN_NUM.get(m.group(1))
+            return options[idx - 1] if idx and idx <= len(options) else None
+        for i, op in enumerate(options, 1):
+            labels = _OPERATION_LABELS.get(op, ())
+            if any(lb in t for lb in labels):
+                return op
+        return None
+    idx = int(m.group(1))
+    return options[idx - 1] if 1 <= idx <= len(options) else None
+
+
 def _match_yes_no(query: str, gate: str = "exit") -> bool | None:
     """确认门判据：True=是、False=不是、None=认不出（调用方再问一次，有界两次）。"""
     from config.word_dict_config import (
         CONFIRM_YES_WORDS, CONFIRM_NO_WORDS, CONFIRM_SHORT_YES, CONFIRM_EXIT_ONLY,
     )
 
-    text = re.sub(r"[\s，,。.！!？?~～、]+", "", query or "")
+    text = _CONFIRM_CLEAN_RE.sub("", query or "")
     if not text:
         return None
     if any(w in text for w in CONFIRM_NO_WORDS):  # 否定优先：「不对」不被「对」吃掉
@@ -574,9 +608,12 @@ def _reenter_sop_on_retry(session_id: str, query: str) -> tuple:
     from sops.base import SOPS
     from tools.context_store import get_last_sop
 
-    cur = (trace_store.current_turn() or {}).get("turn_index")
+    last = trace_store.latest_turn(session_id)              # 最近一条已落盘（跨天也对）
     found = trace_store.find_turn(session_id, query)        # 同 query 的最近一轮＝被重发的那轮
-    if not found or cur is None or found.get("turn_index") != int(cur) - 1:
+    # 「上一轮就是被重发的那轮」：按最近一条落盘记录比，不用按天递增的 turn_index（跨零点会失效）
+    if (not found or not last
+            or found.get("date") != last.get("date")
+            or found.get("turn_index") != last.get("turn_index")):
         return False, ""
     prev = trace_store.find_turn_by_index(session_id, found.get("date"), found.get("turn_index"))
     sop_id = str((prev.get("sop") or {}).get("id") or "")
@@ -584,6 +621,8 @@ def _reenter_sop_on_retry(session_id: str, query: str) -> tuple:
         return False, ""                                    # 与 SOP 无关（或用户刚退出）→ 按原样重走
     entry = str(get_last_sop(session_id).get("entry_query") or query)
     logger.info("[Retry] 重开 SOP: %s（入口 query=%s）", sop_id, entry[:40])
+    # 弱触发与强触发都要留痕：否则这一轮在 path 里看不出"是重答重开的"
+    trace_store.node("sop.reenter", in_={"sop": sop_id, "entry": entry[:40]})
     if sop_needs_enter_confirm(sop_id, entry):
         pending_store.set(session_id, "confirm_enter", sop=sop_id, query=entry)
         trace_store.node("sop.pending", in_={"kind": "confirm_enter", "retry": True, "entry": entry[:40]})
@@ -691,7 +730,9 @@ def ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
         for piece in _ask_stream(query, session_id, lng, lat, retry=retry, stop_check=stop_check):
             reply_parts.append(piece)
             yield piece
-        completed = True
+        # 被停时 _ask_stream 是静默 return，迭代会"正常结束"——这里必须再查一次，
+        # 否则 trace 会把停掉的轮记成 aborted=false（webapp 那边已回滚，两边对不上）
+        completed = not (stop_check is not None and stop_check())
     except Exception as exc:  # noqa: BLE001
         trace_store.note_error(exc)
         raise
@@ -729,9 +770,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
     # 既破坏喂给 LLM 的上下文结构，也让这轮在文件里无从复盘。
     # blocked 项在拼对话历史时被跳过，不会回灌给 LLM。
     if _INJECT_RE.search(clean):
-        # 拦截轮同样落 route/node（与危险分支同口径）：只看 branch 看不出"为什么拦"
-        trace_store.route("inject", hit=True)
-        trace_store.node("route.inject", status="hit", out={"hit": True})
+        trace_store.route("inject", hit=True)          # route() 自动落 route.inject 节点
         append_message(session_id, "user", query, blocked="inject", trace=trace_store.turn_anchor())
         logger.warning("[Guard] injection blocked: %s", query[:60])
         _log_behavior("block_inject")
@@ -739,14 +778,12 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
         return
 
     trace_store.route("inject", hit=False)
-    trace_store.node("route.inject", out={"hit": False})
 
     # 危险现象：安全优先，在一切改写/路由之前拦截，立即停机联系售后
     from config.word_dict_config import DANGER_WORDS
     danger_hit = next((w for w in DANGER_WORDS if w in clean), None)
     if danger_hit:
         trace_store.route("danger", hit=True, word=danger_hit)
-        trace_store.node("route.danger", status="hit", out={"word": danger_hit})
         # danger 标记供后续判断"近期是否发生过安全告警"；该轮是正常对话的一部分，
         # 照常进入对话历史（区别于 injection）
         append_message(session_id, "user", query, danger=True, trace=trace_store.turn_anchor())
@@ -761,7 +798,6 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
         return
 
     trace_store.route("danger", hit=False)
-    trace_store.node("route.danger", out={"hit": False})
 
     # 上下文：记录用户消息（对话历史持久化，供 RAG 生成拼接，由 LLM 自主消解指代）
     # 带 trace 锚点（日期 + 轮次）：历史回看时能精确回标到该轮，不靠 query 猜
@@ -770,7 +806,6 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
     # 负面情绪：先安抚一句，再继续正常流程（只安抚、不拦截、不改写 query）
     emotion_reply = detect_emotion(clean)
     trace_store.route("emotion", hit=bool(emotion_reply))
-    trace_store.node("route.emotion", out={"hit": bool(emotion_reply)})
     if emotion_reply:
         yield emotion_reply + "\n\n"
 
@@ -781,10 +816,11 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
         trace_store.step("rewrite", normalize={"changed": q != query, "text": q[:120]})
 
     # SOP 会话：有活跃 SOP 时继续该流程（不经过意图路由）
-    from sops import (has_active_sop, continue_sop, end_sop, start_sop, match_sop,
+    from sops import (has_active_sop, continue_sop, end_sop, match_sop,
                       get_active_sop_id, sop_needs_enter_confirm)
     from tools.context_store import is_enter_declined, set_enter_declined
     enter_declined_turn = False  # 本轮刚拒过进入引导：只跳过本轮这道门，不记进会话（下次泛问还要能问）
+    prefer_op = None             # 操作澄清选中的操作：本轮派发把它顶到最前
     if has_active_sop(session_id):
         sop_id = get_active_sop_id(session_id)
         sop_name = _sop_name(sop_id)
@@ -861,10 +897,51 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
         # 待确认里记的 SOP 已被改名/删掉（代码更新过）→ 作废这次待确认，这一句按普通提问继续
         if pending.get("kind") == "confirm_enter":
             from sops import SOPS
+            # 仅判断SOP_id是否还在SOP列表
             if (pending.get("sop") or "purchase") not in SOPS:
                 logger.warning("[SOP] 待确认里的 SOP 已不存在，作废：%s", pending.get("sop"))
                 pending_store.clear(session_id)
                 pending = None
+
+    # 操作澄清：上一轮"管线操作只险胜具体操作"，这一轮等用户选 1 / 2
+    if pending and pending.get("kind") == "ops_clarify":
+        opts = list(pending.get("options") or [])
+        retry = int(pending.get("retry") or 0)
+
+        def _label(op):
+            return (_OPERATION_LABELS.get(op) or (op,))[0]
+
+        def _restore(entry_query):
+            """把这一轮换回原问题，并重算归一化文本（与进入门拒绝同口径）。"""
+            nonlocal query, clean, q
+            query = entry_query or query
+            clean = query
+            if _normalize_enabled():
+                from tools.query_normalizer import normalize
+                clean = normalize(query)
+            q = clean
+
+        pick = _match_op_choice(query, opts)
+        if pick:
+            pending_store.clear(session_id)
+            trace_store.node("ops.clarify",
+                             in_={"top1": opts[0], "top2": opts[1] if len(opts) > 1 else "-"},
+                             out={"pick": pick})
+            _restore(pending.get("query"))
+            prefer_op = pick
+        elif retry >= 1:
+            # 两次认不出：按 top1 走（管线 = 不猜具体操作），不再纠缠
+            pending_store.clear(session_id)
+            trace_store.node("ops.clarify", status="miss",
+                             in_={"top1": opts[0] if opts else "-"},
+                             out={"pick": opts[0] if opts else "-"})
+            _restore(pending.get("query"))
+        else:
+            pending_store.bump_retry(session_id)
+            _log_behavior("ask_clarify", kind="ops_clarify_retry")
+            yield _OPS_CLARIFY_RETRY.format(a=_label(opts[0]),
+                                            b=_label(opts[1]) if len(opts) > 1 else "-")
+            return
 
     # 进入侧确认门：上一轮问了「要不要走一遍引导」，这一轮等「是 / 不是」
     if pending and pending.get("kind") == "confirm_enter":
@@ -874,7 +951,9 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
         sop_name = _sop_name(sop_id)
         entry = pending.get("query") or query
         # 这一轮只答「是/不是」，真正被处理的入口 query 存在待确认里——落 trace 才追得回去
-        trace_store.node("sop.enter_gate", in_={"answer": query[:40], "entry": entry[:40]})
+        trace_store.node("sop.enter_gate",
+                         in_={"answer": query[:40], "entry": entry[:40]},
+                         out={"decision": {True: "yes", False: "no"}.get(ans, "unknown")})
         if ans is True:
             pending_store.clear(session_id)
             # 用当初那句弱触发 query 预填首槽，用户已经说过的信息不重复问
@@ -889,18 +968,23 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
                 # 维修不记拒绝：那句可能只是问渠道，下次提故障还得能进排查
                 enter_declined_turn = True
             logger.info("[SOP] enter declined: %s", sop_id)
-            # 答「不是」= 不进引导、直接回答 → 用当初那句 query 继续（系统问的是是/不是，这一句本身没有信息量）
-            entry_q = pending.get("query") or query
-            if entry_q != query:
-                query = entry_q
-                # q 是入口按当前句算的归一化，换回入口 query 后必须重算，
+            # 补一句「之后怎么再进」：declined 之后同类弱触发不再问门，用户想走引导时得知道怎么说
+            # （提示里的例子是强触发，见 word_dict_config::SOP_REENTER_HINT 的约定）
+            yield _SOP_REENTER_HINT.get(sop_id, _SOP_REENTER_HINT_DEFAULT) + "\n\n"
+            # 答「不是」= 不进引导、直接回答：系统问的是「是/不是」，这一句本身没有信息量，
+            # 所以要恢复成当初那句弱触发 query 再走正常链路
+            restore_query = pending.get("query") or query
+            if restore_query != query:
+                query = restore_query
+                # q 是入口按「不是」算的归一化，换回入口 query 后必须重算，
                 # 否则意图分类 / SOP 触发 / 检索仍用被否掉那句的文本
                 if _normalize_enabled():
                     from tools.query_normalizer import normalize
                     q = normalize(query)
+                    # 开关关闭时不写 normalize：那里没有"归一化"这件事，写了会被读成"跑过但没改"
+                    trace_store.step("rewrite", normalize={"changed": q != query, "text": q[:120]})
                 else:
                     q = query
-                trace_store.step("rewrite", normalize={"changed": q != query, "text": q[:120]})
         else:
             pending_store.bump_retry(session_id)
             _log_behavior("ask_clarify", kind="confirm_enter_retry")
@@ -971,10 +1055,34 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
     # 操作判别器判定后按表序派发；判定失败只告警、按原链路继续。
     try:
         from tools.operations import note_ops
-        op_note = note_ops(q, intent=intent, margin=margin)
+        op_note = note_ops(q, intent=intent, margin=margin, prefer=prefer_op)
     except Exception as e:  # noqa: BLE001
         logger.warning("[Ops] 判别失败，回退原链路：%s", e)
         op_note = {"usable": []}
+
+    # 判别器判 ambiguous（top1-top2 分差 < gap）→ 不猜，问用户选哪个；下一轮按选择重放
+    # 这就是 resolve() 原本的第三态，以前只留痕，现在接上出口
+    _usable_now = op_note.get("usable") or []
+    if not prefer_op and op_note.get("state") == "ambiguous" and len(_usable_now) >= 2:
+        # 两个候选的实际动作一样（sop 对这句解析出的就是 service_point）→ 问了也白问，直接取 top1
+        from sops import match_sop as _match_sop
+        try:
+            _sop_id = _match_sop(q)
+        except Exception:  # noqa: BLE001
+            _sop_id = None
+        _effect = lambda op: ("service_point" if op == "sop" and _sop_id == "service_point"
+                              else ("sop:%s" % _sop_id if op == "sop" else op))
+        if _effect(_usable_now[0]) != _effect(_usable_now[1]):
+            _scores_now = op_note.get("scores") or {}
+            diff = float(_scores_now.get(_usable_now[0], 0.0)) - float(_scores_now.get(_usable_now[1], 0.0))
+            pending_store.set(session_id, "ops_clarify", query=q,
+                              options=[_usable_now[0], _usable_now[1]])
+            trace_store.node("ops.clarify", in_={"top1": _usable_now[0], "top2": _usable_now[1],
+                                                 "gap": round(diff, 3)})
+            _log_behavior("ask_clarify", kind="ops_clarify")
+            yield _OPS_CLARIFY.format(a=(_OPERATION_LABELS.get(_usable_now[0]) or (_usable_now[0],))[0],
+                                      b=(_OPERATION_LABELS.get(_usable_now[1]) or (_usable_now[1],))[0])
+            return
 
     # 各操作的执行体：原分支体原样搬进来，只把 yield 换成 return。
     # 返回值：话术 / ""（命中但没话说，也接管本轮）/ _NOT_MINE（不是该管的，试下一个）
@@ -1040,13 +1148,18 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
 
     _OP_EXEC = {"followup": _exec_followup, "model": _exec_model, "series": _exec_series,
                 "service_point": _exec_service_point, "sop": _exec_sop}
-    # 按表序派发：命中即接管，不是该管的试下一个；日期/结构化/域路由仍走下面的原分支
+    # 按表序/分数派发：命中即接管，不是该管的试下一个；日期/结构化/域路由仍走下面的原分支
     for _name in op_note["usable"]:
+        if _name in _PIPELINE_OPS:
+            # 分数把它排到最前：说明没有更具体的操作该接管，交给下面的管线，不再给低分操作机会
+            break
         _exec = _OP_EXEC.get(_name)
         if _exec is None:
             continue
         _reply = _exec(session_id, q, enter_declined_turn)
         if _reply is _NOT_MINE:
+            # 分够了但执行体复核不认：与"分数不够"分开记，排查时才能分清是哪一层的问题
+            trace_store.route("ops", veto=_name)
             continue
         if _reply:
             yield _reply

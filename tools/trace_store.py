@@ -286,6 +286,12 @@ def step(name: str, **fields) -> None:
 _NODE_OF_STEP = {"intent": "route.intent", "rewrite": "rewrite",
                  "retrieve": "retrieve", "generate": "generate"}
 
+# 有 mirror 落点的环节名。新增 step 键必须先在这里登记，否则只有 v2 投影、path 与分层块会静默缺失
+_MIRRORED_STEPS = {"intent", "rewrite", "retrieve", "generate", "sop", "sop_gate", "shadow"}
+
+# route() 不落节点的键：intent 的节点由 step 的 mirror 落，ops 只有字段（TRACE.md §4.2）
+_ROUTE_MIRRORED = {"intent", "ops"}
+
 
 def _scalars(obj) -> dict:
     """只留标量（数字 / 布尔 / 字符串 / 空）——对象与列表不进分层块。"""
@@ -337,15 +343,24 @@ def _mirror_step(turn: dict, name: str, fields: dict) -> None:
     elif name == "shadow":
         turn["shadow"] = {"chain": fields.get("chain"),
                           "evidence": {"file": fields.get("log")}}
+    else:
+        logger.warning("[Trace] step '%s' 没有 mirror 分支：只有 v2 投影，path/分层块会缺", name)
 
 
 def route(name: str, **facts) -> None:
-    """记一条「进门判断」的结论。"""
+    """记一条「进门判断」的结论，并顺手落一个路径节点（`route.<name>`，out 取标量事实）。
+
+    `intent` / `ops` 不在这里落：intent 的节点由 `step()` 的 mirror 落、ops 从来只有字段没有节点，
+    都落会出现同名节点两次。
+    """
     turn = getattr(_local, "turn", None)
     if not turn:
         return
     try:
         turn["route"].setdefault(name, {}).update(_scalars(facts))
+        if name not in _ROUTE_MIRRORED:
+            node("route.%s" % name, status="hit" if facts.get("hit") else "ok",
+                 out=_scalars(facts))
     except Exception:  # noqa: BLE001
         pass
 
@@ -511,6 +526,41 @@ def turn_anchor() -> dict:
     if turn.get("turn_index") is None:
         return {}
     return {"date": (turn.get("ts") or "")[:10], "turn_index": turn.get("turn_index")}
+
+
+def latest_turn(session_id: str) -> dict:
+    """该会话最近一条**已落盘**的轮次（不含正在进行的这一轮）。
+
+    跨天也认：取所有 trace 文件里最后写入的那一行。比「同一天内 turn_index - 1」可靠
+    ——`turn_index` 按天从 1 数，跨零点后两把尺子对不上。
+    """
+    if not session_id:
+        return {}
+    best = None                                   # (mtime, path)
+    try:
+        for d in session_dirs():
+            if not os.path.basename(d).startswith(session_id):
+                continue
+            for name in os.listdir(d):
+                if not name.endswith(".jsonl") or re.search(r"\.(chunks|shadow|feedback)\.jsonl$", name):
+                    continue
+                p = os.path.join(d, name)
+                m = os.path.getmtime(p)
+                if best is None or m > best[0]:
+                    best = (m, p)
+    except OSError:
+        return {}
+    if not best:
+        return {}
+    try:
+        with open(best[1], encoding="utf-8") as f:
+            lines = [ln for ln in f if ln.strip()]
+        rec = json.loads(lines[-1])
+    except (OSError, ValueError, IndexError):
+        return {}
+    return {"session_id": session_id, "date": (rec.get("ts") or "")[:10],
+            "turn_index": rec.get("turn_index"), "query": rec.get("query"),
+            "aborted": bool(rec.get("aborted"))}
 
 
 def find_turn_by_index(session_id: str, date: str, turn_index) -> dict:

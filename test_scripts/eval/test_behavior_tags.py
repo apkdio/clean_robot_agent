@@ -252,8 +252,7 @@ def test_trace_nesting():
         return read_last_turn(sid)
 
     def fill_answer():
-        trace_store.route("danger", hit=False)
-        trace_store.node("route.inject", out={"hit": False})
+        trace_store.route("inject", hit=False)
         trace_store.step("intent", intent="robot", margin=0.98,
                          intent_retry={"label": "robot", "margin": 0.5, "adopted": True})
         trace_store.step("rewrite", normalize={"changed": True, "text": "支持以旧换新吗？"})
@@ -441,6 +440,133 @@ def test_emitted_tags_and_nodes_are_registered():
     _assert_eq(sorted(statuses - set(TRACE_NODE_STATUSES)), [], "写入的节点状态都在 TRACE_NODE_STATUSES 里")
 
 
+def test_step_keys_registered():
+    """每个 step("xxx") 都必须在 trace_store._MIRRORED_STEPS 里登记。
+
+    没登记时只有 v2 投影（steps）有值，path 与 v3 分层块会静默缺失——扫调用点兜住。
+    """
+    import ast
+    import pathlib
+
+    from tools.trace_store import _MIRRORED_STEPS
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    found = {}
+    for sub in ("tools", "sops", "webapp"):
+        for py in (root / sub).rglob("*.py"):
+            try:
+                tree = ast.parse(py.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not node.args:
+                    continue
+                fn = node.func
+                name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+                arg = node.args[0]
+                if name == "step" and isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    found.setdefault(arg.value, str(py.relative_to(root)))
+    missing = {k: v for k, v in found.items() if k not in _MIRRORED_STEPS}
+    _assert_eq(missing, {}, "step 调用点全部已登记 mirror 分支")
+    _assert(_MIRRORED_STEPS <= set(found) | {"sop_gate"},
+            "登记表里没有僵尸键（sop_gate 只在 agent 侧条件调用）")
+
+
+def test_route_nodes_written_once():
+    """V10 契约：`route()` 自动落节点后，同一轮里每个 `route.*` 节点只能出现一次。
+
+    inject/danger/emotion 由 `route()` 落，intent/ops 由 `_mirror_step` 落（`_ROUTE_MIRRORED` 例外）——
+    任何一边重复写，路径读起来就像"判了两次"。以前靠人守，这里做机器检查。
+    """
+    from config.word_dict_config import TRACE_NODE_STATUSES
+    from tools import trace_store
+
+    sid = "tracetest-route-once"
+    reset_trace(sid)
+    trace_store.begin_turn(sid, "路由节点唯一性")
+    trace_store.route("inject", hit=True)
+    trace_store.route("danger", hit=False)
+    trace_store.route("emotion", hit=True)
+    trace_store.route("ops", veto="none")
+    trace_store.step("intent", intent="robot", margin=0.9)
+    trace_store.note_behavior("block_inject")
+    trace_store.end_turn()
+    rec = read_last_turn(sid)
+    path = rec.get("path") or []
+    nodes = [n.get("node") for n in path if str(n.get("node", "")).startswith("route.")]
+    _assert_eq(len(nodes), len(set(nodes)), f"每个 route.* 节点只出现一次（实际 {nodes}）")
+    for name in ("route.inject", "route.danger", "route.emotion", "route.intent"):
+        _assert_in(name, nodes, f"{name} 落进 path")
+    by = {n.get("node"): n for n in path}
+    _assert_eq(by["route.emotion"].get("status"), "hit", "命中时 status=hit")
+    _assert_eq(by["route.danger"].get("status"), "ok", "未命中时 status=ok")
+    for name in ("route.inject", "route.danger", "route.emotion", "route.intent"):
+        _assert_in(by[name].get("status"), TRACE_NODE_STATUSES, f"{name} 的状态在闭集内")
+    _assert_not_in("route.ops", nodes, "ops 只落字段不落节点（避免与 mirror 重复）")
+    _assert_eq(((rec.get("route") or {}).get("ops") or {}).get("veto"), "none",
+               "ops 结论仍落 route 字段")
+    reset_trace(sid)
+
+
+def test_operation_keyphrase_coverage():
+    """V11 覆盖率契约：操作注册表 / 关键句 / 打分配置三者不许单边漂移。
+
+    "加词不加句"最容易发生：给操作补了触发词却忘了补关键句，打分永远过不了 floor，
+    派发看着还在跑，新词其实进不了候选。键名写错更隐蔽——关键句静默不参与打分。
+    """
+    from config.word_dict_config import OPERATION_KEYPHRASES
+    from tools import operations as ops
+
+    _assert_eq([o for o in ops.ORDER if o not in ops.OPERATIONS], [], "ORDER 里每个操作都有谓词注册")
+    _assert_eq(sorted(set(ops.OPERATIONS) - set(ops.ORDER)), [], "没有表外谓词注册")
+    _assert_eq(sorted(set(OPERATION_KEYPHRASES) - set(ops.ORDER)), [],
+               "关键句没有表外操作（键名写错会静默不参与打分）")
+    short = {o: len(ops._phrases(o)) for o in ops.ORDER if len(ops._phrases(o)) < 4}
+    _assert_eq(short, {}, "每个操作至少 4 句关键句（设计口径 4~6）")
+    seen = {}
+    for name in ops.ORDER:
+        phrases = ops._phrases(name)
+        _assert_eq(len(phrases), len(set(phrases)), f"{name} 组内关键句不重复")
+        for p in phrases:
+            seen.setdefault(p, []).append(name)
+    _assert_eq({p: v for p, v in seen.items() if len(v) > 1}, {},
+               "关键句不跨操作重复（重复会制造并列，gap 门失效）")
+    cfg = ops._ops_cfg()
+    if cfg:
+        _assert_in(str(cfg.get("scoring", "")).lower(), ("off", "shadow", "on"),
+                   "operations.scoring 取值在闭集内")
+        for key in ("floor", "gap"):
+            try:
+                val = float(cfg.get(key))
+            except (TypeError, ValueError):
+                val = -1.0
+            _assert_true(0.0 <= val <= 3.0, f"operations.{key} 是 0~3 的数值（当前 {cfg.get(key)!r}）")
+    else:
+        print("  [注意] 本机没有 operations 段配置，只校验了关键句覆盖率")
+
+
+def test_operation_multi_hit_winner():
+    """多命中裁决契约：一句话同时命中多个操作时，winner 由表序兜底（无分数/同分的降级路径）。
+
+    V11 之后线上按分数裁决，ORDER 只在同分与降级时起作用——这里锁的正是这条兜底：
+    改 ORDER、插新操作、放宽某个谓词，命中集合或 winner 变了会当场红。
+    """
+    from tools import operations as ops
+
+    cases = [("那有没有2000以上的产品", "structured"),
+             ("买个扫地机，顺便问问网点", "service_point"),
+             ("有更便宜的吗", "followup")]
+    for query, want in cases:
+        hits = ops.probe(query)
+        _assert_in(want, hits, f"「{query}」命中 {want}（实际 {hits}）")
+        state, winner = ops.resolve(hits)
+        _assert_eq((state, winner), ("win", want),
+                   f"「{query}」按表序裁决 winner={want}（实际 {state}/{winner}）")
+        tied = {o: 1.0 for o in hits}
+        state, winner = ops.resolve(hits, scores=tied, floor=1.0, gap=0.0)
+        _assert_eq((state, winner), ("win", want), f"「{query}」同分时回表序")
+
+
 TESTS = [
     test_branch_closed_set_from_config,
     test_branch_covers_behaviours,
@@ -459,8 +585,12 @@ TESTS = [
     test_context_sets_defined,
     test_context_set_filter_and_cost,
     test_emitted_tags_and_nodes_are_registered,
+    test_route_nodes_written_once,
     test_branch_text,
     test_feedback_reason_enum,
+    test_step_keys_registered,
+    test_operation_keyphrase_coverage,
+    test_operation_multi_hit_winner,
 ]
 
 

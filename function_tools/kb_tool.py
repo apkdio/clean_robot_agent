@@ -4,7 +4,7 @@
 召回仍走既有的 HybridRetriever（双路 + RRF + 精排 + 阈值 + 域定向二次召回），工具不另开一套
 ——两套索引/阈值会各说各话。
 
-设计见 notes/OPTIMIZATION_ROADMAP.md 的 P1-5 §10：模型只负责「选工具 + 选域 + 给检索式」。
+设计见 notes/project_detail.md §4.9：模型只负责「选工具 + 选域 + 给检索式」。
 
 query_summarization 是改写的落点：编排上线后改写搭检索这趟车（同一次调用里出结果），
 所以不再有独立的改写工具 / 改写层；编排关闭时改写仍由 agent 侧的规则层 _rewrite_query 负责。

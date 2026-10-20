@@ -308,8 +308,13 @@ def chat_stream():
                     stopped = True
             except Exception as e:
                 # 错误走独立帧 + 不落盘：错误文案若当正常回答 append，
-                # 下一轮 LLM 会把「错误: 生成失败」当客服回答、标题也会被污染
+                # 下一轮 LLM 会把「错误: 生成失败」当客服回答、标题也会被污染。
+                # user 消息要回滚：否则上下文留下"问了没答"的孤立提问（与停止同语义）。
                 logger.error(f"[Stream] {e}")
+                try:
+                    rollback_last_user_message(session_id)
+                except Exception as rb:  # noqa: BLE001
+                    logger.warning(f"[Stream] rollback on error failed: {rb}")
                 yield f"event: error\ndata: {json.dumps('生成失败，请重试', ensure_ascii=False)}\n\n"
                 yield "data: [DONE]\n\n"
                 completed = True

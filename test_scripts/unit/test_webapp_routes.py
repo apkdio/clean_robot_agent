@@ -123,6 +123,32 @@ def test_ingest_rejects_and_busy():
         release()
 
 
+def test_stream_error_rolls_back_user_message():
+    """生成异常要把这条 user 回滚掉：否则上下文留下"问了没答"的孤立提问，
+    下一轮 LLM 会把孤立提问当成待回答的问题（与停止同语义：这一轮没发生）。"""
+    import webapp.app as wa
+    from tools.context_store import delete_session, get_recent
+
+    sid = "aaaaaaaa-1111-2222-3333-444444444444"
+    delete_session(sid)
+    saved = wa.ask_stream
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+        yield  # noqa: 保持生成器形态
+
+    wa.ask_stream = boom
+    try:
+        r = _client().post("/api/chat/stream", json={"query": "边刷多久换一次", "session_id": sid})
+        body = r.get_data(as_text=True)
+        _assert_in("event: error", body, "错误走独立帧")
+        users = [m for m in get_recent(sid, n=1000) if m.get("role") == "user"]
+        _assert_eq(len(users), 0, "错误轮不留在上下文")
+    finally:
+        wa.ask_stream = saved
+        delete_session(sid)
+
+
 TESTS = [
     test_index_and_config,
     test_sessions_list_and_invalid_sid,
@@ -130,6 +156,7 @@ TESTS = [
     test_feedback_validation,
     test_stop_and_stream_rejects,
     test_ingest_rejects_and_busy,
+    test_stream_error_rolls_back_user_message,
 ]
 
 

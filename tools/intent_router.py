@@ -35,6 +35,35 @@ def _get_emb():
     return _emb
 
 
+_QUERY_VEC_CACHE = {}          # query → 向量（意图分类与操作打分共用，同一条 query 只 embed 一次）
+_QUERY_VEC_SIZE = 128
+
+
+def get_query_embedding(query: str):
+    """query 的 bge-m3 向量；不可用返回 None（调用方显式降级）。
+
+    与意图分类走同一个 embed_documents 路径；同一条 query 在本进程内只算一次
+    ——操作判别复用它，不给每轮多加一次 embedding。
+    """
+    global _emb_failed_logged
+    if query in _QUERY_VEC_CACHE:
+        return _QUERY_VEC_CACHE[query]
+    try:
+        vec = _get_emb().embed_documents([query])[0]
+    except Exception as e:  # noqa: BLE001
+        if not _emb_failed_logged:
+            logger.warning("[IntentRouter] query embedding 不可用，操作打分退化为 BM25：%s", e)
+            _emb_failed_logged = True
+        return None
+    if len(_QUERY_VEC_CACHE) >= _QUERY_VEC_SIZE:
+        _QUERY_VEC_CACHE.clear()
+    _QUERY_VEC_CACHE[query] = vec
+    return vec
+
+
+_emb_failed_logged = False
+
+
 # 软引导话术（_GUESS_HINTS）见 config/word_dict_config.py
 
 
@@ -91,8 +120,10 @@ def route_intent_with_margin(query: str) -> tuple[str, float]:
 
         emb = _get_emb()
         # 用 embed_documents（与训练同一条路径）而非 embed_query，
-        # 保证训练与推理的 embedding 一致。
-        vec = emb.embed_documents([query])[0]
+        # 保证训练与推理的 embedding 一致；向量走缓存，操作判别直接复用。
+        vec = get_query_embedding(query)
+        if vec is None:
+            return "unknown", 0.0
         x = torch.tensor(np.array([vec], dtype=np.float32))
         with torch.no_grad():
             probs = torch.softmax(head(x), dim=1)[0]

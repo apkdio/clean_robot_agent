@@ -1,4 +1,4 @@
-"""工具注册：收敛「暴露给模型的工具」白名单（P1-5 编排层用）。
+"""工具注册：收敛「暴露给模型的工具」白名单（工具编排层用）。
 
 暴露面只 3 个：find_models（结构化直出）/ search_kb（检索）/ find_nearest_service_point（网点）。
 其余工具（extract_models / calc_date_range / extract_budget / classify_symptom）退成

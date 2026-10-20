@@ -66,8 +66,8 @@ def _cfg_int(key: str, default: int) -> int:
 
 
 def sop_ttl() -> int:
-    """SOP 会话状态过期秒数。"""
-    return _cfg_int("sop_ttl", 1800)
+    """SOP 会话状态过期秒数（滑动：每轮重盖）。"""
+    return _cfg_int("sop_ttl", 900)
 
 
 def lock_ttl() -> int:
@@ -78,9 +78,10 @@ def lock_ttl() -> int:
 def pending_ttl() -> int:
     """待确认状态（SOP 退出确认 / 进入确认门）的过期秒数。
 
-    默认与 sop_ttl 同值：pending 先过期而 SOP 还活着时，「是」会被当成槽位输入。
+    默认**跟随 sop_ttl**：pending 先过期而 SOP 还活着时，「是」会被当成槽位输入。
+    取同一个数就不必靠人记得同步（配置里显式给了才覆盖）。
     """
-    return _cfg_int("pending_ttl", 1800)
+    return _cfg_int("pending_ttl", sop_ttl())
 
 
 def json_dumps(obj) -> str:

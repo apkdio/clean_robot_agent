@@ -1,4 +1,4 @@
-"""多轮对话上下文评测：回放真实会话前缀 → 断言当前轮的出口行为（P0-3；评测集 data/eval/context/golden.jsonl）。
+"""多轮对话上下文评测：回放真实会话前缀 → 断言当前轮的出口行为（评测集 data/eval/context/golden.jsonl）。
 
 评测集 data/eval/context/golden.jsonl（本地数据，已 gitignore；从真实会话整理，
 结构与用法见同目录 README.md）。一行 = 一条标注（case），上下文按 session_id 现取。

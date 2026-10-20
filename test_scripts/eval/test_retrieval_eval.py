@@ -1,4 +1,4 @@
-"""检索质量评测：golden set + 核心指标（P1-1）。
+"""检索质量评测：golden set + 核心指标。
 
 评测集位于 data/eval/retrieval/（本地数据目录，已 gitignore，不随仓库发布）：
   - golden.jsonl：每条 {id, query, type, ...}，覆盖五类：
@@ -362,13 +362,17 @@ def _config_meta():
     pairs = [(rel, _file_sha256(os.path.join(_ROOT, rel)))
              for rel in _CONFIG_FILES if os.path.isfile(os.path.join(_ROOT, rel))]
     rag = load_config("rag")
+    ops = (load_config("agent") or {}).get("operations") or {}
     key = {"retrieval.score_threshold": rag["retrieval"]["score_threshold"],
            "retrieval.final_top_k": rag["retrieval"]["final_top_k"],
            "retrieval.domain_margin": rag["retrieval"].get("domain_margin", 0),
            "rerank.enabled": rag["rerank"]["enabled"],
            "rerank.score_threshold": rag["rerank"]["score_threshold"],
            "rerank.candidate_top_k": rag["rerank"]["candidate_top_k"],
-           "chunk.chunk_size": rag["chunk"]["chunk_size"]}
+           "chunk.chunk_size": rag["chunk"]["chunk_size"],
+           "operations.scoring": ops.get("scoring"),
+           "operations.floor": ops.get("floor"),
+           "operations.gap": ops.get("gap")}
     return {"files": [rel for rel, _ in pairs], "fingerprint": _digest(pairs), "key": key}
 
 
@@ -652,7 +656,7 @@ def run():
     _print_metrics(metrics)
     _print_index_warning()
 
-    # 回归护栏：严格领域外 query 应零召回（依赖 P0-1 阈值 + P0-2 精排）
+    # 回归护栏：严格领域外 query 应零召回（依赖稠密阈值 + 精排阈值）
     for q in strict_ood_fail:
         _assert(False, f"严格领域外应零召回: {q}")
     if not strict_ood_fail:

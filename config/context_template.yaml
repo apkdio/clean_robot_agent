@@ -1,7 +1,7 @@
 # 上下文承接与查询改写配置模板
 # 使用方式：复制本文件为 config/context.yaml 即可，无需额外改动。
 #
-# 对应设计：notes/OPTIMIZATION_ROADMAP.md 的「P0-3 详细设计」。
+# 对应设计：notes/project_detail.md 的 ADR-19（上下文承接与改写）。
 # 背景一句话：追问句（"那这个电流现象影响大吗"）的指代在上文，单看无信号会被
 # 意图分类头误判成领域外；这里配置"判不了"的判定阈值与读上文的策略。
 
@@ -39,7 +39,7 @@ context:
     enabled: true
     # rule      —— 只用规则改写（把余弦选中的历史轮拼到当前 query 前），零额外推理
     # rule+llm  —— 规则挑不出相关历史轮时，再用小模型（agent.yaml 的 small_model）改写
-    # 两者在效果上的差异需要在多轮评测集上对比（见路线图 P0-3 §6），不预设结论。
+    # 两者在效果上的差异需要在多轮评测集上对比（见 notes/project_detail.md ADR-19），不预设结论。
     # 注意：改写不单开「工具调用形态」——工具编排上线后，改写在 search_kb 的
     #       query_summarization 参数里搭检索这趟车完成。
     mode: rule

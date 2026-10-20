@@ -364,13 +364,119 @@ def test_history_block_excludes_current_query():
     _assert_not_in("滤网呢", block, "本轮这句不重复进历史")
 
 
+# ──────────────────────────────────────────────────────────────
+# 6. trace 语义：被停的轮记 aborted、重开 SOP 落节点
+# ──────────────────────────────────────────────────────────────
+
+def test_stopped_turn_marks_aborted():
+    """被停的轮必须记 aborted=true：_ask_stream 静默 return 时迭代是"正常结束"的，
+    只看循环是否抛异常会把停掉的轮记成 false，与 webapp 的回滚对不上。"""
+    import tools.agent as am
+
+    seen = {}
+    saved_ask, saved_end = am._ask_stream, am.trace_store.end_turn
+    am._ask_stream = lambda q, sid, lng=None, lat=None, retry=False, stop_check=None: iter(())
+    am.trace_store.end_turn = lambda aborted=False, reply="": seen.update(aborted=aborted)
+    try:
+        list(am.ask_stream("x", "t-abort", stop_check=lambda: True))
+        _assert(seen.get("aborted") is True, "被停的轮 → aborted=true")
+        seen.clear()
+        list(am.ask_stream("x", "t-abort", stop_check=lambda: False))
+        _assert(seen.get("aborted") is False, "正常轮仍为 false")
+    finally:
+        am._ask_stream, am.trace_store.end_turn = saved_ask, saved_end
+
+
+def test_reenter_sop_logs_node():
+    """「重新回答」重开 SOP 时要落 sop.reenter：否则这一轮在 path 里看不出是重答重开的。"""
+    import tools.agent as am
+    import tools.context_store as cs
+    from test_scripts import trace_reader
+    from tools import trace_store
+
+    sid, q = "t-reenter-node", "帮我推荐一款扫地机器人"
+    reset_trace(sid)
+    trace_store.begin_turn(sid, q)        # 第 1 轮（被重发的那轮）
+    trace_store.end_turn()
+    trace_store.begin_turn(sid, q)        # 第 2 轮（本轮 = 重答）
+
+    saved = (trace_store.find_turn, trace_store.latest_turn, trace_store.find_turn_by_index,
+             am._enter_sop, cs.get_last_sop)
+    trace_store.find_turn = lambda s, query: {"date": "2026-10-20", "turn_index": 1}
+    trace_store.latest_turn = lambda s: {"date": "2026-10-20", "turn_index": 1}
+    trace_store.find_turn_by_index = lambda s, d, i: {"sop": {"id": "purchase"}, "branch": "start_sop"}
+    am._enter_sop = lambda sid, sop_id, query, **kw: "您的预算大概是多少？"
+    cs.get_last_sop = lambda s: {"entry_query": q}
+    try:
+        taken, reply = am._reenter_sop_on_retry(sid, q)
+    finally:
+        (trace_store.find_turn, trace_store.latest_turn, trace_store.find_turn_by_index,
+         am._enter_sop, cs.get_last_sop) = saved
+    _assert(taken, "重开被接管")
+    _assert_in("预算", reply, "回到 SOP 第一步")
+    trace_store.end_turn()
+    rows = trace_reader.load(trace_store._path(sid))
+    nodes = [n.get("node") for n in ((rows[-1] if rows else {}).get("path") or [])]
+    _assert_in("sop.reenter", nodes, "path 里有 sop.reenter")
+    reset_trace(sid)
+
+
+def test_latest_turn_across_days():
+    """latest_turn 取「最后写入」而不是「当天最大 turn_index」——跨天后它是昨天那轮。"""
+    from tools import trace_store
+
+    sid = "t-cross-day"
+    reset_trace(sid)
+    saved = trace_store._today
+    try:
+        trace_store._today = lambda: "2026-10-19"
+        trace_store.begin_turn(sid, "昨天最后一轮")
+        trace_store.end_turn()
+        trace_store._today = lambda: "2026-10-20"
+        trace_store.begin_turn(sid, "今天第一轮")
+        trace_store.end_turn()
+    finally:
+        trace_store._today = saved
+    last = trace_store.latest_turn(sid)
+    _assert_eq(last.get("date"), "2026-10-20", "取最后写入的那天")
+    _assert_eq(last.get("query"), "今天第一轮", "取最后写入的那条")
+    reset_trace(sid)
+
+
+def test_reenter_across_days():
+    """跨天后「重新回答」仍能重开：判据是「上一轮就是被重发的那轮」，不是 turn_index 相差 1。"""
+    import tools.agent as am
+    import tools.context_store as cs
+    from tools import trace_store
+
+    sid, q = "t-reenter-cross", "帮我推荐一款扫地机器人"
+    reset_trace(sid)
+    trace_store.begin_turn(sid, q)                  # 当前轮
+    saved = (trace_store.latest_turn, trace_store.find_turn, trace_store.find_turn_by_index,
+             am._enter_sop, cs.get_last_sop)
+    trace_store.latest_turn = lambda s: {"date": "2026-10-19", "turn_index": 7}
+    trace_store.find_turn = lambda s, query: {"date": "2026-10-19", "turn_index": 7}
+    trace_store.find_turn_by_index = lambda s, d, i: {"sop": {"id": "purchase"}, "branch": "start_sop"}
+    am._enter_sop = lambda sid, sop_id, query, **kw: "您的预算大概是多少？"
+    cs.get_last_sop = lambda s: {"entry_query": q}
+    try:
+        taken, reply = am._reenter_sop_on_retry(sid, q)
+    finally:
+        (trace_store.latest_turn, trace_store.find_turn, trace_store.find_turn_by_index,
+         am._enter_sop, cs.get_last_sop) = saved
+        reset_trace(sid)
+    _assert(taken, "昨天最后一轮 + 今天重答 → 仍重开")
+    _assert_in("预算", reply, "回到 SOP 第一步")
+
+
 TESTS = [test_redis_missing_package_degrades, test_date_gate_needs_select_signal,
          test_upload_name_sanitized, test_build_dataset_writes_generated_not_dataset,
          test_intent_inference_failure_degrades, test_stream_generate_failure_falls_back,
          test_intent_head_builds_from_meta, test_embedding_source_unified,
          test_local_lock_has_ttl, test_stop_flag_has_ttl_local, test_dead_batch_endpoint_removed,
          test_retry_replaces_previous_turn, test_retry_without_matching_last_user_keeps_turns,
-         test_history_block_excludes_current_query]
+         test_history_block_excludes_current_query, test_stopped_turn_marks_aborted,
+         test_reenter_sop_logs_node, test_latest_turn_across_days, test_reenter_across_days]
 
 
 def run():

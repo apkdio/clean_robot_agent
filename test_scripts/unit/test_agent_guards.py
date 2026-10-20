@@ -27,6 +27,12 @@ def _reply(query):
     return "".join(ask_stream(query)).strip()
 
 
+def _reset_session(sid):
+    from tools.context_store import delete_session
+
+    delete_session(sid)
+
+
 # ──────────────────────────────────────────────────────────────
 # 1. 情绪识别
 # ──────────────────────────────────────────────────────────────
@@ -85,6 +91,101 @@ def test_enter_gate_decline_reuses_entry_query():
         _assert_in("预算", out, "按入口 query 走：强触发进选购 SOP、问预算")
     finally:
         ir.route_intent_with_margin = saved_intent
+        pending_store.clear(sid)
+        end_sop(sid)
+
+
+def test_enter_gate_decline_hint_truthful():
+    """拒绝引导后要告诉用户「怎么再进」，而且这句话必须是真的。
+
+    declined 之后就再也不会问确认门了，用户想走引导只能靠强触发——提示里举的例子
+    必须命中强触发、真能直接进流程；否则这句提示本身成了误导。
+    """
+    import tools.intent_router as ir
+    from config.word_dict_config import SOP_REENTER_HINT
+    from sops import end_sop
+    from tools import pending_store
+
+    sid = "t-decline-hint"
+    end_sop(sid)
+    pending_store.clear(sid)
+    saved_intent = ir.route_intent_with_margin
+    ir.route_intent_with_margin = lambda text: ("robot", 0.9)
+    try:
+        # 弱触发入口（带预算）→ 问门 → 答「不是」→ 走正常作答
+        pending_store.set(sid, "confirm_enter", sop="purchase", query="预算 3000 的扫地机器人")
+        out = "".join(ask_stream("不是", sid)).strip()
+        _assert_in(SOP_REENTER_HINT["purchase"], out, "拒绝后给出「怎么再进」的提示")
+        _assert_not_in("要走引导吗", out, "拒绝这一轮不再问门")
+
+        # 按提示说的强触发再说一次 → 直接进流程，不再问门
+        out2 = "".join(ask_stream("帮我推荐一款扫地机器人", sid)).strip()
+        _assert_in("预算", out2, "提示里的例子命中强触发 → 直接进选购流程")
+        _assert_not_in("要走引导吗", out2, "strong 触发不进确认门（拒绝标记只作用于弱触发）")
+    finally:
+        ir.route_intent_with_margin = saved_intent
+        pending_store.clear(sid)
+        end_sop(sid)
+
+
+def test_ops_clarify_roundtrip():
+    """判别器 ambiguous（分差 < gap）→ 问用户选 1/2 → 按选择重放，trace 记 override。"""
+    import tools.agent as am
+    import tools.operations as ops_mod
+    from sops import end_sop
+    from tools import pending_store, trace_store
+    from test_scripts import trace_reader
+
+    sid = "t-ops-clarify"
+    end_sop(sid)
+    pending_store.clear(sid)
+    _reset_session(sid)
+    saved = ops_mod.score_all
+    # 两个候选都在 floor 之上、分差 0.05 < gap（配置 0.10）→ ambiguous；两者实际动作不同（追问 vs 发布时间）
+    ops_mod.score_all = lambda q: ({"followup": 1.60, "date": 1.55}, "ok")
+    q = "有没有以旧换新的服务，最近想换一个机器人了"
+    try:
+        first = "".join(ask_stream(q, sid)).strip()
+        _assert_in("您是想问", first, "分差过近 → 先问用户")
+        pend = pending_store.get(sid) or {}
+        _assert_eq(pend.get("kind"), "ops_clarify", "落待确认（复用 pending 链路）")
+        _assert_eq(pend.get("query"), q, "待确认里存原问题")
+
+        trace_store.begin_turn(sid, "1")          # 第二轮的 trace 锚点
+        trace_store.end_turn()
+        "".join(ask_stream("1", sid)).strip()     # 选 1 = followup
+        rows = trace_reader.load(trace_store._path(sid))
+        last = rows[-1]
+        got = (last.get("route") or {}).get("ops") or {}
+        _assert_eq(got.get("override"), "followup", "按选择重放：override 记为 followup")
+        nodes = [n for n in (last.get("path") or []) if n.get("node") == "ops.clarify"]
+        _assert(nodes and (nodes[-1].get("out") or {}).get("pick") == "followup", "clarify 节点记下选择")
+        _assert(pending_store.get(sid) is None, "选完即清待确认")
+    finally:
+        ops_mod.score_all = saved
+        pending_store.clear(sid)
+        end_sop(sid)
+
+
+def test_ops_clarify_only_when_close():
+    """分差够大（不是 ambiguous）时不问用户，直接按分数派发。"""
+    import tools.operations as ops_mod
+    from sops import end_sop
+    from tools import pending_store
+
+    sid = "t-ops-noclarify"
+    end_sop(sid)
+    pending_store.clear(sid)
+    _reset_session(sid)
+    saved = ops_mod.score_all
+    ops_mod.score_all = lambda q: ({"service_point": 2.50, "sop": 0.60}, "ok")
+    try:
+        out = "".join(ask_stream("离我最近的维修点", sid)).strip()
+        _assert_not_in("您是想问", out, "分差够大 → 不澄清")
+        _assert(pending_store.get(sid) is None, "没有待确认")
+        _assert_in("城市", out, "service_point 接管（进网点 SOP 问城市）")
+    finally:
+        ops_mod.score_all = saved
         pending_store.clear(sid)
         end_sop(sid)
 
@@ -294,6 +395,9 @@ TESTS = [
     test_refuse_only_when_out_of_domain,
     test_retrieved_inject_chunks_dropped,
     test_enter_gate_decline_reuses_entry_query,
+    test_enter_gate_decline_hint_truthful,
+    test_ops_clarify_roundtrip,
+    test_ops_clarify_only_when_close,
 ]
 
 

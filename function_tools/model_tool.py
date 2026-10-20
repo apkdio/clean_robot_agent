@@ -103,7 +103,7 @@ def model_name_in_query(query: str) -> bool:
     return False
 
 
-# ── find_models：一次调用填完所有结构化约束（P1-5 的工具形态）───────────────
+# ── find_models：一次调用填完所有结构化约束（工具编排形态）───────────────
 # 与 extract_models（只提取型号名）不同，这个工具承担"型号筛选 + 排序 + 枚举直出"，
 # 参数名与知识库结构化元数据对齐：金额 → min_price/max_price，发布区间 → publish_date，
 # 参数 → param_<键>（由 extract_spec_metadata 通用解析出来，新增规格键不用改代码）。

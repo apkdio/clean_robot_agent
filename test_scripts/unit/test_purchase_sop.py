@@ -315,7 +315,7 @@ def test_local_session_expires_without_redis():
         sops.base.start_sop("s1", "sop_unit_test", "")
         _assert(sops.base.has_active_sop("s1"), "刚写的降级态可用")
         _assert("ts" in sops.base._sessions["s1"], "降级态带 ts（Redis 路径不带）")
-        sops.base._sessions["s1"]["ts"] = time.time() - 100000      # 手动拨旧（sop_ttl=1800）
+        sops.base._sessions["s1"]["ts"] = time.time() - 100000      # 手动拨旧（sop_ttl=900）
         _assert(not sops.base.has_active_sop("s1"), "超过 sop_ttl → 作废")
         _assert_eq(sops.base._load_session("s1"), None, "降级态那份也删了")
     finally:

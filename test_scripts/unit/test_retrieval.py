@@ -216,7 +216,7 @@ def test_split_numbered_entries():
 
 
 # ──────────────────────────────────────────────────────────────
-# 8. 融合侧兜底：丢弃无稠密支撑的候选（P0-1）
+# 8. 融合侧兜底：丢弃无稠密支撑的候选
 # ──────────────────────────────────────────────────────────────
 
 def test_drop_without_dense_support():
@@ -233,7 +233,7 @@ def test_drop_without_dense_support():
 
 
 # ──────────────────────────────────────────────────────────────
-# 9. 精排模块的降级契约（P0-2）
+# 9. 精排模块的降级契约
 # ──────────────────────────────────────────────────────────────
 
 def test_reranker_unavailable_returns_none():
@@ -290,7 +290,7 @@ def test_hybrid_domain_filter_e2e():
 
 @e2e("阈值/精排端到端需要 Ollama + Chroma 数据")
 def test_score_threshold_filters_out_of_domain_e2e():
-    """P0-1 验收：领域外 query 召回应为 0 或显著减少，领域内不受影响。"""
+    """稠密阈值验收：领域外 query 召回应为 0 或显著减少，领域内不受影响。"""
     from tools.hybrid_retriever import HybridRetriever
     hr = HybridRetriever()
     hr.ensure_sparse_index()
