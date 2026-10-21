@@ -11,6 +11,8 @@ import os
 import random
 import re
 import time
+from dataclasses import dataclass
+from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -27,6 +29,7 @@ from config.word_dict_config import (
     BLOCK_INJECT_REPLY as _BLOCK_INJECT_REPLY,
     DATE_SELECT_HINT_RE as _DATE_SELECT_HINT_RE,
     ENTER_CONFIRM as _ENTER_CONFIRM,
+    CLARIFY_GUESS as _CLARIFY_GUESS,
     EXIT_CONFIRM as _EXIT_CONFIRM,
     INJECT_RE as _INJECT_RE,
     OPERATION_LABELS as _OPERATION_LABELS,
@@ -191,9 +194,9 @@ def _match_op_choice(text: str, options: list):
     t = _CONFIRM_CLEAN_RE.sub("", text or "")
     if not t:
         return None
-    m = re.match(r"^(?:选|第)?([1-9])(?:个|项|号)?$", t)
+    m = re.match(r"^[选第]?([1-9])[个项号]?$", t)
     if not m:
-        m = re.match(r"^(?:选|第)?([一两二三])(?:个|项|号)?$", t)
+        m = re.match(r"^[选第]?([一两二三])[个项号]?$", t)
         if m:
             idx = _CN_NUM.get(m.group(1))
             return options[idx - 1] if idx and idx <= len(options) else None
@@ -441,7 +444,8 @@ def _llm_rewrite(query: str, history_block: str) -> str | None:
     return _validate_rewrite(out, query, history_block, max_chars)
 
 
-def _rewrite_query(session_id: str, query: str) -> tuple[str, str]:
+def _rewrite_query(session_id: str, query: str) -> tuple[str, Literal["none"]] | tuple[str, Literal["rule"]] | tuple[
+    str | None, Literal["llm"]]:
     """把依赖上文的追问改写成自足 query，返回 (effective_query, via)。
     """
     cfg = _rewrite_cfg()
@@ -624,11 +628,208 @@ def _reenter_sop_on_retry(session_id: str, query: str) -> tuple:
     # 弱触发与强触发都要留痕：否则这一轮在 path 里看不出"是重答重开的"
     trace_store.node("sop.reenter", in_={"sop": sop_id, "entry": entry[:40]})
     if sop_needs_enter_confirm(sop_id, entry):
-        pending_store.set(session_id, "confirm_enter", sop=sop_id, query=entry)
-        trace_store.node("sop.pending", in_={"kind": "confirm_enter", "retry": True, "entry": entry[:40]})
+        _open_clarify(session_id, pending_store.BIZ_SOP_ENTER,
+                      state={"sop": sop_id, "entry": entry},
+                      trace_in={"sop": sop_id, "via": "retry", "entry": entry[:40]})
         _log_behavior("ask_clarify", kind="confirm_enter", via="retry")
         return True, _ENTER_CONFIRM.format(sop=_sop_name(sop_id))
     return True, _enter_sop(session_id, sop_id, entry, via="retry")
+
+
+# ── 澄清业务处理器 ──────────────────────────────────────────────
+# pending_store 只管状态；这里按 biz 认领并执行各自的业务。
+# 统一返回 ClarifyResult：kind 是闭集，载荷字段再多也不增加主链分支。
+
+CLARIFY_DONE = "done"        # 输出话术并结束本轮
+CLARIFY_RESUME = "resume"    # 先输出前缀（可选），再按 query / prefer 继续主链
+CLARIFY_DROP = "drop"        # 状态作废，按当前 query 继续
+_CLARIFY_KINDS = (CLARIFY_DONE, CLARIFY_RESUME, CLARIFY_DROP)
+
+
+@dataclass(frozen=True)
+class ClarifyResult:
+    """澄清处理器的标准返回体：状态码 + 载荷（字段按 kind 取用）。"""
+
+    kind: str
+    reply: str = ""
+    prefix: str = ""
+    query: str | None = None
+    prefer_op: str | None = None
+    enter_declined: bool = False
+
+    def __post_init__(self):
+        if self.kind not in _CLARIFY_KINDS:
+            raise ValueError("clarify kind 不在闭集内：%r" % self.kind)
+        if self.kind == CLARIFY_DONE and not self.reply:
+            raise ValueError("clarify done 必须带 reply")
+        if self.kind == CLARIFY_RESUME and not self.query:
+            raise ValueError("clarify resume 必须带 query")
+
+    @classmethod
+    def done(cls, reply: str) -> "ClarifyResult":
+        return cls(CLARIFY_DONE, reply=reply)
+
+    @classmethod
+    def resume(cls, query: str, prefix: str = "", prefer_op: str = None,
+               enter_declined: bool = False) -> "ClarifyResult":
+        return cls(CLARIFY_RESUME, prefix=prefix, query=query,
+                   prefer_op=prefer_op, enter_declined=enter_declined)
+
+    @classmethod
+    def drop(cls) -> "ClarifyResult":
+        return cls(CLARIFY_DROP)
+
+
+def _clarify_sop_exit(session_id: str, rec: dict, query: str, q: str) -> ClarifyResult:
+    """SOP 退出确认门：答「是」退出，「不是」继续。"""
+    from sops import end_sop, get_active_sop_id, get_sop_state, has_active_sop
+
+    rec = pending_store.take(session_id, pending_store.BIZ_SOP_EXIT)
+    if not rec:
+        return ClarifyResult.drop()
+    if not has_active_sop(session_id):
+        pending_store.close(session_id, pending_store.BIZ_SOP_EXIT)
+        logger.info("[Clarify] sop.exit 但无活跃 SOP，作废 session=%s", session_id)
+        return ClarifyResult.drop()
+
+    st = rec.get("state") or {}
+    cur = get_sop_state(session_id)
+    if st.get("step") is not None and cur.get("step") != st.get("step"):
+        # 开澄清时记的进度与当前不一致：期间被人推进过，这个「是/不是」不该再套用
+        pending_store.close(session_id, pending_store.BIZ_SOP_EXIT)
+        logger.warning("[Clarify] sop.exit 状态已变化（step %s → %s），作废",
+                       st.get("step"), cur.get("step"))
+        return ClarifyResult.drop()
+
+    sop_id = st.get("sop_id") or get_active_sop_id(session_id)
+    sop_name = _sop_name(sop_id)
+    trace_store.node("sop.active", status="hit", in_={"sop": sop_id})
+    _note_sop(session_id, sop_id)
+
+    ans = _match_yes_no(q)
+    retry = int(rec.get("retry") or 0)
+    if ans is False:
+        pending_store.close(session_id, pending_store.BIZ_SOP_EXIT)
+        _log_behavior("sop_step", via="confirm_no")
+        return ClarifyResult.done("好的，那我们继续刚才的话题～")
+    if ans is True or retry >= 1:
+        pending_store.close(session_id, pending_store.BIZ_SOP_EXIT)
+        end_sop(session_id)
+        _log_behavior("exit_sop", via="confirm" if ans is True else "confirm_timeout")
+        if ans is True:
+            return ClarifyResult.done(f"好的，已退出「{sop_name}」环节～")
+        # 两次都没踩中「是/不是」→ 直接退出，不对这一句做二次意图理解
+        return ClarifyResult.done(f"好的，已退出「{sop_name}」环节～有新的问题可以直接问我。")
+    pending_store.bump(session_id, pending_store.BIZ_SOP_EXIT)
+    _log_behavior("ask_clarify", kind="confirm_exit_retry")
+    return ClarifyResult.done(_EXIT_CONFIRM.format(sop=sop_name))
+
+
+def _clarify_sop_enter(session_id: str, rec: dict, query: str, q: str) -> ClarifyResult:
+    """SOP 进入确认门：答「是」进引导，「不是」恢复原句直接作答。"""
+    from sops import SOPS, has_active_sop
+    from tools.context_store import set_enter_declined
+
+    rec = pending_store.take(session_id, pending_store.BIZ_SOP_ENTER)
+    if not rec:
+        return ClarifyResult.drop()
+    st = rec.get("state") or {}
+    sop_id = st.get("sop") or "purchase"
+    if sop_id not in SOPS:
+        pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
+        logger.warning("[Clarify] 待确认里的 SOP 已不存在，作废：%s", sop_id)
+        return ClarifyResult.drop()
+    if has_active_sop(session_id):
+        # 进入门还在待答、SOP 却已活跃：以活跃 SOP 为准，别让这句「是」再开一次
+        pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
+        logger.warning("[Clarify] sop.enter 但已有活跃 SOP，作废 session=%s", session_id)
+        return ClarifyResult.drop()
+
+    entry = st.get("entry") or query
+    ans = _match_yes_no(query, gate="enter")
+    retry = int(rec.get("retry") or 0)
+    # 这一轮只答「是/不是」，真正要处理的入口 query 存在澄清状态里——落 trace 才追得回去
+    trace_store.node("sop.enter_gate",
+                     in_={"answer": query[:40], "entry": entry[:40]},
+                     out={"decision": {True: "yes", False: "no"}.get(ans, "unknown")})
+    if ans is True:
+        pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
+        reply = _enter_sop(session_id, sop_id, entry, via="confirm_enter")
+        return ClarifyResult.done(reply or _SOP_ENTER_FAILED_REPLY)
+    if ans is False or retry >= 1:
+        pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
+        enter_declined_turn = False
+        if sop_id != "repair":
+            set_enter_declined(session_id, sop_id=sop_id)
+        else:
+            # 维修不记拒绝：那句可能只是问渠道，下次提故障还得能进排查
+            enter_declined_turn = True
+        logger.info("[SOP] enter declined: %s", sop_id)
+        return ClarifyResult.resume(
+            entry,
+            prefix=_SOP_REENTER_HINT.get(sop_id, _SOP_REENTER_HINT_DEFAULT) + "\n\n",
+            enter_declined=enter_declined_turn)
+    pending_store.bump(session_id, pending_store.BIZ_SOP_ENTER)
+    _log_behavior("ask_clarify", kind="confirm_enter_retry")
+    return ClarifyResult.done(_ENTER_CONFIRM.format(sop=_sop_name(sop_id)))
+
+
+def _clarify_ops(session_id: str, rec: dict, query: str, q: str) -> ClarifyResult:
+    """操作澄清：答 1/2（或操作别名）按选择重放；两次认不出取 top1。"""
+    rec = pending_store.take(session_id, pending_store.BIZ_OPS_CLARIFY)
+    if not rec:
+        return ClarifyResult.drop()
+    st = rec.get("state") or {}
+    opts = list((rec.get("data") or {}).get("options") or [])
+    retry = int(rec.get("retry") or 0)
+
+    def _label(op):
+        return (_OPERATION_LABELS.get(op) or (op,))[0]
+
+    pick = _match_op_choice(query, opts)
+    if pick:
+        pending_store.close(session_id, pending_store.BIZ_OPS_CLARIFY)
+        trace_store.node("ops.clarify",
+                         in_={"top1": opts[0], "top2": opts[1] if len(opts) > 1 else "-"},
+                         out={"pick": pick})
+        return ClarifyResult.resume(st.get("query") or query, prefer_op=pick)
+    if retry >= 1:
+        # 两次认不出：说明按哪个继续，再取 top1；prefer 同时压掉 note_ops 的二次判歧义
+        pending_store.close(session_id, pending_store.BIZ_OPS_CLARIFY)
+        trace_store.node("ops.clarify", status="miss",
+                         in_={"top1": opts[0] if opts else "-"},
+                         out={"pick": opts[0] if opts else "-"})
+        return ClarifyResult.resume(
+            st.get("query") or query,
+            prefix=_CLARIFY_GUESS.format(a=_label(opts[0])) + "\n\n" if opts else "",
+            prefer_op=opts[0] if opts else None)
+    pending_store.bump(session_id, pending_store.BIZ_OPS_CLARIFY)
+    _log_behavior("ask_clarify", kind="ops_clarify_retry")
+    return ClarifyResult.done(_OPS_CLARIFY_RETRY.format(
+        a=_label(opts[0]) if opts else "-",
+        b=_label(opts[1]) if len(opts) > 1 else "-"))
+
+
+_CLARIFY_HANDLERS = {
+    pending_store.BIZ_SOP_EXIT: _clarify_sop_exit,
+    pending_store.BIZ_SOP_ENTER: _clarify_sop_enter,
+    pending_store.BIZ_OPS_CLARIFY: _clarify_ops,
+}
+
+
+def _open_clarify(session_id: str, biz: str, state: dict = None,
+                  trace_in: dict = None, **data) -> dict:
+    """开澄清并落统一节点：提问轮能追到「开了哪个澄清、覆盖了谁的」。"""
+    prev = pending_store.peek(session_id)
+    rec = pending_store.ask(session_id, biz, state=state, **data)
+    opts = data.get("options") or []
+    facts = {"biz": biz, "retry": int(rec.get("retry") or 0),
+             "options": "/".join(opts) if opts else "-"}
+    if trace_in:
+        facts.update(trace_in)
+    trace_store.node("clarify.open", in_=facts,
+                     out={"replaces": (prev or {}).get("biz") or "-"})
+    return rec
 
 
 def _stream_with_fallback(messages: list, temperature: float = 0.3, stop_check=None):
@@ -791,7 +992,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
         # 已升级为停机 + 联系售后，继续故障排查流程自相矛盾 → 结束 SOP 及其待答子状态
         from sops import end_sop
         end_sop(session_id)
-        pending_store.clear(session_id)
+        pending_store.close(session_id)
         _log_behavior("stop_use_safety", word=danger_hit)
         yield ("请立即停止使用机器人并断开电源！涉及冒烟/烧焦/进水等安全风险，"
                "不要自行拆机或继续充电，请马上联系官方售后（400-860-1314）处理。")
@@ -815,72 +1016,82 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
     if _normalize_enabled():
         trace_store.step("rewrite", normalize={"changed": q != query, "text": q[:120]})
 
-    # SOP 会话：有活跃 SOP 时继续该流程（不经过意图路由）
+    # 统一澄清链路：进入/退出确认、操作澄清共用 pending_store，状态按业务 id 隔离。
+    # 这里只按 biz 分派给业务处理器；pending_store 不解析回答、不做业务判断。
     from sops import (has_active_sop, continue_sop, end_sop, match_sop,
-                      get_active_sop_id, sop_needs_enter_confirm)
-    from tools.context_store import is_enter_declined, set_enter_declined
+                      get_active_sop_id, get_sop_state, sop_needs_enter_confirm)
+    from tools.context_store import is_enter_declined
     enter_declined_turn = False  # 本轮刚拒过进入引导：只跳过本轮这道门，不记进会话（下次泛问还要能问）
     prefer_op = None             # 操作澄清选中的操作：本轮派发把它顶到最前
+    pending = pending_store.peek(session_id)
+    if pending:
+        biz = pending.get("biz") or "-"
+        trace_store.node("clarify", in_={"biz": biz, "retry": int(pending.get("retry") or 0)})
+        handler = _CLARIFY_HANDLERS.get(biz)
+        if handler is None:
+            logger.warning("[Clarify] 未登记的业务 %r，退出澄清", biz)
+            pending_store.close(session_id)
+        else:
+            result = handler(session_id, pending, query, q)
+            if result.kind == CLARIFY_DONE:
+                yield result.reply
+                return
+            if result.kind == CLARIFY_RESUME:
+                if result.prefix:
+                    yield result.prefix
+                if result.enter_declined:
+                    enter_declined_turn = True
+                if result.prefer_op:
+                    prefer_op = result.prefer_op
+                if result.query != query:
+                    query = result.query
+                    clean = query
+                    # 恢复成原问题后必须重算归一化，否则意图分类 / SOP 触发 / 检索仍用被否掉那句
+                    if _normalize_enabled():
+                        from tools.query_normalizer import normalize
+                        q = normalize(query)
+                        trace_store.step("rewrite", normalize={"changed": q != query, "text": q[:120]})
+                    else:
+                        q = query
+            # CLARIFY_DROP：状态作废，按当前 query 继续
+
+    # SOP 会话：有活跃 SOP 时继续该流程（不经过意图路由）
     if has_active_sop(session_id):
         sop_id = get_active_sop_id(session_id)
         sop_name = _sop_name(sop_id)
         trace_store.node("sop.active", status="hit", in_={"sop": sop_id})
         _note_sop(session_id, sop_id)
-        # 状态A：退出确认门 —— 上一轮问了「是要退出「X」环节吗」
-        pending = pending_store.get(session_id)
-        if pending and pending.get("kind") == "confirm_exit":
-            ans = _match_yes_no(q)
-            retry = int(pending.get("retry") or 0)
-            if ans is False:
-                pending_store.clear(session_id)
-                _log_behavior("sop_step", via="confirm_no")
-                yield "好的，那我们继续刚才的话题～"
-                return
-            if ans is True or retry >= 1:
-                pending_store.clear(session_id)
-                end_sop(session_id)
-                _log_behavior("exit_sop", via="confirm" if ans is True else "confirm_timeout")
-                if ans is True:
-                    # 答「是」→ 退出，这一句本身没有别的诉求
-                    yield f"好的，已退出「{sop_name}」环节～"
-                    return
-                # 两次都没踩中「是/不是」→ 直接退出，不对这一句做二次意图理解
-                # （已明确提示过回复「是/不是」；用户真有需求会重新说，避免"退出后又被系统自作主张处理一遍"）
-                yield f"好的，已退出「{sop_name}」环节～有新的问题可以直接问我。"
-                return
-            else:
-                # 第一次没踩中「是 / 不是」→ 再问一次
-                pending_store.bump_retry(session_id)
-                _log_behavior("ask_clarify", kind="confirm_exit_retry")
-                yield _EXIT_CONFIRM.format(sop=sop_name)
-                return
 
-        # 状态B：「0」是 SOP 开场语里承诺的退出方式 → 直接退出，不再确认
-        elif q.strip() == "0":
-            pending_store.clear(session_id)
+        # 状态A：「0」是 SOP 开场语里承诺的退出方式 → 直接退出，不再确认
+        if q.strip() == "0":
+            pending_store.close(session_id)
             end_sop(session_id)
             _log_behavior("exit_sop", via="zero")
             yield f"好的，已退出「{sop_name}」环节～"
             return
 
-        # 状态C：退出/纠正词或纯符号 -> 退出 or 确认门
+        # 状态B：退出/纠正词或纯符号 -> 退出 or 退出确认门
         elif any(w in q for w in EXIT_WORDS) or _is_symbols_only(q):
             symbols_only = _is_symbols_only(q)
             if not symbols_only and _has_residual_request(q):
-                pending_store.clear(session_id)
+                pending_store.close(session_id)
                 end_sop(session_id)
                 _log_behavior("exit_sop", via="exit_word_with_request")
                 yield f"好的，已退出「{sop_name}」环节～"
                 # 带诉求的退出句：退出后继续往下走，重新理解这一句
             else:
-                # 纯退出词 / 纯符号 → 退出确认门
-                pending_store.set(session_id, "confirm_exit", sop_id=sop_id, retry=0)
+                # 纯退出词 / 纯符号 → 退出确认门；把当前进度一并存下，回来时好核对
+                st = get_sop_state(session_id)
+                _open_clarify(session_id, pending_store.BIZ_SOP_EXIT,
+                              state={"sop_id": sop_id, "step": st.get("step"),
+                                     "slots": st.get("slots") or {}},
+                              trace_in={"sop": sop_id, "step": st.get("step")})
                 _log_behavior("ask_clarify",
                               kind="confirm_exit_symbols" if symbols_only else "confirm_exit")
                 yield _EXIT_CONFIRM.format(sop=sop_name)
                 return
 
-        # 状态D：正常继续 SOP
+        # 状态C：正常继续 SOP
         else:
             result = continue_sop(session_id, query)
             if result is not None:
@@ -890,106 +1101,6 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
                     _log_behavior("sop_step")
                     yield reply
                 return
-
-    pending = pending_store.get(session_id)
-    if pending:
-        trace_store.node("sop.pending", in_={"kind": pending.get("kind")})
-        # 待确认里记的 SOP 已被改名/删掉（代码更新过）→ 作废这次待确认，这一句按普通提问继续
-        if pending.get("kind") == "confirm_enter":
-            from sops import SOPS
-            # 仅判断SOP_id是否还在SOP列表
-            if (pending.get("sop") or "purchase") not in SOPS:
-                logger.warning("[SOP] 待确认里的 SOP 已不存在，作废：%s", pending.get("sop"))
-                pending_store.clear(session_id)
-                pending = None
-
-    # 操作澄清：上一轮"管线操作只险胜具体操作"，这一轮等用户选 1 / 2
-    if pending and pending.get("kind") == "ops_clarify":
-        opts = list(pending.get("options") or [])
-        retry = int(pending.get("retry") or 0)
-
-        def _label(op):
-            return (_OPERATION_LABELS.get(op) or (op,))[0]
-
-        def _restore(entry_query):
-            """把这一轮换回原问题，并重算归一化文本（与进入门拒绝同口径）。"""
-            nonlocal query, clean, q
-            query = entry_query or query
-            clean = query
-            if _normalize_enabled():
-                from tools.query_normalizer import normalize
-                clean = normalize(query)
-            q = clean
-
-        pick = _match_op_choice(query, opts)
-        if pick:
-            pending_store.clear(session_id)
-            trace_store.node("ops.clarify",
-                             in_={"top1": opts[0], "top2": opts[1] if len(opts) > 1 else "-"},
-                             out={"pick": pick})
-            _restore(pending.get("query"))
-            prefer_op = pick
-        elif retry >= 1:
-            # 两次认不出：按 top1 走（管线 = 不猜具体操作），不再纠缠
-            pending_store.clear(session_id)
-            trace_store.node("ops.clarify", status="miss",
-                             in_={"top1": opts[0] if opts else "-"},
-                             out={"pick": opts[0] if opts else "-"})
-            _restore(pending.get("query"))
-        else:
-            pending_store.bump_retry(session_id)
-            _log_behavior("ask_clarify", kind="ops_clarify_retry")
-            yield _OPS_CLARIFY_RETRY.format(a=_label(opts[0]),
-                                            b=_label(opts[1]) if len(opts) > 1 else "-")
-            return
-
-    # 进入侧确认门：上一轮问了「要不要走一遍引导」，这一轮等「是 / 不是」
-    if pending and pending.get("kind") == "confirm_enter":
-        ans = _match_yes_no(query, gate="enter")
-        retry = int(pending.get("retry") or 0)
-        sop_id = pending.get("sop") or "purchase"
-        sop_name = _sop_name(sop_id)
-        entry = pending.get("query") or query
-        # 这一轮只答「是/不是」，真正被处理的入口 query 存在待确认里——落 trace 才追得回去
-        trace_store.node("sop.enter_gate",
-                         in_={"answer": query[:40], "entry": entry[:40]},
-                         out={"decision": {True: "yes", False: "no"}.get(ans, "unknown")})
-        if ans is True:
-            pending_store.clear(session_id)
-            # 用当初那句弱触发 query 预填首槽，用户已经说过的信息不重复问
-            reply = _enter_sop(session_id, sop_id, entry, via="confirm_enter")
-            yield reply or _SOP_ENTER_FAILED_REPLY
-            return
-        if ans is False or retry >= 1:
-            pending_store.clear(session_id)
-            if sop_id != "repair":
-                set_enter_declined(session_id, sop_id=sop_id)
-            else:
-                # 维修不记拒绝：那句可能只是问渠道，下次提故障还得能进排查
-                enter_declined_turn = True
-            logger.info("[SOP] enter declined: %s", sop_id)
-            # 补一句「之后怎么再进」：declined 之后同类弱触发不再问门，用户想走引导时得知道怎么说
-            # （提示里的例子是强触发，见 word_dict_config::SOP_REENTER_HINT 的约定）
-            yield _SOP_REENTER_HINT.get(sop_id, _SOP_REENTER_HINT_DEFAULT) + "\n\n"
-            # 答「不是」= 不进引导、直接回答：系统问的是「是/不是」，这一句本身没有信息量，
-            # 所以要恢复成当初那句弱触发 query 再走正常链路
-            restore_query = pending.get("query") or query
-            if restore_query != query:
-                query = restore_query
-                # q 是入口按「不是」算的归一化，换回入口 query 后必须重算，
-                # 否则意图分类 / SOP 触发 / 检索仍用被否掉那句的文本
-                if _normalize_enabled():
-                    from tools.query_normalizer import normalize
-                    q = normalize(query)
-                    # 开关关闭时不写 normalize：那里没有"归一化"这件事，写了会被读成"跑过但没改"
-                    trace_store.step("rewrite", normalize={"changed": q != query, "text": q[:120]})
-                else:
-                    q = query
-        else:
-            pending_store.bump_retry(session_id)
-            _log_behavior("ask_clarify", kind="confirm_enter_retry")
-            yield _ENTER_CONFIRM.format(sop=sop_name)
-            return
 
     # 「重新回答」：上一轮是已结束的 SOP 轮 → 重开同一 SOP（入口 query 走原触发规则，弱触发先过确认门）；
     # 其余情况不接管，按原 query 重走一遍。SOP 仍活跃时由上面的活跃分支处理。
@@ -1075,10 +1186,11 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
         if _effect(_usable_now[0]) != _effect(_usable_now[1]):
             _scores_now = op_note.get("scores") or {}
             diff = float(_scores_now.get(_usable_now[0], 0.0)) - float(_scores_now.get(_usable_now[1], 0.0))
-            pending_store.set(session_id, "ops_clarify", query=q,
-                              options=[_usable_now[0], _usable_now[1]])
-            trace_store.node("ops.clarify", in_={"top1": _usable_now[0], "top2": _usable_now[1],
-                                                 "gap": round(diff, 3)})
+            _open_clarify(session_id, pending_store.BIZ_OPS_CLARIFY,
+                          state={"query": q},
+                          options=[_usable_now[0], _usable_now[1]],
+                          trace_in={"top1": _usable_now[0], "top2": _usable_now[1],
+                                    "gap": round(diff, 3)})
             _log_behavior("ask_clarify", kind="ops_clarify")
             yield _OPS_CLARIFY.format(a=(_OPERATION_LABELS.get(_usable_now[0]) or (_usable_now[0],))[0],
                                       b=(_OPERATION_LABELS.get(_usable_now[1]) or (_usable_now[1],))[0])
@@ -1141,7 +1253,9 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
                 logger.info("[SOP] enter declined before, skip gate: %s", sop_id)
                 trace_store.step("sop_gate", skipped="declined", sop=sop_id)
                 return _NOT_MINE
-            pending_store.set(_sid, "confirm_enter", sop=sop_id, query=_q)
+            _open_clarify(_sid, pending_store.BIZ_SOP_ENTER,
+                          state={"sop": sop_id, "entry": _q},
+                          trace_in={"sop": sop_id, "via": "weak"})
             _log_behavior("ask_clarify", kind="confirm_enter")
             return _ENTER_CONFIRM.format(sop=_sop_name(sop_id))
         return _enter_sop(_sid, sop_id, _q)

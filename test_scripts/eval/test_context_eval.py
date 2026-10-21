@@ -12,6 +12,12 @@ harness 对每条 case：回放前缀重建上下文与 SOP 状态，再发 case
 （[Behavior] tag → 行为），取值构成闭集、可断言。不按日志行判定：一轮可能有多个 tag，
 真正结束这一轮的是最后一个出口。
 
+**判别器澄清（2026-10-21 起）**：v2.8 的操作判别器按分数选出候选，多个候选的出口不同时先问用户
+选 1/2（trace 落 `ops.clarify` 节点，`branch=clarify`）。澄清这一轮按**候选出口**判：
+候选操作的出口集合包含期望行为即通过；SOP 弱触发进入门（「不是 → 直接回答」）同理，
+RAG 召回（answer / no_answer_fallback）在澄清里一律算「其他」选项。没进澄清的轮次仍按 `branch` 判
+（执行体推进到哪就是哪）——注意「单候选」不等于「没澄清」：单候选的弱触发 SOP 也会先过进入门。
+
 两类断言的分工：
   - 硬行为（safety_alert / safety_carry / refuse / no_answer_fallback / structured / answer）
     → 进回归门。
@@ -73,6 +79,26 @@ _SOFT_BEHAVIOURS = {"chitchat", "clarify", "slot_filled", "scope_guard"}
 _ACCEPTED_BRANCHES = {b: {b} for b in _BEHAVIOURS}
 _ACCEPTED_BRANCHES["scope_guard"] = {"refuse"}
 _ACCEPTED_BRANCHES["slot_filled"] = {"sop_step", "structured"}
+
+# ── 判别器出口（2026-10-21）──────────────────────────────────────
+# 操作 → 它在链路里可能落到的出口行为。澄清那一轮 branch 只能是 clarify，
+# 但用户是在这些候选出口里选，所以判据要看候选出口是否覆盖期望行为。
+# 单候选时不改判：执行体照常推进，branch 就是它的出口。
+_OPS_EXITS = {
+    "followup": {"structured"},                                  # 追问筛选 → 直出列表
+    "model": {"structured"},                                     # 型号详情 / 对比 → 直出
+    "series": {"structured"},                                    # 系列枚举 → 直出
+    "service_point": {"structured", "sop_step", "start_sop"},    # 有坐标直出；否则进网点 SOP
+    "sop": {"start_sop", "sop_step", "clarify"},                 # 强触发直接进；弱触发先过确认门
+    "date": {"structured", "answer", "no_answer_fallback"},      # 日期闸门不过 → 落 RAG
+    "structured": {"structured", "answer", "no_answer_fallback"},
+    "domain": {"answer", "no_answer_fallback"},                  # 知识问答 = RAG
+}
+# RAG（知识问答）在澄清里算「其他」选项，但只有下面这些澄清真把它列出来：
+# SOP 进入门的「不是 → 直接回答」、判别器澄清的「其他」；退出门只有「退出 / 继续」。
+_RAG_EXITS = {"answer", "no_answer_fallback"}
+_RAG_CLARIFY_KINDS = {"confirm_enter", "confirm_enter_retry",
+                      "ops_clarify", "ops_clarify_retry"}
 
 # 缺触发轮时的危险占位消息（含危险词，供 agent._window_danger_word 取词）
 _DANGER_PLACEHOLDER = "（漏电告警轮：原始用户消息未落盘）"
@@ -185,9 +211,41 @@ def _branch_text(branch) -> str:
     return "branch=" + (branch or "未记")
 
 
-def _check_case(expect: dict, branch, tag=None) -> list:
+def _ops_clarify_ops(record: dict) -> list:
+    """本轮若走了操作澄清，返回候选操作（top1/top2，按展示顺序）；否则 []。"""
+    for node in reversed((record or {}).get("path") or []):
+        if node.get("node") == "ops.clarify":
+            facts = node.get("in") or {}
+            opts = [facts.get("top1"), facts.get("top2")]
+            return [o for o in opts if o and o != "-"]
+    return []
+
+
+def _clarify_covers(behaviour, record, branch=None) -> str:
+    """澄清是否覆盖期望行为：候选操作的出口命中，或 RAG 作为「其他」选项。
+
+    两类澄清都算：判别器 ops.clarify（选项 = 两个操作）与 SOP 弱触发的进入门
+    （选项 = 进入引导 / 「不是，直接回答」）。RAG 召回（answer / no_answer_fallback）
+    在澄清里一律算「其他」选项——用户随时可以选它。
+    """
+    if not behaviour:
+        return ""
+    opts = _ops_clarify_ops(record)
+    hits = [op for op in opts if behaviour in (_OPS_EXITS.get(op) or set())]
+    if hits:
+        return "澄清选项 %s 的出口包含 %s" % ("/".join(hits), behaviour)
+    cur = branch if branch is not None else (record or {}).get("branch")
+    kind = ((record or {}).get("detail") or {}).get("kind")
+    if (behaviour in _RAG_EXITS and cur == "clarify"
+            and (kind is None or kind in _RAG_CLARIFY_KINDS)):
+        return "澄清里「其他」= RAG，可覆盖 %s" % behaviour
+    return ""
+
+
+def _check_case(expect: dict, branch, tag=None, record=None) -> list:
     """返回问题清单（空 = 通过）。判据只有出口行为（读 trace 的 branch）。
 
+    判别器澄清轮另算：候选出口覆盖期望行为即通过（见 _clarify_covers 与文首口径）。
     must_contain_any / must_not_contain 暂不参与判定：它们判的是“话里有没有某个词”，
     与“这一轮被处置成哪类行为”是两回事（内容级问题归检索轨与人工复核）。
     """
@@ -201,14 +259,14 @@ def _check_case(expect: dict, branch, tag=None) -> list:
                                else "本轮无 [Behavior] 观测（出口漏了观测点）"))
         elif branch not in _BEHAVIOURS:
             problems.append(f"未登记的出口 branch={branch}（应在 BEHAVIOR_BY_TAG 内登记）")
-        elif branch != beh:
+        elif branch != beh and not _clarify_covers(beh, record, branch):
             problems.append(f"出口行为应为 {beh}，实际 {_branch_text(branch)}")
     elif beh:
         # 软行为不判对错，但「行为对不上」是有价值的复核信号：只列进复核清单，不参与失败判定。
         accepted = _ACCEPTED_BRANCHES.get(beh) or set()
         if not branch:
             problems.append(f"期望行为 {beh}，本轮未记出口（软行为，仅供复核参考）")
-        elif branch not in accepted:
+        elif branch not in accepted and not _clarify_covers(beh, record, branch):
             problems.append(f"期望行为 {beh}，实际 {_branch_text(branch)}（软行为，仅供复核参考）")
     return problems
 
@@ -257,11 +315,11 @@ def _is_must_pass_case(case: dict) -> bool:
 def _run_row(row: dict) -> list:
     import sops.base
     from tools.context_store import append_message, delete_session
-    from tools.pending_store import clear as clear_pending
+    from tools.pending_store import close as clear_pending
 
     sid = "ctxeval-" + row["session_id"]
     sops.base._sessions = {}
-    # 待确认状态统一在 pending_store：
+    # 澄清状态统一在 pending_store：
     # Redis 键 + 内存降级都要清，否则同一 sid 上一行的残留会污染下一行。
     clear_pending(sid)
     # 主链路 trace（tools/trace_store.py）也按 sid 落盘，同一 sid 跨行复用——先清掉上轮的落盘与
@@ -285,7 +343,8 @@ def _run_row(row: dict) -> list:
             _replay_prefix(sid, turns, replayed, qi)
             reply, record = _ask(sid, case["query"])
             append_message(sid, "assistant", reply)
-            problems = _check_case(case["expect"], record.get("branch"), record.get("tag"))
+            problems = _check_case(case["expect"], record.get("branch"),
+                                   record.get("tag"), record=record)
         except Exception as exc:  # noqa: BLE001
             reply = f"<EXCEPTION {type(exc).__name__}: {exc}>"
             record = {}
@@ -295,10 +354,12 @@ def _run_row(row: dict) -> list:
             problems.append("本轮 trace 标记 aborted（回答未跑完，判定不可信）")
         hard = case["expect"].get("behaviour") in _HARD_BEHAVIOURS
         must_pass = _is_must_pass_case(case)
+        beh = case["expect"].get("behaviour")
+        via = (_clarify_covers(beh, record) if record and record.get("branch") != beh else "")
         # 有问题的条目附上本轮 trace 摘要（主链路落的结构化环节记录），省得回头 grep 日志
         results.append({"case": case, "reply": reply, "problems": problems,
                         "hard": hard, "must_pass": must_pass,
-                        "branch": record.get("branch"), "tag": record.get("tag"),
+                        "branch": record.get("branch"), "tag": record.get("tag"), "via": via,
                         "trace": _trace_brief(record) if problems else ""})
         replayed = qi + 1
 
@@ -384,7 +445,8 @@ def _print_detail(results):
             mark = "REGRESS" if r["must_pass"] else "xfail"
         kind = "必过" if r["must_pass"] else "badcase"
         print(f"  [{mark:<7}] {c['id']} ({kind}/{_reason_text(c.get('type'))}) {c['query']}"
-              f"   [{_branch_text(r['branch'])}]")
+              f"   [{_branch_text(r['branch'])}]"
+              + (f"  · 澄清覆盖：{r['via']}" if r.get("via") else ""))
         if r["problems"]:
             print(f"              ↳ {'；'.join(r['problems'])}")
             if r.get("trace"):
@@ -400,7 +462,8 @@ def _print_detail(results):
         else:
             mark = "· 未偏离"
         print(f"  [{mark:<7}] {c['id']} ({_reason_text(c.get('type'))}) {c['query']}"
-              f"   [{_branch_text(r['branch'])}]")
+              f"   [{_branch_text(r['branch'])}]"
+              + (f"  · 澄清覆盖：{r['via']}" if r.get("via") else ""))
         if r["problems"]:
             print(f"              ↳ {'；'.join(r['problems'])}")
             if r.get("trace"):
@@ -776,6 +839,10 @@ def run():
           f"；未修 badcase 仍失败 {len(xfail)}、已转通过 {len(xpass)}")
     if xpass:
         print("                  已转通过：" + "、".join(r["case"]["id"] for r in xpass))
+    covered = [r for r in results if r.get("via")]
+    if covered:
+        print(f"  判别器澄清覆盖目标出口：{len(covered)} 条（"
+              + "、".join(r["case"]["id"] for r in covered) + "）")
     print(f"  【软行为·复核清单】{len(need_review)}/{len(soft_results)} 条行为与期望不符 → 需人工 / LLM 复核（不算失败）")
     print("=" * 72)
 

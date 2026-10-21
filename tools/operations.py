@@ -365,7 +365,7 @@ def note_ops(query: str, *, intent: str = None, margin: float = None,
             "winner": winner or "-", "why": why}
     if mode == "on":
         # 两道门各留下多少：标定阈值/词表覆盖时看这两个数
-        note["n_floor"] = len(above_floor)
+        note["n_candidates"] = len(above_floor)
     if prefer:
         note["override"] = prefer
     # 分数只落 trace（标量字符串）；scoring=on 时它同时决定上面的 usable 顺序
@@ -375,7 +375,7 @@ def note_ops(query: str, *, intent: str = None, margin: float = None,
         below = [o for o in raw if _allowed(o, intent) and scores.get(o, 0.0) < floor]
         if below and mode == "on":
             note["not_mine"] = "/".join("%s=%.2f" % (o, scores.get(o, 0.0)) for o in below)
-    note["scoring"] = scoring
+    note["scoring_status"] = scoring
     trace_store.route("ops", **note)
     # 注意顺序：note 里的 scores 是给 trace 的字符串，返回给主链路的是分数表
     return {"ops": raw, "usable": usable, **note, "scores": scores}

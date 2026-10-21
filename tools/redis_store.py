@@ -2,6 +2,7 @@
 
 key 约定：
   - SOP 会话状态：sop:session:{session_id}    (JSON string + TTL)
+  - 澄清状态：    clarify:{session_id}        (JSON string + TTL，见 pending_store)
   - 会话并发锁：  lock:session:{session_id}   (SETNX + EXPIRE)
   - 摄入锁：      lock:ingest                 (SETNX + EXPIRE)
 """
@@ -75,13 +76,18 @@ def lock_ttl() -> int:
     return _cfg_int("lock_ttl", 60)
 
 
-def pending_ttl() -> int:
-    """待确认状态（SOP 退出确认 / 进入确认门）的过期秒数。
+def clarify_ttl() -> int:
+    """澄清状态（进入/退出确认、操作澄清）的过期秒数，所有业务共用。
 
-    默认**跟随 sop_ttl**：pending 先过期而 SOP 还活着时，「是」会被当成槽位输入。
-    取同一个数就不必靠人记得同步（配置里显式给了才覆盖）。
+    须 ≥ sop_ttl：澄清先过期而 SOP 还活着时，「是 / 不是」会被当成槽位输入。
+    配小了按 sop_ttl 生效并告警。
     """
-    return _cfg_int("pending_ttl", sop_ttl())
+    ttl = _cfg_int("clarify_ttl", sop_ttl())
+    sop = sop_ttl()
+    if ttl < sop:
+        logger.warning("[Redis] clarify_ttl=%s 小于 sop_ttl=%s，按 sop_ttl 生效", ttl, sop)
+        return sop
+    return ttl
 
 
 def json_dumps(obj) -> str:

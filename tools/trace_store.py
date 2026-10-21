@@ -528,6 +528,17 @@ def turn_anchor() -> dict:
     return {"date": (turn.get("ts") or "")[:10], "turn_index": turn.get("turn_index")}
 
 
+def _date_of_file(path: str) -> str:
+    """trace 文件所属的日期目录（YYYY-MM-DD）；旧布局没有日期层时返回空。
+
+    以目录为准而不是记录 `ts`：逻辑日期可能与系统时钟不同（回填、测试、时区）。
+    """
+    day = os.path.basename(os.path.dirname(os.path.dirname(path)))
+    if _DATE_DIR.match(day):
+        return "%s-%s-%s" % (day[:4], day[4:6], day[6:])
+    return ""
+
+
 def latest_turn(session_id: str) -> dict:
     """该会话最近一条**已落盘**的轮次（不含正在进行的这一轮）。
 
@@ -558,7 +569,8 @@ def latest_turn(session_id: str) -> dict:
         rec = json.loads(lines[-1])
     except (OSError, ValueError, IndexError):
         return {}
-    return {"session_id": session_id, "date": (rec.get("ts") or "")[:10],
+    return {"session_id": session_id,
+            "date": _date_of_file(best[1]) or (rec.get("ts") or "")[:10],
             "turn_index": rec.get("turn_index"), "query": rec.get("query"),
             "aborted": bool(rec.get("aborted"))}
 

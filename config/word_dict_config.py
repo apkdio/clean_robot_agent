@@ -442,6 +442,8 @@ OPERATION_LABELS = {
 }
 OPS_CLARIFY = "您是想问「{a}」还是「{b}」？回复 1 或 2 就行～"
 OPS_CLARIFY_RETRY = "没太确定，回复 1 或 2 就好：1={a}，2={b}～"
+# 澄清两次没认出时，按第一候选继续前先说明一声（别的业务要用同一句也引这个）
+CLARIFY_GUESS = "我猜你可能想问「{a}」～"
 BLOCK_INJECT_REPLY = "我是扫地机器人助手，只能帮你解答扫地机器人相关的问题，无法扮演其他角色哦～"
 REFUSE_OFFTOPIC_REPLY = "抱歉，我是扫地机器人专属助手，对这方面不太了解哦～你可以问我扫地机器人的选购、故障排查、使用维护等问题。"
 GUESS_HINTS = [
@@ -488,7 +490,9 @@ TRACE_NODE_LABELS = {
     "route.emotion": "情绪安抚",
     "route.intent": "意图分类",
     "sop.active": "活跃 SOP",
-    "sop.pending": "待确认状态",
+    "clarify": "澄清分派",
+    "clarify.open": "开澄清",
+    "sop.pending": "待确认状态（旧）",
     "sop.step_error": "SOP 步骤异常",
     "sop.symptom": "症状映射",
     "sop.enter_gate": "进入门入口",

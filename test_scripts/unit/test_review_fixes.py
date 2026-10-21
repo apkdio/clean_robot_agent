@@ -422,21 +422,30 @@ def test_reenter_sop_logs_node():
 
 
 def test_latest_turn_across_days():
-    """latest_turn 取「最后写入」而不是「当天最大 turn_index」——跨天后它是昨天那轮。"""
+    """latest_turn 取「最后写入」而不是「当天最大 turn_index」——跨天后它是昨天那轮。
+
+    直接按日期目录铺两天的文件并固定 mtime：`_today` 不控制目录命名，
+    用 begin_turn 模拟会让用例跟着真实日期走（曾在换日后误红）。
+    """
+    import json
+    import os
+
     from tools import trace_store
 
     sid = "t-cross-day"
     reset_trace(sid)
-    saved = trace_store._today
-    try:
-        trace_store._today = lambda: "2026-10-19"
-        trace_store.begin_turn(sid, "昨天最后一轮")
-        trace_store.end_turn()
-        trace_store._today = lambda: "2026-10-20"
-        trace_store.begin_turn(sid, "今天第一轮")
-        trace_store.end_turn()
-    finally:
-        trace_store._today = saved
+    root = trace_store._root_dir()
+    files = []
+    for day, query in (("20261019", "昨天最后一轮"), ("20261020", "今天第一轮")):
+        d = os.path.join(root, day, "%s_%s_0900" % (sid, day))
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, "%s_%s_0900.jsonl" % (sid, day))
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": "%s-09:00:00" % day[:4] + "-" + day[4:6] + "-" + day[6:],
+                                "turn_index": 1, "query": query}, ensure_ascii=False) + "\n")
+        files.append(p)
+    os.utime(files[0], (1000, 1000))
+    os.utime(files[1], (2000, 2000))       # 第二天最后写入
     last = trace_store.latest_turn(sid)
     _assert_eq(last.get("date"), "2026-10-20", "取最后写入的那天")
     _assert_eq(last.get("query"), "今天第一轮", "取最后写入的那条")

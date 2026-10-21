@@ -157,7 +157,7 @@ def test_note_ops_shadow_keeps_order():
     trace_store.end_turn()
     _assert_eq(note["usable"][:2], ["service_point", "sop"], "shadow 仍按表序")
     got = (trace_reader.load(trace_store._path("ops-shadow"))[0].get("route") or {}).get("ops") or {}
-    _assert_eq(got.get("scoring"), "ok", "trace 记打分状态")
+    _assert_eq(got.get("scoring_status"), "ok", "trace 记打分状态")
     _assert_in("scores", got, "trace 记分数")
     _assert(got["scores"].startswith("sop="), "分数串按分数降序")
 
@@ -189,7 +189,7 @@ def test_two_gates_score_then_vocab():
     _assert("model" not in note["usable"], "分数够但词表没命中 → 第二道门砍掉")
     _assert("date" not in note["usable"], "词表命中但分数不够 → 第一道门砍掉")
     _assert_eq(note["usable"][0], "service_point", "两门都过的排第一")
-    _assert_eq(note.get("n_floor"), 2, "过第一道门的数量（model/service_point）")
+    _assert_eq(note.get("n_candidates"), 2, "过第一道门的数量（model/service_point）")
 
 
 def test_keyphrases_shape():
@@ -226,7 +226,7 @@ def test_note_ops_missing_section_uses_defaults():
         ops.score_all, ops._ops_cfg = saved
     _assert_eq(note["why"], "score", "缺段也按分派发")
     _assert_eq(note["usable"][:2], ["sop", "service_point"], "按分排序（sop 1.9 > 1.5）")
-    _assert_eq(note["scoring"], "ok", "分数照常落 trace")
+    _assert_eq(note["scoring_status"], "ok", "分数照常落 trace")
 
 
 TESTS = [test_registry_shape, test_probe_hits, test_resolve_three_states, test_note_ops_why_none,

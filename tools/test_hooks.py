@@ -51,9 +51,9 @@ def set_active_sop(session_id: str, sop_id: str, step: int = 0,
     _save_session(session_id, make_session(sop_id, step=step, slots=slots, retry_count=retry_count))
 
 
-def set_pending(session_id: str, kind: str, **data) -> None:
-    """写入统一待确认状态：kind ∈ {confirm_exit, confirm_enter}。"""
-    pending_store.set(session_id, kind, **data)
+def set_pending(session_id: str, biz: str, state: dict = None, **data) -> None:
+    """写入统一澄清状态：biz ∈ {sop.exit, sop.enter, ops.clarify}；state 是业务侧快照。"""
+    pending_store.ask(session_id, biz, state=state, **data)
 
 
 def reset(session_id: str) -> None:
@@ -64,4 +64,4 @@ def reset(session_id: str) -> None:
 
     delete_session(session_id)
     _delete_session(session_id)
-    pending_store.clear(session_id)
+    pending_store.close(session_id)

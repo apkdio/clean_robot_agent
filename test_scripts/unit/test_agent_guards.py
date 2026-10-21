@@ -77,13 +77,13 @@ def test_enter_gate_decline_reuses_entry_query():
 
     sid = "t-entergate"
     end_sop(sid)                      # 清上次运行可能残留的 SOP 会话（Redis 跨进程存活）
-    pending_store.clear(sid)
+    pending_store.close(sid)
     captured = []
     saved_intent = ir.route_intent_with_margin
     ir.route_intent_with_margin = lambda text: (captured.append(text), ("robot", 0.9))[1]
     try:
-        pending_store.set(sid, "confirm_enter", sop="purchase",
-                          query="帮我推荐一款扫地机器人！！！")   # 重复标点：归一化会折叠
+        pending_store.ask(sid, pending_store.BIZ_SOP_ENTER,
+                          state={"sop": "purchase", "entry": "帮我推荐一款扫地机器人！！！"})   # 重复标点：归一化会折叠
         out = "".join(ask_stream("不用了谢谢", sid)).strip()
         _assert(bool(captured), "意图分类被调用了")
         _assert_eq(captured[0], "帮我推荐一款扫地机器人！",
@@ -91,7 +91,7 @@ def test_enter_gate_decline_reuses_entry_query():
         _assert_in("预算", out, "按入口 query 走：强触发进选购 SOP、问预算")
     finally:
         ir.route_intent_with_margin = saved_intent
-        pending_store.clear(sid)
+        pending_store.close(sid)
         end_sop(sid)
 
 
@@ -108,12 +108,13 @@ def test_enter_gate_decline_hint_truthful():
 
     sid = "t-decline-hint"
     end_sop(sid)
-    pending_store.clear(sid)
+    pending_store.close(sid)
     saved_intent = ir.route_intent_with_margin
     ir.route_intent_with_margin = lambda text: ("robot", 0.9)
     try:
         # 弱触发入口（带预算）→ 问门 → 答「不是」→ 走正常作答
-        pending_store.set(sid, "confirm_enter", sop="purchase", query="预算 3000 的扫地机器人")
+        pending_store.ask(sid, pending_store.BIZ_SOP_ENTER,
+                          state={"sop": "purchase", "entry": "预算 3000 的扫地机器人"})
         out = "".join(ask_stream("不是", sid)).strip()
         _assert_in(SOP_REENTER_HINT["purchase"], out, "拒绝后给出「怎么再进」的提示")
         _assert_not_in("要走引导吗", out, "拒绝这一轮不再问门")
@@ -124,7 +125,7 @@ def test_enter_gate_decline_hint_truthful():
         _assert_not_in("要走引导吗", out2, "strong 触发不进确认门（拒绝标记只作用于弱触发）")
     finally:
         ir.route_intent_with_margin = saved_intent
-        pending_store.clear(sid)
+        pending_store.close(sid)
         end_sop(sid)
 
 
@@ -138,7 +139,7 @@ def test_ops_clarify_roundtrip():
 
     sid = "t-ops-clarify"
     end_sop(sid)
-    pending_store.clear(sid)
+    pending_store.close(sid)
     _reset_session(sid)
     saved = ops_mod.score_all
     # 两个候选都在 floor 之上、分差 0.05 < gap（配置 0.10）→ ambiguous；两者实际动作不同（追问 vs 发布时间）
@@ -147,9 +148,9 @@ def test_ops_clarify_roundtrip():
     try:
         first = "".join(ask_stream(q, sid)).strip()
         _assert_in("您是想问", first, "分差过近 → 先问用户")
-        pend = pending_store.get(sid) or {}
-        _assert_eq(pend.get("kind"), "ops_clarify", "落待确认（复用 pending 链路）")
-        _assert_eq(pend.get("query"), q, "待确认里存原问题")
+        pend = pending_store.peek(sid) or {}
+        _assert_eq(pend.get("biz"), pending_store.BIZ_OPS_CLARIFY, "落澄清状态（业务 id 隔离）")
+        _assert_eq((pend.get("state") or {}).get("query"), q, "澄清里存原问题（业务状态）")
 
         trace_store.begin_turn(sid, "1")          # 第二轮的 trace 锚点
         trace_store.end_turn()
@@ -160,11 +161,115 @@ def test_ops_clarify_roundtrip():
         _assert_eq(got.get("override"), "followup", "按选择重放：override 记为 followup")
         nodes = [n for n in (last.get("path") or []) if n.get("node") == "ops.clarify"]
         _assert(nodes and (nodes[-1].get("out") or {}).get("pick") == "followup", "clarify 节点记下选择")
-        _assert(pending_store.get(sid) is None, "选完即清待确认")
+        _assert(pending_store.peek(sid) is None, "选完即清澄清")
     finally:
         ops_mod.score_all = saved
-        pending_store.clear(sid)
+        pending_store.close(sid)
         end_sop(sid)
+
+
+def test_clarify_open_trace():
+    """提问轮落 clarify.open：biz、选项、retry，以及被覆盖的 biz。"""
+    import tools.agent as am
+    import tools.operations as ops_mod
+    from sops import end_sop
+    from tools import pending_store, trace_store
+    from test_scripts import trace_reader
+
+    sid = "t-clarify-open"
+    end_sop(sid)
+    pending_store.close(sid)
+    _reset_session(sid)
+    saved = ops_mod.score_all
+    ops_mod.score_all = lambda q: ({"followup": 1.60, "date": 1.55}, "ok")
+    try:
+        "".join(ask_stream("有没有以旧换新的服务，最近想换一个机器人了", sid)).strip()
+        row = trace_reader.load(trace_store._path(sid))[-1]
+        nodes = [n for n in (row.get("path") or []) if n.get("node") == "clarify.open"]
+        _assert(nodes, "提问轮有 clarify.open")
+        n = nodes[-1]
+        _assert_eq((n.get("in") or {}).get("biz"), pending_store.BIZ_OPS_CLARIFY, "记 biz")
+        _assert_eq((n.get("in") or {}).get("options"), "followup/date", "记选项")
+        _assert_eq((n.get("in") or {}).get("retry"), 0, "记 retry")
+        _assert_eq((n.get("out") or {}).get("replaces"), "-", "没覆盖别人")
+
+        pending_store.close(sid)
+        pending_store.ask(sid, pending_store.BIZ_SOP_EXIT, state={"sop_id": "purchase"})
+        trace_store.begin_turn(sid, "覆盖测试")
+        am._open_clarify(sid, pending_store.BIZ_OPS_CLARIFY,
+                         state={"query": "原问题"}, options=["sop", "date"])
+        trace_store.end_turn()
+        row = trace_reader.load(trace_store._path(sid))[-1]
+        n = [x for x in (row.get("path") or []) if x.get("node") == "clarify.open"][-1]
+        _assert_eq((n.get("out") or {}).get("replaces"), pending_store.BIZ_SOP_EXIT,
+                   "记下被覆盖的 biz")
+    finally:
+        ops_mod.score_all = saved
+        pending_store.close(sid)
+        end_sop(sid)
+
+
+def test_ops_clarify_two_misses_take_top1():
+    """两次认不出 → 按 top1 走，不再第三次追问（prefer 压掉重新判歧义）。"""
+    import tools.operations as ops_mod
+    from sops import end_sop
+    from tools import pending_store, trace_store
+    from test_scripts import trace_reader
+
+    sid = "t-ops-clarify-miss"
+    end_sop(sid)
+    pending_store.close(sid)
+    _reset_session(sid)
+    saved = ops_mod.score_all
+    ops_mod.score_all = lambda q: ({"followup": 1.60, "date": 1.55}, "ok")
+    q = "有没有以旧换新的服务，最近想换一个机器人了"
+    try:
+        trace_store.begin_turn(sid, q)
+        first = "".join(ask_stream(q, sid)).strip()
+        trace_store.end_turn()
+        _assert_in("您是想问", first, "先问用户")
+
+        trace_store.begin_turn(sid, "随便看看")
+        second = "".join(ask_stream("随便看看", sid)).strip()
+        trace_store.end_turn()
+        _assert_in("没太确定", second, "第一次认不出 → 重问")
+
+        trace_store.begin_turn(sid, "再看看")
+        third = "".join(ask_stream("再看看", sid)).strip()
+        trace_store.end_turn()
+        _assert_not_in("您是想问", third, "第二次仍认不出 → 不再追问")
+        _assert_not_in("没太确定", third, "不再重问")
+        _assert_in("我猜你可能想问", third, "按 top1 继续前先说明一声")
+        _assert_in("继续筛选", third, "说明里带 top1 的名字")
+        _assert(pending_store.peek(sid) is None, "澄清状态已清")
+
+        rows = trace_reader.load(trace_store._path(sid))
+        ops_block = (rows[-1].get("route") or {}).get("ops") or {}
+        _assert_eq(ops_block.get("override"), "followup", "按 top1 重放")
+    finally:
+        ops_mod.score_all = saved
+        pending_store.close(sid)
+        end_sop(sid)
+
+
+def test_clarify_result_contract():
+    """处理器返回体是闭集 DTO：kind 三种、done 必带 reply、resume 必带 query。"""
+    from tools.agent import (CLARIFY_DONE, CLARIFY_DROP, CLARIFY_RESUME, ClarifyResult)
+
+    _assert_eq(ClarifyResult.done("x").kind, CLARIFY_DONE, "done 形态")
+    _assert_eq(ClarifyResult.drop().kind, CLARIFY_DROP, "drop 形态")
+    r = ClarifyResult.resume("原句", prefix="先说", prefer_op="followup", enter_declined=True)
+    _assert_eq((r.kind, r.query, r.prefer_op, r.enter_declined),
+               (CLARIFY_RESUME, "原句", "followup", True), "resume 载荷原样带出")
+
+    for make, why in ((lambda: ClarifyResult("bogus"), "未知 kind"),
+                      (lambda: ClarifyResult.done(""), "done 空回复"),
+                      (lambda: ClarifyResult.resume(""), "resume 空 query")):
+        try:
+            make()
+            _assert(False, why + " 应报错")
+        except ValueError:
+            _assert(True, why + " 被拒绝")
 
 
 def test_ops_clarify_only_when_close():
@@ -175,18 +280,18 @@ def test_ops_clarify_only_when_close():
 
     sid = "t-ops-noclarify"
     end_sop(sid)
-    pending_store.clear(sid)
+    pending_store.close(sid)
     _reset_session(sid)
     saved = ops_mod.score_all
     ops_mod.score_all = lambda q: ({"service_point": 2.50, "sop": 0.60}, "ok")
     try:
         out = "".join(ask_stream("离我最近的维修点", sid)).strip()
         _assert_not_in("您是想问", out, "分差够大 → 不澄清")
-        _assert(pending_store.get(sid) is None, "没有待确认")
+        _assert(pending_store.peek(sid) is None, "没有待确认")
         _assert_in("城市", out, "service_point 接管（进网点 SOP 问城市）")
     finally:
         ops_mod.score_all = saved
-        pending_store.clear(sid)
+        pending_store.close(sid)
         end_sop(sid)
 
 
@@ -397,6 +502,9 @@ TESTS = [
     test_enter_gate_decline_reuses_entry_query,
     test_enter_gate_decline_hint_truthful,
     test_ops_clarify_roundtrip,
+    test_clarify_open_trace,
+    test_ops_clarify_two_misses_take_top1,
+    test_clarify_result_contract,
     test_ops_clarify_only_when_close,
 ]
 

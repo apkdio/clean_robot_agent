@@ -567,6 +567,61 @@ def test_operation_multi_hit_winner():
         _assert_eq((state, winner), ("win", want), f"「{query}」同分时回表序")
 
 
+def test_clarify_hub_contract():
+    """澄清中台契约：业务 id ↔ 处理器一一对应、返回体闭集、TTL 与 trace 节点一致。
+
+    中台只管存取，业务按 biz 认领；漏登记一个 biz 会变成「警告后退出澄清」，
+    用户那句「是/不是」就被丢掉——所以这里做机器检查。
+    """
+    from config.word_dict_config import TRACE_NODE_LABELS
+    from tools import agent
+    from tools import pending_store as ps
+    from tools.redis_store import clarify_ttl, sop_ttl
+
+    biz_consts = {getattr(ps, n) for n in dir(ps) if n.startswith("BIZ_")}
+    _assert_eq(set(agent._CLARIFY_HANDLERS), biz_consts, "每个澄清业务都有处理器，且没有多余键")
+    for biz, handler in agent._CLARIFY_HANDLERS.items():
+        _assert_true(callable(handler), f"{biz} 的处理器可调用")
+    _assert_eq(set(agent._CLARIFY_KINDS), {"done", "resume", "drop"}, "返回体 kind 是闭集")
+    _assert_raises(ValueError, lambda: agent.ClarifyResult("bad", reply="x"), "闭集外的 kind 直接报错")
+    _assert_raises(ValueError, lambda: agent.ClarifyResult(agent.CLARIFY_DONE), "done 必须带话术")
+    _assert_raises(ValueError, lambda: agent.ClarifyResult(agent.CLARIFY_RESUME), "resume 必须带 query")
+    _assert_eq(agent.ClarifyResult.drop().kind, "drop", "drop 合法")
+    _assert_in("clarify", TRACE_NODE_LABELS, "统一澄清节点已登记（trace 渲染）")
+    _assert_true(clarify_ttl() >= sop_ttl(), "澄清 TTL 不低于 SOP TTL（否则「是/不是」会被当槽位）")
+    _assert_eq((ps.BIZ_SOP_EXIT, ps.BIZ_SOP_ENTER, ps.BIZ_OPS_CLARIFY),
+               ("sop.exit", "sop.enter", "ops.clarify"),
+               "业务 id 字符串稳定（trace / 评测按它读）")
+
+
+def test_check_case_ops_clarify():
+    """v2.8 判别器澄清：多候选时 branch 只能是 clarify，判据改看候选出口是否覆盖期望行为。"""
+    from tools.operations import ORDER
+
+    _assert_eq(set(ctx_eval._OPS_EXITS), set(ORDER), "判别器出口映射覆盖全部操作（加操作要同步）")
+    for op, exits in ctx_eval._OPS_EXITS.items():
+        _assert_true(exits <= ctx_eval._BEHAVIOURS, f"{op} 的出口都在闭集内")
+    _assert_true(ctx_eval._RAG_EXITS <= ctx_eval._BEHAVIOURS, "RAG 出口在闭集内")
+
+    rec = {"path": [{"node": "ops.clarify", "status": "ok",
+                     "in": {"top1": "sop", "top2": "service_point"}}]}
+    _assert_eq(ctx_eval._ops_clarify_ops(rec), ["sop", "service_point"], "读出澄清候选")
+    _assert_eq(ctx_eval._check_case({"behaviour": "answer"}, "clarify", record=rec), [],
+               "澄清里「其他」= RAG → answer 算命中")
+    _assert_eq(ctx_eval._check_case({"behaviour": "structured"}, "clarify", record=rec), [],
+               "service_point 的直出出口是 structured")
+    _assert_true(ctx_eval._check_case({"behaviour": "safety_alert"}, "clarify", record=rec),
+                 "澄清选项不含安全出口 → 仍报问题")
+    _assert_eq(ctx_eval._check_case({"behaviour": "answer"}, "clarify"), [],
+               "任何澄清都把 RAG 当「其他」选项（进入门的「不是」= 直接回答）")
+    _assert_true(ctx_eval._check_case({"behaviour": "answer"}, "no_answer_fallback"),
+                 "没走澄清时 RAG 期望仍按 branch 判")
+    _assert_true(ctx_eval._check_case(
+        {"behaviour": "answer"}, "clarify",
+        record={"branch": "clarify", "detail": {"kind": "confirm_exit"}}),
+        "退出确认门只给「退出 / 继续」，不按「其他=RAG」放行")
+
+
 TESTS = [
     test_branch_closed_set_from_config,
     test_branch_covers_behaviours,
@@ -591,6 +646,8 @@ TESTS = [
     test_step_keys_registered,
     test_operation_keyphrase_coverage,
     test_operation_multi_hit_winner,
+    test_check_case_ops_clarify,
+    test_clarify_hub_contract,
 ]
 
 
