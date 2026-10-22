@@ -6,6 +6,7 @@ base_url / api_key）；embedding 的单一真源是 config/chroma.yaml 的 embe
 """
 
 import os
+import threading
 
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
@@ -23,6 +24,9 @@ _DEFAULT_EMBED_MODEL = os.environ.get("LLM_EMBED_MODEL", "bge-m3")
 
 _chat_cfg_cache = None
 _embedding_cfg_cache = None
+
+_emb_cache = {}                 # 解析后的 (model, base_url, api_key, kwargs) → 客户端
+_emb_lock = threading.Lock()
 
 
 def _embedding_cfg() -> dict:
@@ -107,16 +111,23 @@ def get_embedding_model(
     model = model or cfg.get("model") or _DEFAULT_EMBED_MODEL
     base_url = base_url or cfg.get("base_url") or _DEFAULT_BASE_URL
     api_key = api_key or cfg.get("api_key") or _DEFAULT_API_KEY
-    logger.info(f"[Embed] init model={model}")
-    return OpenAIEmbeddings(
-        model=model,
-        base_url=base_url,
-        api_key=api_key,
-        # Ollama 的 embedding 端点期望原始文本而非 token id，
-        # 关闭长度检查的 tokenize，把文本原样发送。
-        check_embedding_ctx_length=False,
-        **kwargs,
-    )
+    key = (model, base_url, api_key, tuple(sorted((k, repr(v)) for k, v in kwargs.items())))
+    with _emb_lock:
+        cached = _emb_cache.get(key)
+        if cached is not None:
+            return cached
+        logger.info(f"[Embed] client ready model={model}")
+        emb = OpenAIEmbeddings(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            # Ollama 的 embedding 端点期望原始文本而非 token id，
+            # 关闭长度检查的 tokenize，把文本原样发送。
+            check_embedding_ctx_length=False,
+            **kwargs,
+        )
+        _emb_cache[key] = emb
+        return emb
 
 
 def stream_chat(messages: list, model: str = "", temperature: float = 0.3) -> any:

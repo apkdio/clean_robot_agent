@@ -221,6 +221,13 @@ def test_embedding_source_unified():
                "留空时按 chroma.yaml 的 embedding.model 解析")
 
 
+def test_embedding_client_cached():
+    """同一配置复用同一个 embedding 客户端：避免每次构造都打一条 init 日志。"""
+    from tools.llm_tool import get_embedding_model
+
+    _assert(get_embedding_model() is get_embedding_model(), "重复调用返回同一实例")
+
+
 def test_local_lock_has_ttl():
     """Redis 不可用时的本地降级锁也要过期（原来无 TTL，进程内会永久占住）。"""
     import time
@@ -391,6 +398,7 @@ def test_reenter_sop_logs_node():
     """「重新回答」重开 SOP 时要落 sop.reenter：否则这一轮在 path 里看不出是重答重开的。"""
     import tools.agent as am
     import tools.context_store as cs
+    import sops
     from test_scripts import trace_reader
     from tools import trace_store
 
@@ -401,17 +409,18 @@ def test_reenter_sop_logs_node():
     trace_store.begin_turn(sid, q)        # 第 2 轮（本轮 = 重答）
 
     saved = (trace_store.find_turn, trace_store.latest_turn, trace_store.find_turn_by_index,
-             am._enter_sop, cs.get_last_sop)
+             am._enter_sop, cs.get_last_sop, sops.sop_needs_enter_confirm)
     trace_store.find_turn = lambda s, query: {"date": "2026-10-20", "turn_index": 1}
     trace_store.latest_turn = lambda s: {"date": "2026-10-20", "turn_index": 1}
     trace_store.find_turn_by_index = lambda s, d, i: {"sop": {"id": "purchase"}, "branch": "start_sop"}
     am._enter_sop = lambda sid, sop_id, query, **kw: "您的预算大概是多少？"
     cs.get_last_sop = lambda s: {"entry_query": q}
+    sops.sop_needs_enter_confirm = lambda *a, **kw: False   # 本用例只测重开，不测进入门
     try:
         taken, reply = am._reenter_sop_on_retry(sid, q)
     finally:
         (trace_store.find_turn, trace_store.latest_turn, trace_store.find_turn_by_index,
-         am._enter_sop, cs.get_last_sop) = saved
+         am._enter_sop, cs.get_last_sop, sops.sop_needs_enter_confirm) = saved
     _assert(taken, "重开被接管")
     _assert_in("预算", reply, "回到 SOP 第一步")
     trace_store.end_turn()
@@ -456,23 +465,25 @@ def test_reenter_across_days():
     """跨天后「重新回答」仍能重开：判据是「上一轮就是被重发的那轮」，不是 turn_index 相差 1。"""
     import tools.agent as am
     import tools.context_store as cs
+    import sops
     from tools import trace_store
 
     sid, q = "t-reenter-cross", "帮我推荐一款扫地机器人"
     reset_trace(sid)
     trace_store.begin_turn(sid, q)                  # 当前轮
     saved = (trace_store.latest_turn, trace_store.find_turn, trace_store.find_turn_by_index,
-             am._enter_sop, cs.get_last_sop)
+             am._enter_sop, cs.get_last_sop, sops.sop_needs_enter_confirm)
     trace_store.latest_turn = lambda s: {"date": "2026-10-19", "turn_index": 7}
     trace_store.find_turn = lambda s, query: {"date": "2026-10-19", "turn_index": 7}
     trace_store.find_turn_by_index = lambda s, d, i: {"sop": {"id": "purchase"}, "branch": "start_sop"}
     am._enter_sop = lambda sid, sop_id, query, **kw: "您的预算大概是多少？"
     cs.get_last_sop = lambda s: {"entry_query": q}
+    sops.sop_needs_enter_confirm = lambda *a, **kw: False   # 本用例只测跨天重开
     try:
         taken, reply = am._reenter_sop_on_retry(sid, q)
     finally:
         (trace_store.latest_turn, trace_store.find_turn, trace_store.find_turn_by_index,
-         am._enter_sop, cs.get_last_sop) = saved
+         am._enter_sop, cs.get_last_sop, sops.sop_needs_enter_confirm) = saved
         reset_trace(sid)
     _assert(taken, "昨天最后一轮 + 今天重答 → 仍重开")
     _assert_in("预算", reply, "回到 SOP 第一步")
@@ -481,6 +492,7 @@ def test_reenter_across_days():
 TESTS = [test_redis_missing_package_degrades, test_date_gate_needs_select_signal,
          test_upload_name_sanitized, test_build_dataset_writes_generated_not_dataset,
          test_intent_inference_failure_degrades, test_stream_generate_failure_falls_back,
+         test_embedding_client_cached,
          test_intent_head_builds_from_meta, test_embedding_source_unified,
          test_local_lock_has_ttl, test_stop_flag_has_ttl_local, test_dead_batch_endpoint_removed,
          test_retry_replaces_previous_turn, test_retry_without_matching_last_user_keeps_turns,

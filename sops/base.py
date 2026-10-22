@@ -12,8 +12,9 @@ from tools import trace_store
 from tools.log_tool import get_logger
 from config.word_dict_config import (
     AFTERSALES_WORDS,BUY_WORDS, CONSULT_WORDS, BRAND_WORDS,
-    LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS, PRICIER_WORDS, NEWER_WORDS, OLDER_WORDS,
+    ENTER_CONFIRM, LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS, PRICIER_WORDS, NEWER_WORDS, OLDER_WORDS,
     REL_LABEL as _REL_LABEL, REL_SUPER as _REL_SUPER,
+    SOP_NAMES, SOP_REENTER_HINT, SOP_REENTER_HINT_DEFAULT,
 )
 
 logger = get_logger(name="sops_base")
@@ -214,10 +215,11 @@ def continue_sop(session_id: str, query: str):
     return _run(session_id, query)
 
 
-def match_sop(query: str, sop_id: str = None):
+def match_sop(query: str, sop_id: str = None, log: bool = True):
     """找命中的 SOP：trigger 命中，且它自己的 guards 都没命中（guard 只否掉自己这条）。
 
     给了 sop_id 就只看这一条（「这条 SOP 该不该走」的判定）；不给则按注册顺序返回第一条，都不命中返回 None。
+    `log=False` 给探测/打分调用用：同一轮会探多次，只让真正派发那次打 INFO。
     """
     for sid, sop in SOPS.items():
         if sop_id and sid != sop_id:
@@ -226,21 +228,70 @@ def match_sop(query: str, sop_id: str = None):
             continue
         if any(g["check"](query) for g in sop.get("guards", [])):
             continue
-        logger.info(f"[SOP] Match SOP:{sid}")
+        if log:
+            logger.info(f"[SOP] Match SOP:{sid}")
         return sid
     return None
 
 
-def sop_needs_enter_confirm(sop_id: str, query: str) -> bool:
-    """判断是否要走「进入确认门」：只命中弱触发词、没有明确诉求时为 True。"""
+ENTER_CONFIRM_DEFAULT = "always"          # 所有 SOP 默认「进入前先问」
+ENTER_CONFIRM_MODES = ("always", "weak", "never")
+
+
+def sop_name(sop_id: str) -> str:
+    return SOP_NAMES.get(sop_id, "当前")
+
+
+def enter_confirm_mode(sop_id: str) -> str:
+    """SOP 自己声明进入门策略；不写默认 always，非法值告警后回默认。"""
+    mode = str((SOPS.get(sop_id) or {}).get("enter_confirm") or ENTER_CONFIRM_DEFAULT).strip().lower()
+    if mode not in ENTER_CONFIRM_MODES:
+        logger.warning("[SOP] %s 的 enter_confirm=%r 非法，按 always 处理", sop_id, mode)
+        return ENTER_CONFIRM_DEFAULT
+    return mode
+
+
+def sop_needs_enter_confirm(sop_id: str, query: str = None) -> bool:
+    """进入确认门：always 一律问；never 不问；weak 只对弱触发问（旧语义）。"""
+    mode = enter_confirm_mode(sop_id)
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
     sop = SOPS.get(sop_id) or {}
     weak = sop.get("weak_trigger") or []
-    if not weak:
+    if not weak or not query:
         return False
+    # 强触发词 = 全部命中词 - 弱触发词
     strong = [w for w in sop.get("trigger", []) if w not in weak]
     if any(w in query for w in strong):
         return False
     return any(w in query for w in weak)
+
+
+def sop_has_strong_trigger(sop_id: str, query: str) -> bool:
+    """命中强触发词（不是只用弱词表命中的泛问）；用于打分加分与拒绝后的放行。"""
+    sop = SOPS.get(sop_id) or {}
+    weak = set(sop.get("weak_trigger") or [])
+    return any(w in query for w in sop.get("trigger", []) if w not in weak)
+
+
+def enter_confirm_text(sop_id: str) -> str:
+    return ENTER_CONFIRM.format(sop=sop_name(sop_id))
+
+
+def enter_declined(session_id: str, sop_id: str) -> bool:
+    from tools.context_store import is_enter_declined
+    return is_enter_declined(session_id, sop_id)
+
+
+def mark_enter_declined(session_id: str, sop_id: str) -> None:
+    from tools.context_store import set_enter_declined
+    set_enter_declined(session_id, sop_id=sop_id)
+
+
+def enter_decline_hint(sop_id: str) -> str:
+    return SOP_REENTER_HINT.get(sop_id, SOP_REENTER_HINT_DEFAULT)
 
 
 def _ask_text(step: dict, key: str, ctx: dict) -> str:

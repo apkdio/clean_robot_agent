@@ -93,6 +93,7 @@ def _render_result(ctx: dict) -> str:
 PURCHASE_SOP = {
     "id": "purchase",
     "trigger": PURCHASE_TRIGGER,
+    "enter_confirm": "always",
     # 只命中这些弱信号时，先进「进入确认门」问一句
     "weak_trigger": PURCHASE_WEAK_TRIGGER,
     "guards": [

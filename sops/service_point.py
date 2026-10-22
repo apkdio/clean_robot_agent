@@ -95,6 +95,7 @@ def _search_points(slots: dict):
 SERVICE_POINT_SOP = {
     "id": "service_point",
     "trigger": SERVICE_POINT_WORDS,
+    "enter_confirm": "always",
     "guards": [{"check": _is_consult}],
     "intro": "好的，帮您查一下最近的售后网点～",
     "max_retry": 5,  # 城市没听清就接着问，别放弃（放弃了就没坐标可查）

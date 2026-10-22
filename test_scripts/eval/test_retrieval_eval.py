@@ -298,6 +298,7 @@ def _print_metrics(metrics):
 # ──────────────────────────────────────────────────────────────
 
 _CONFIG_FILES = ("config/rag.yaml", "config/chroma.yaml", "config/agent.yaml", "config/context.yaml")
+_PROMPT_DIR = "prompts"          # 提示词目录：直接决定生成，必须逐文件记内容版本
 
 
 def _file_sha256(path):
@@ -449,9 +450,42 @@ def _index_label(idx):
     return idx.get("note", "状态未知")
 
 
+def _prompts_meta():
+    """提示词版本：逐文件 sha256（短）+ 组合短指纹。
+
+    commit 只能说明「哪个提交」；脏工作区里改了提示词，`code.changed` 只有一个文件名，
+    两次不同的未提交版本在 env 里长得一样——生成行为却可能完全不同，所以要单独记内容。
+    """
+    d = os.path.join(_ROOT, _PROMPT_DIR)
+    if not os.path.isdir(d):
+        return {"files": [], "per_file": {}, "fingerprint": "missing"}
+    pairs = [("%s/%s" % (_PROMPT_DIR, fn), _file_sha256(os.path.join(d, fn)))
+             for fn in sorted(os.listdir(d)) if os.path.isfile(os.path.join(d, fn))]
+    return {"files": [rel for rel, _ in pairs],
+            "per_file": {rel: sha[:8] for rel, sha in pairs},
+            "fingerprint": _digest(pairs) if pairs else "empty"}
+
+
+def _evalset_meta(path):
+    """评测集版本：文件 + 短哈希 + 条数（一行一条，空行不计）。
+
+    指标与用例集绑死：条目增删或改期望都会改哈希，比较聚合值时先看这一项。
+    """
+    rel = os.path.relpath(path, _ROOT).replace("\\", "/")
+    if not os.path.isfile(path):
+        return {"file": rel, "sha256": "missing", "cases": 0}
+    n = 0
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                n += 1
+    return {"file": rel, "sha256": _file_sha256(path)[:8], "cases": n}
+
+
 def _env_meta():
     return {"created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "code": _code_meta(), "kb": _kb_meta(),
+            "code": _code_meta(), "kb": _kb_meta(), "prompts": _prompts_meta(),
+            "evalset": _evalset_meta(_GOLDEN_FILE),
             "config": _config_meta(), "index": _index_meta()}
 
 
@@ -465,16 +499,27 @@ def _print_env_compare(env, base_env):
     print(f"  代码    : {_code_label(env['code'])}  vs  基线 {_code_label(base_env.get('code') or {})}")
     kb, base_kb = env["kb"], base_env.get("kb") or {}
     cfg, base_cfg = env["config"], base_env.get("config") or {}
+    pr, base_pr = env.get("prompts") or {}, base_env.get("prompts") or {}
+    ev, base_ev = env.get("evalset") or {}, base_env.get("evalset") or {}
     kb_same = kb.get("fingerprint") == base_kb.get("fingerprint")
     cfg_same = cfg.get("fingerprint") == base_cfg.get("fingerprint")
+    pr_same = pr.get("fingerprint") == base_pr.get("fingerprint")
+    ev_same = ev.get("sha256") == base_ev.get("sha256")
     print(f"  知识库  : {kb['files']} 文件 fp={kb['fingerprint']}"
           f"  vs  基线 {base_kb.get('files', '?')} 文件 fp={base_kb.get('fingerprint', '?')}"
           + ("" if kb_same else "  ⚠ 已变"))
+    print(f"  提示词  : {len(pr.get('files') or [])} 文件 fp={pr.get('fingerprint')}"
+          f"  vs  基线 {len(base_pr.get('files') or []) if base_pr else '未记录'} 文件"
+          f" fp={base_pr.get('fingerprint', '未记录')}"
+          + ("" if pr_same else "  ⚠ 已变"))
     print(f"  配置    : fp={cfg['fingerprint']}  vs  基线 fp={base_cfg.get('fingerprint', '?')}"
           + ("" if cfg_same else "  ⚠ 已变"))
+    print(f"  评测集  : {ev.get('cases')} 条 fp={ev.get('sha256')}"
+          f"  vs  基线 {base_ev.get('cases', '未记录')} 条 fp={base_ev.get('sha256', '未记录')}"
+          + ("" if ev_same else "  ⚠ 已变（条目增删或期望改动）"))
     print(f"  索引    : {_index_label(env['index'])}  vs  基线 {_index_label(base_env.get('index') or {})}")
-    if not (kb_same and cfg_same):
-        print("  ⚠ 知识库 / 配置与基线不同 —— 指标变化可能来自它们，而不只是代码改动")
+    if not (kb_same and cfg_same and pr_same and ev_same):
+        print("  ⚠ 知识库 / 提示词 / 配置 / 评测集与基线不同 —— 指标变化可能来自它们，而不只是代码改动")
     if env["index"].get("in_sync") is False:
         print("  ⚠ 知识库有变更尚未摄取 —— 索引落后于知识库，先重建再谈指标")
 

@@ -163,8 +163,15 @@ def _env_meta():
     """本轨的关键环境就是「哪个分类头 + 哪版训练集」 —— 任一变化即应视为新基线。"""
     def short(path):
         return _file_sha256(path)[:8] if os.path.isfile(path) else "missing"
+
+    cases = 0
+    if os.path.isfile(_GOLDEN_FILE):
+        with open(_GOLDEN_FILE, encoding="utf-8") as f:
+            cases = sum(1 for line in f if line.strip())
     return {"created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "head": short(_HEAD_FILE), "dataset": short(_TRAIN_FILE), "golden": short(_GOLDEN_FILE)}
+            "head": short(_HEAD_FILE), "dataset": short(_TRAIN_FILE), "golden": short(_GOLDEN_FILE),
+            "evalset": {"file": os.path.relpath(_GOLDEN_FILE, _ROOT).replace("\\", "/"),
+                        "sha256": short(_GOLDEN_FILE), "cases": cases}}
 
 
 def _baseline_payload(m, records):
@@ -209,9 +216,14 @@ def _print_env_compare(env, base_env):
         print("  基线未记录环境（旧格式）—— 跑一次 --save-baseline 即可核对分类头 / 训练集")
         return
     print(f"  基线采集于 {base_env.get('created_at', '?')}")
-    for key, name in (("head", "分类头"), ("dataset", "训练集"), ("golden", "评测集")):
+    for key, name in (("head", "分类头"), ("dataset", "训练集")):
         same = env[key] == base_env.get(key)
         print(f"  {name:<6} : {env[key]}  vs  基线 {base_env.get(key, '?')}" + ("" if same else "  ⚠ 已变"))
+    ev, base_ev = env.get("evalset") or {}, base_env.get("evalset") or {}
+    base_golden = base_ev.get("sha256") or base_env.get("golden")
+    print(f"  评测集  : {ev.get('cases')} 条 fp={ev.get('sha256')}"
+          f"  vs  基线 {base_ev.get('cases', '未记录')} 条 fp={base_golden or '未记录'}"
+          + ("" if ev.get("sha256") == base_golden else "  ⚠ 已变（条目增删或期望改动）"))
     if env["head"] != base_env.get("head"):
         print("  ⚠ 分类头变了 —— 准确率差异首先归因于换模型，而不是评测集")
 

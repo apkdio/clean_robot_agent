@@ -129,6 +129,42 @@ def test_enter_gate_decline_hint_truthful():
         end_sop(sid)
 
 
+def test_all_sop_entry_gate():
+    """强触发也先过进入门；答「是」才启动 SOP。"""
+    from sops import end_sop
+    from tools import pending_store
+
+    sid = "t-all-sop-gate"
+    end_sop(sid)
+    pending_store.close(sid)
+    _reset_session(sid)
+    try:
+        out = "".join(ask_stream("帮我推荐一款扫地机器人", sid)).strip()
+        _assert_in("要走引导吗", out, "强触发也先问意愿")
+        pend = pending_store.peek(sid) or {}
+        _assert_eq(pend.get("biz"), pending_store.BIZ_SOP_ENTER, "落进入确认门")
+        _assert_eq((pend.get("state") or {}).get("sop"), "purchase", "记下要进的 SOP")
+        out2 = "".join(ask_stream("是", sid)).strip()
+        _assert_in("预算", out2, "答是后进选购 SOP")
+    finally:
+        pending_store.close(sid)
+        end_sop(sid)
+
+
+def test_enter_confirm_policy():
+    """门策略由 SOP 自己声明：默认 always，声明 never 才不问。"""
+    import sops
+    from sops.base import SOPS
+
+    _assert_eq(sops.enter_confirm_mode("purchase"), "always", "默认/声明为 always")
+    saved = SOPS["purchase"].get("enter_confirm")
+    SOPS["purchase"]["enter_confirm"] = "never"
+    try:
+        _assert(not sops.sop_needs_enter_confirm("purchase", "帮我推荐一款"), "never 不问门")
+    finally:
+        SOPS["purchase"]["enter_confirm"] = saved
+
+
 def test_ops_clarify_roundtrip():
     """判别器 ambiguous（分差 < gap）→ 问用户选 1/2 → 按选择重放，trace 记 override。"""
     import tools.agent as am
@@ -192,6 +228,9 @@ def test_clarify_open_trace():
         _assert_eq((n.get("in") or {}).get("options"), "followup/date", "记选项")
         _assert_eq((n.get("in") or {}).get("retry"), 0, "记 retry")
         _assert_eq((n.get("out") or {}).get("replaces"), "-", "没覆盖别人")
+        _assert_eq((row.get("shadow") or {}).get("status"), "skipped",
+                   "澄清轮不采样 shadow，显式标 skipped")
+        _assert_eq((row.get("shadow") or {}).get("by"), "clarify", "标出是谁让它跳过")
 
         pending_store.close(sid)
         pending_store.ask(sid, pending_store.BIZ_SOP_EXIT, state={"sop_id": "purchase"})
@@ -287,8 +326,11 @@ def test_ops_clarify_only_when_close():
     try:
         out = "".join(ask_stream("离我最近的维修点", sid)).strip()
         _assert_not_in("您是想问", out, "分差够大 → 不澄清")
-        _assert(pending_store.peek(sid) is None, "没有待确认")
-        _assert_in("城市", out, "service_point 接管（进网点 SOP 问城市）")
+        _assert_in("要走引导吗", out, "网点也先问意愿（V17）")
+        pend = pending_store.peek(sid) or {}
+        _assert_eq(pend.get("biz"), pending_store.BIZ_SOP_ENTER, "落进入确认门")
+        out2 = "".join(ask_stream("是", sid)).strip()
+        _assert_in("城市", out2, "确认后进网点 SOP 问城市")
     finally:
         ops_mod.score_all = saved
         pending_store.close(sid)
@@ -501,6 +543,8 @@ TESTS = [
     test_retrieved_inject_chunks_dropped,
     test_enter_gate_decline_reuses_entry_query,
     test_enter_gate_decline_hint_truthful,
+    test_all_sop_entry_gate,
+    test_enter_confirm_policy,
     test_ops_clarify_roundtrip,
     test_clarify_open_trace,
     test_ops_clarify_two_misses_take_top1,

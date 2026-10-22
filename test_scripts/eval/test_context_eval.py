@@ -89,7 +89,7 @@ _OPS_EXITS = {
     "model": {"structured"},                                     # 型号详情 / 对比 → 直出
     "series": {"structured"},                                    # 系列枚举 → 直出
     "service_point": {"structured", "sop_step", "start_sop"},    # 有坐标直出；否则进网点 SOP
-    "sop": {"start_sop", "sop_step", "clarify"},                 # 强触发直接进；弱触发先过确认门
+    "sop": {"start_sop", "sop_step", "clarify"},                 # 所有 SOP 先过确认门；拒绝后强触发可直接进
     "date": {"structured", "answer", "no_answer_fallback"},      # 日期闸门不过 → 落 RAG
     "structured": {"structured", "answer", "no_answer_fallback"},
     "domain": {"answer", "no_answer_fallback"},                  # 知识问答 = RAG
@@ -542,6 +542,7 @@ def _env_meta() -> dict:
     from tools import trace_store
 
     env = retr._env_meta()
+    env["evalset"] = retr._evalset_meta(_GOLDEN_FILE)   # 复用检索轨的指纹口径，换成本轨的用例集
     try:
         from test_scripts.eval import test_intent_eval as intent
 
@@ -621,6 +622,15 @@ def _print_env_compare(env, base_env) -> None:
     cfg, base_cfg = env.get("config") or {}, base_env.get("config") or {}
     print(f"  配置    : fp={cfg.get('fingerprint')}  vs  基线 fp={base_cfg.get('fingerprint')}"
           + ("" if cfg.get("fingerprint") == base_cfg.get("fingerprint") else "  ⚠ 已变"))
+    pr, base_pr = env.get("prompts") or {}, base_env.get("prompts") or {}
+    print(f"  提示词  : {len(pr.get('files') or [])} 文件 fp={pr.get('fingerprint')}"
+          f"  vs  基线 {len(base_pr.get('files') or []) if base_pr else '未记录'} 文件"
+          f" fp={base_pr.get('fingerprint', '未记录')}"
+          + ("" if pr.get("fingerprint") == base_pr.get("fingerprint") else "  ⚠ 已变"))
+    ev, base_ev = env.get("evalset") or {}, base_env.get("evalset") or {}
+    print(f"  评测集  : {ev.get('cases')} 条 fp={ev.get('sha256')}"
+          f"  vs  基线 {base_ev.get('cases', '未记录')} 条 fp={base_ev.get('sha256', '未记录')}"
+          + ("" if ev.get("sha256") == base_ev.get("sha256") else "  ⚠ 已变（条目增删或期望改动）"))
     print(f"  索引    : {retr._index_label(env.get('index') or {})}"
           f"  vs  基线 {retr._index_label(base_env.get('index') or {})}")
     it, base_it = env.get("intent") or {}, base_env.get("intent") or {}

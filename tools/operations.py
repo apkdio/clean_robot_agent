@@ -51,12 +51,12 @@ def _p_series(query: str) -> bool:
 
 def _p_service_point(query: str) -> bool:
     from sops import match_sop
-    return bool(match_sop(query, "service_point"))
+    return bool(match_sop(query, "service_point", log=False))
 
 
 def _p_sop(query: str) -> bool:
     from sops import match_sop
-    return bool(match_sop(query))
+    return bool(match_sop(query, log=False))
 
 
 def _p_date(query: str) -> bool:
@@ -225,14 +225,14 @@ def _strong_ops(query: str) -> set:
     """强判据命中的操作（确定性证据，给固定加分；不是"像"）。"""
     out = set()
     try:
-        from sops import match_sop, sop_needs_enter_confirm
+        from sops import match_sop, sop_has_strong_trigger
         from tools.metadata_extractor import build_filter, extract_series
         from tools.agent import _has_model_ref
 
-        if match_sop(query, "service_point"):
+        if match_sop(query, "service_point", log=False):
             out.add("service_point")
-        sid = match_sop(query)
-        if sid and not sop_needs_enter_confirm(sid, query):
+        sid = match_sop(query, log=False)
+        if sid and sop_has_strong_trigger(sid, query):
             out.add("sop")
         if build_filter(query):
             out.add("structured")

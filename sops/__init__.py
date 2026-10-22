@@ -15,6 +15,13 @@ from sops.base import (  # noqa: F401
     get_sop_state,
     match_sop,
     sop_needs_enter_confirm,
+    enter_confirm_mode,
+    sop_has_strong_trigger,
+    enter_confirm_text,
+    enter_declined,
+    mark_enter_declined,
+    enter_decline_hint,
+    sop_name,
     handle_followup,
 )
 

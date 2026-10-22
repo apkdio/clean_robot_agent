@@ -42,8 +42,6 @@ from config.word_dict_config import (
     SAFETY_CARRY_PREFIX as _SAFETY_CARRY_PREFIX,
     SOP_ENTER_FAILED_REPLY as _SOP_ENTER_FAILED_REPLY,
     SOP_NAMES as _SOP_NAMES,
-    SOP_REENTER_HINT as _SOP_REENTER_HINT,
-    SOP_REENTER_HINT_DEFAULT as _SOP_REENTER_HINT_DEFAULT,
     TIME_HINT_RE as _TIME_HINT_RE,
 )
 
@@ -608,7 +606,7 @@ def _reenter_sop_on_retry(session_id: str, query: str) -> tuple:
     不靠 query 猜）。重开时送纪念在会话 meta 里的入口 query，而不是这一句槽位答案；
     入口 query 若是弱触发，照样先过确认门。SOP 还活跃时由上面的活跃分支处理，不走这里。
     """
-    from sops import sop_needs_enter_confirm
+    from sops import sop_needs_enter_confirm, enter_confirm_text
     from sops.base import SOPS
     from tools.context_store import get_last_sop
 
@@ -632,7 +630,7 @@ def _reenter_sop_on_retry(session_id: str, query: str) -> tuple:
                       state={"sop": sop_id, "entry": entry},
                       trace_in={"sop": sop_id, "via": "retry", "entry": entry[:40]})
         _log_behavior("ask_clarify", kind="confirm_enter", via="retry")
-        return True, _ENTER_CONFIRM.format(sop=_sop_name(sop_id))
+        return True, enter_confirm_text(sop_id)
     return True, _enter_sop(session_id, sop_id, entry, via="retry")
 
 
@@ -727,8 +725,7 @@ def _clarify_sop_exit(session_id: str, rec: dict, query: str, q: str) -> Clarify
 
 def _clarify_sop_enter(session_id: str, rec: dict, query: str, q: str) -> ClarifyResult:
     """SOP 进入确认门：答「是」进引导，「不是」恢复原句直接作答。"""
-    from sops import SOPS, has_active_sop
-    from tools.context_store import set_enter_declined
+    from sops import SOPS, enter_decline_hint, has_active_sop, mark_enter_declined
 
     rec = pending_store.take(session_id, pending_store.BIZ_SOP_ENTER)
     if not rec:
@@ -758,17 +755,11 @@ def _clarify_sop_enter(session_id: str, rec: dict, query: str, q: str) -> Clarif
         return ClarifyResult.done(reply or _SOP_ENTER_FAILED_REPLY)
     if ans is False or retry >= 1:
         pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
-        enter_declined_turn = False
-        if sop_id != "repair":
-            set_enter_declined(session_id, sop_id=sop_id)
-        else:
-            # 维修不记拒绝：那句可能只是问渠道，下次提故障还得能进排查
-            enter_declined_turn = True
+        # 沿用购买 SOP 的拒绝语义：按 SOP 记一笔，本会话同类泛问不再问门
+        mark_enter_declined(session_id, sop_id)
         logger.info("[SOP] enter declined: %s", sop_id)
         return ClarifyResult.resume(
-            entry,
-            prefix=_SOP_REENTER_HINT.get(sop_id, _SOP_REENTER_HINT_DEFAULT) + "\n\n",
-            enter_declined=enter_declined_turn)
+            entry, prefix=enter_decline_hint(sop_id) + "\n\n", enter_declined=True)
     pending_store.bump(session_id, pending_store.BIZ_SOP_ENTER)
     _log_behavior("ask_clarify", kind="confirm_enter_retry")
     return ClarifyResult.done(_ENTER_CONFIRM.format(sop=_sop_name(sop_id)))
@@ -1019,8 +1010,8 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
     # 统一澄清链路：进入/退出确认、操作澄清共用 pending_store，状态按业务 id 隔离。
     # 这里只按 biz 分派给业务处理器；pending_store 不解析回答、不做业务判断。
     from sops import (has_active_sop, continue_sop, end_sop, match_sop,
-                      get_active_sop_id, get_sop_state, sop_needs_enter_confirm)
-    from tools.context_store import is_enter_declined
+                      get_active_sop_id, get_sop_state, sop_needs_enter_confirm,
+                      sop_has_strong_trigger, enter_confirm_text, enter_declined)
     enter_declined_turn = False  # 本轮刚拒过进入引导：只跳过本轮这道门，不记进会话（下次泛问还要能问）
     prefer_op = None             # 操作澄清选中的操作：本轮派发把它顶到最前
     pending = pending_store.peek(session_id)
@@ -1178,7 +1169,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
         # 两个候选的实际动作一样（sop 对这句解析出的就是 service_point）→ 问了也白问，直接取 top1
         from sops import match_sop as _match_sop
         try:
-            _sop_id = _match_sop(q)
+            _sop_id = _match_sop(q, log=False)
         except Exception:  # noqa: BLE001
             _sop_id = None
         _effect = lambda op: ("service_point" if op == "sop" and _sop_id == "service_point"
@@ -1227,7 +1218,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
 
     def _exec_service_point(_sid, _q, _declined):
         # 网点词信号强，不依赖 intent（"离我最近的维修点"可能被分类器误判 other）
-        # 前端有坐标 → 直接作答；否则交给网点 SOP 问城市（重名再问一次序号）
+        # 前端有坐标 → 直接作答；否则先问意愿，再交给网点 SOP 问城市
         has_coords = lng is not None and lat is not None
         trace_store.node("service_point", status="hit",
                          out={"mode": "coords" if has_coords else "sop"})
@@ -1237,28 +1228,36 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
             points, origin = search_service_points(lng=lng, lat=lat)
             _log_behavior("structured_answer", kind="service_point")
             return format_service_points(points, origin)
+        if sop_needs_enter_confirm("service_point", _q) and not enter_declined(_sid, "service_point"):
+            _open_clarify(_sid, pending_store.BIZ_SOP_ENTER,
+                          state={"sop": "service_point", "entry": _q},
+                          trace_in={"sop": "service_point", "via": "point"})
+            _log_behavior("ask_clarify", kind="confirm_enter", via="point")
+            return enter_confirm_text("service_point")
         return _enter_sop(_sid, "service_point", _q)
 
     def _exec_sop(_sid, _q, declined):
-        if declined:                       # 本轮刚拒过进入引导 → 只跳过本轮这道门
-            return _NOT_MINE
         sop_id = match_sop(_q)
         if not sop_id:
             return _NOT_MINE
-        weak = sop_needs_enter_confirm(sop_id, _q)
-        trace_store.node("sop.match", status="hit", out={"sop": sop_id, "weak": weak})
-        # 弱触发：先问一句要不要走引导；用户拒绝过该 SOP 且这次仍是弱信号 → 不打扰，走正常作答
-        if weak:
-            if is_enter_declined(_sid, sop_id):
-                logger.info("[SOP] enter declined before, skip gate: %s", sop_id)
-                trace_store.step("sop_gate", skipped="declined", sop=sop_id)
-                return _NOT_MINE
+        gate = sop_needs_enter_confirm(sop_id, _q)
+        strong = sop_has_strong_trigger(sop_id, _q)
+        trace_store.node("sop.match", status="hit", out={"sop": sop_id, "gate": gate, "strong": strong})
+        # 默认所有 SOP 先问意愿；本 turn 刚拒绝 / 本会话拒绝过：
+        # 强触发仍可进流程，泛问则走正常作答（不再问门）
+        if gate:
+            if declined or enter_declined(_sid, sop_id):
+                if not strong:
+                    logger.info("[SOP] enter declined, skip gate: %s", sop_id)
+                    trace_store.step("sop_gate", skipped="declined", sop=sop_id)
+                    return _NOT_MINE
+                return _enter_sop(_sid, sop_id, _q, via="strong")
             _open_clarify(_sid, pending_store.BIZ_SOP_ENTER,
                           state={"sop": sop_id, "entry": _q},
-                          trace_in={"sop": sop_id, "via": "weak"})
+                          trace_in={"sop": sop_id, "via": "strong" if strong else "weak"})
             _log_behavior("ask_clarify", kind="confirm_enter")
-            return _ENTER_CONFIRM.format(sop=_sop_name(sop_id))
-        return _enter_sop(_sid, sop_id, _q)
+            return enter_confirm_text(sop_id)
+        return _enter_sop(_sid, sop_id, _q, via="strong" if strong else "weak")
 
     _OP_EXEC = {"followup": _exec_followup, "model": _exec_model, "series": _exec_series,
                 "service_point": _exec_service_point, "sop": _exec_sop}

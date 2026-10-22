@@ -4,7 +4,7 @@
 `biz` 认领自己的状态，再执行本业务逻辑：
 
     sop.exit     SOP 退出确认门
-    sop.enter    SOP 进入确认门（弱触发才问）
+    sop.enter    SOP 进入确认门（所有 SOP 默认先问）
     ops.clarify  操作判别器澄清（多候选分差过近，选 1/2）
 
 业务 id 隔离：`take` / `bump` / `close` 都要求 biz 匹配——A 业务的回复不会被 B 业务消费，

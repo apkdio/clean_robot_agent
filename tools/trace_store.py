@@ -759,3 +759,7 @@ def _finalize(turn: dict, reply: str) -> None:
         if not retrieved:
             turn["path"].append({"node": "retrieve", "status": "skipped",
                                  "by": turn["branch"]})
+        # 影子只在 fc_eligible 分支调用；没调用时补个显式标记，
+        # 读侧才能区分「本轮没采样」和「trace 漏了」
+        if not turn.get("shadow"):
+            turn["shadow"] = {"status": "skipped", "by": turn["branch"]}

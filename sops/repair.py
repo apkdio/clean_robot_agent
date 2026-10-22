@@ -99,6 +99,7 @@ def _search_and_generate(slots: dict):
 REPAIR_SOP = {
     "id": "repair",
     "trigger": REPAIR_TRIGGER,
+    "enter_confirm": "always",
     # 只说「维修/故障/坏了」这类泛问时，先进「进入确认门」问一句（与选购 SOP 同一机制）
     "weak_trigger": REPAIR_WEAK_TRIGGER,
     "guards": [
