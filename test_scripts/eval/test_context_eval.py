@@ -87,11 +87,9 @@ _ACCEPTED_BRANCHES["slot_filled"] = {"sop_step", "structured"}
 _OPS_EXITS = {
     "followup": {"structured"},                                  # 追问筛选 → 直出列表
     "model": {"structured"},                                     # 型号详情 / 对比 → 直出
-    "series": {"structured"},                                    # 系列枚举 → 直出
     "service_point": {"structured", "sop_step", "start_sop"},    # 有坐标直出；否则进网点 SOP
     "sop": {"start_sop", "sop_step", "clarify"},                 # 所有 SOP 先过确认门；拒绝后强触发可直接进
-    "date": {"structured", "answer", "no_answer_fallback"},      # 日期闸门不过 → 落 RAG
-    "structured": {"structured", "answer", "no_answer_fallback"},
+    "find_models": {"structured", "start_sop", "sop_step"},      # 有约束直出；无约束进型号查询 SOP
     "domain": {"answer", "no_answer_fallback"},                  # 知识问答 = RAG
 }
 # RAG（知识问答）在澄清里算「其他」选项，但只有下面这些澄清真把它列出来：
@@ -271,6 +269,25 @@ def _check_case(expect: dict, branch, tag=None, record=None) -> list:
     return problems
 
 
+def _answers_pending(query: str, rec: dict) -> bool:
+    """这一句是不是对当前澄清的回答。是 → 让链路消费；不是 → 按新需求处理。"""
+    from tools import pending_store
+    import tools.agent as agent
+
+    biz = rec.get("biz")
+    try:
+        if biz == pending_store.BIZ_SOP_ENTER:
+            return agent._match_yes_no(query, gate="enter") is not None
+        if biz == pending_store.BIZ_SOP_EXIT:
+            return agent._match_yes_no(query) is not None
+        if biz == pending_store.BIZ_OPS_CLARIFY:
+            opts = list((rec.get("data") or {}).get("options") or [])
+            return agent._match_op_choice(query, opts) is not None
+    except Exception:  # noqa: BLE001 - 解析器异常不该拦住评测，按「不是回答」处理
+        return False
+    return False
+
+
 def _ask(sid: str, query: str):
     """发一轮，返回 (回复, 本轮 trace 记录)。
 
@@ -314,6 +331,7 @@ def _is_must_pass_case(case: dict) -> bool:
 
 def _run_row(row: dict) -> list:
     import sops.base
+    from tools import pending_store
     from tools.context_store import append_message, delete_session
     from tools.pending_store import close as clear_pending
 
@@ -339,8 +357,18 @@ def _run_row(row: dict) -> list:
     replayed = 0
     for case in sorted(row["cases"], key=lambda c: c["query_index"]):
         qi = case["query_index"]
+        dropped = None
         try:
             _replay_prefix(sid, turns, replayed, qi)
+            # 用例轮判的是「这一句」本身：主链路加了进入门之后，旧会话的下一句往往是新需求
+            # （不是「是/不是」），留着 pending 会被当成第二次重答，最后按「拒绝」强制进 SOP。
+            # 只有这一句确实不是回答时才丢；是回答就照常让链路消费（那是数据要覆盖的场景）。
+            left = pending_store.peek(sid)
+            if left and not _answers_pending(case["query"], left):
+                pending_store.close(sid)
+                dropped = {"biz": left.get("biz"), "retry": int(left.get("retry") or 0)}
+                print(f"  [上下文] {case['id']}：用例轮开始前有未闭合的澄清"
+                      f"（biz={dropped['biz']}, retry={dropped['retry']}）→ 已丢弃，按本句判定")
             reply, record = _ask(sid, case["query"])
             append_message(sid, "assistant", reply)
             problems = _check_case(case["expect"], record.get("branch"),
@@ -360,6 +388,7 @@ def _run_row(row: dict) -> list:
         results.append({"case": case, "reply": reply, "problems": problems,
                         "hard": hard, "must_pass": must_pass,
                         "branch": record.get("branch"), "tag": record.get("tag"), "via": via,
+                        "dropped": dropped,
                         "trace": _trace_brief(record) if problems else ""})
         replayed = qi + 1
 
@@ -446,7 +475,8 @@ def _print_detail(results):
         kind = "必过" if r["must_pass"] else "badcase"
         print(f"  [{mark:<7}] {c['id']} ({kind}/{_reason_text(c.get('type'))}) {c['query']}"
               f"   [{_branch_text(r['branch'])}]"
-              + (f"  · 澄清覆盖：{r['via']}" if r.get("via") else ""))
+              + (f"  · 澄清覆盖：{r['via']}" if r.get("via") else "")
+              + (f"  · 前置澄清已丢弃({r['dropped']['biz']})" if r.get("dropped") else ""))
         if r["problems"]:
             print(f"              ↳ {'；'.join(r['problems'])}")
             if r.get("trace"):
@@ -463,7 +493,8 @@ def _print_detail(results):
             mark = "· 未偏离"
         print(f"  [{mark:<7}] {c['id']} ({_reason_text(c.get('type'))}) {c['query']}"
               f"   [{_branch_text(r['branch'])}]"
-              + (f"  · 澄清覆盖：{r['via']}" if r.get("via") else ""))
+              + (f"  · 澄清覆盖：{r['via']}" if r.get("via") else "")
+              + (f"  · 前置澄清已丢弃({r['dropped']['biz']})" if r.get("dropped") else ""))
         if r["problems"]:
             print(f"              ↳ {'；'.join(r['problems'])}")
             if r.get("trace"):
@@ -853,6 +884,11 @@ def run():
     if covered:
         print(f"  判别器澄清覆盖目标出口：{len(covered)} 条（"
               + "、".join(r["case"]["id"] for r in covered) + "）")
+    dropped = [r for r in results if r.get("dropped")]
+    if dropped:
+        print(f"  ⚠ 前缀遗留澄清被丢弃：{len(dropped)} 条（"
+              + "、".join(r["case"]["id"] for r in dropped)
+              + "）——旧会话的下一句是新需求而非回答，上下文与当前主链路不一致，建议补一轮回答或重采")
     print(f"  【软行为·复核清单】{len(need_review)}/{len(soft_results)} 条行为与期望不符 → 需人工 / LLM 复核（不算失败）")
     print("=" * 72)
 

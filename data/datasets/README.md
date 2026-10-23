@@ -67,8 +67,9 @@
 | `other` | 拒答；**命中知识域词表则不拒答、走检索**（ADR-35）；低置信（`intent.low_conf_margin`）且上文有可承接话题 → 降级为 `unknown` |
 | `casual` | 闲聊回复 |
 
-**安全承接不看这四类标签**：危险告警在窗口内时，除"高置信 robot"（`intent.high_conf_margin`）
-外一律先承接——见 `tools/agent.py` 的 S2-a 与 `config/context_template.yaml`。
+**主链路硬承接不看这四类标签**：危险告警在窗口内时，除"高置信 robot"（`intent.high_conf_margin`）
+外一律先承接——见 `tools/safety.py::safety_carry_text` 与 `config/context_template.yaml`。
+澄清/SOP 重问不硬承接，只在原重问后追加软提醒（`tools/safety.py::with_safety_hint`）。
 
 ## 改动数据的约定
 

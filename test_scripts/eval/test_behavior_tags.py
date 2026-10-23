@@ -553,7 +553,7 @@ def test_operation_multi_hit_winner():
     """
     from tools import operations as ops
 
-    cases = [("那有没有2000以上的产品", "structured"),
+    cases = [("那有没有2000以上的产品", "find_models"),
              ("买个扫地机，顺便问问网点", "service_point"),
              ("有更便宜的吗", "followup")]
     for query, want in cases:
@@ -622,6 +622,40 @@ def test_check_case_ops_clarify():
         "退出确认门只给「退出 / 继续」，不按「其他=RAG」放行")
 
 
+def test_sop_enter_confirm_policy():
+    """SOP 进入门策略契约：模式闭集、weak 必须配弱触发词、always 下强触发也要问门。
+
+    v2.8.2 把三种门统一到 sops/base，SOP 自己声明 `enter_confirm`；声明写错或漏配
+    会让「要不要先问一句」整条链路静默改变，所以这里锁住取值与语义。
+    """
+    from sops import base as sb
+
+    _assert_eq(set(sb.ENTER_CONFIRM_MODES), {"always", "weak", "never"}, "进入门模式是闭集")
+    for sid in sb.SOPS:
+        mode = sb.enter_confirm_mode(sid)
+        _assert_in(mode, sb.ENTER_CONFIRM_MODES, f"{sid} 的 enter_confirm 合法（当前 {mode!r}）")
+        if mode == "weak":
+            _assert_true(sb.SOPS[sid].get("weak_trigger"), f"{sid} 声明 weak 必须配弱触发词")
+
+    saved = sb.SOPS["purchase"].get("enter_confirm")
+    try:
+        sop = sb.SOPS["purchase"]
+        weak_words = set(sop.get("weak_trigger") or [])
+        strong_q = next(w for w in sop["trigger"] if w not in weak_words)
+        weak_q = sop["weak_trigger"][0]
+        sop["enter_confirm"] = "always"
+        _assert_true(sb.sop_needs_enter_confirm("purchase", strong_q), "always：强触发也过门")
+        _assert_true(sb.sop_has_strong_trigger("purchase", strong_q), "强触发可识别")
+        sop["enter_confirm"] = "weak"
+        _assert_false(sb.sop_needs_enter_confirm("purchase", strong_q), "weak：强触发直接进流程")
+        _assert_true(sb.sop_needs_enter_confirm("purchase", weak_q), "weak：弱触发先问门")
+        _assert_false(sb.sop_has_strong_trigger("purchase", weak_q), "弱触发不算强判据")
+        sop["enter_confirm"] = "bogus"
+        _assert_eq(sb.enter_confirm_mode("purchase"), "always", "非法模式回落 always")
+    finally:
+        sb.SOPS["purchase"]["enter_confirm"] = saved
+
+
 TESTS = [
     test_branch_closed_set_from_config,
     test_branch_covers_behaviours,
@@ -648,6 +682,7 @@ TESTS = [
     test_operation_multi_hit_winner,
     test_check_case_ops_clarify,
     test_clarify_hub_contract,
+    test_sop_enter_confirm_policy,
 ]
 
 

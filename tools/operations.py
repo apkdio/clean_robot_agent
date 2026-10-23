@@ -11,11 +11,11 @@ from tools.log_tool import get_logger
 
 logger = get_logger(name="operations")
 
-# 表序 = 现行主链路的先后（追问 → 型号 → 系列 → 网点 → SOP → 日期 → 结构化 → 域路由）
+# 表序 = 现行主链路的先后（追问 → 型号详情 → 网点 → SOP → 型号筛选 → 域路由）
 # 派发按这个顺序尝试；多命中且未过阈值门时，它也充当裁决顺序。
-ORDER = ("followup", "model", "series", "service_point", "sop", "date", "structured", "domain")
+ORDER = ("followup", "model", "service_point", "sop", "find_models", "domain")
 
-_ROBOTISH = ("robot", "unknown")     # 型号/系列/SOP/日期/结构化这些分支的合法性门
+_ROBOTISH = ("robot", "unknown")     # 型号/SOP/型号筛选这些分支的合法性门
 
 
 def _p_followup(query: str) -> bool:
@@ -36,17 +36,10 @@ def _p_model(query: str) -> bool:
     return any(w in query for w in MODEL_CONSULT_WORDS) and _has_model_ref(query)
 
 
-def _p_series(query: str) -> bool:
-    """系列枚举：既要命中枚举意图词，也要真能抽出系列名。
-
-    只看意图词会把「那有没有2000以上的产品」这类预算查询也判成系列（执行体会复核后交棒，
-    但 winner 会记成 series，与实际出口不一致）。
-    """
-    from config.word_dict_config import SERIES_QUERY_WORDS
-    from tools.metadata_extractor import extract_series
-    if not any(w in query for w in SERIES_QUERY_WORDS):
-        return False
-    return bool(extract_series(query))
+def _p_find_models(query: str) -> bool:
+    """预算 / 日期 / 系列任一规则约束命中，就交给型号筛选（判别阶段不调 LLM）。"""
+    from tools.model_query import resolve_model_constraints
+    return resolve_model_constraints(query, allow_llm=False) is not None
 
 
 def _p_service_point(query: str) -> bool:
@@ -59,19 +52,6 @@ def _p_sop(query: str) -> bool:
     return bool(match_sop(query, log=False))
 
 
-def _p_date(query: str) -> bool:
-    """含时间表达（购买/使用时长不算，与 agent 的日期守卫同口径）。"""
-    from config.word_dict_config import TIME_HINT_RE, PURCHASE_DURATION_RE, RELEASE_HINT_RE
-    if not TIME_HINT_RE.search(query):
-        return False
-    return not (PURCHASE_DURATION_RE.search(query) and not RELEASE_HINT_RE.search(query))
-
-
-def _p_structured(query: str) -> bool:
-    from tools.metadata_extractor import build_filter
-    return bool(build_filter(query))
-
-
 def _p_domain(query: str) -> bool:
     from tools.agent import _route_domain
     return bool(_route_domain(query))
@@ -81,11 +61,9 @@ def _p_domain(query: str) -> bool:
 OPERATIONS = {
     "followup": (_p_followup, _ROBOTISH, ORDER.index("followup")),
     "model": (_p_model, _ROBOTISH, ORDER.index("model")),
-    "series": (_p_series, _ROBOTISH, ORDER.index("series")),
     "service_point": (_p_service_point, None, ORDER.index("service_point")),   # 不依赖意图
     "sop": (_p_sop, _ROBOTISH, ORDER.index("sop")),
-    "date": (_p_date, _ROBOTISH, ORDER.index("date")),
-    "structured": (_p_structured, _ROBOTISH, ORDER.index("structured")),
+    "find_models": (_p_find_models, _ROBOTISH, ORDER.index("find_models")),
     "domain": (_p_domain, _ROBOTISH, ORDER.index("domain")),
 }
 
@@ -226,7 +204,7 @@ def _strong_ops(query: str) -> set:
     out = set()
     try:
         from sops import match_sop, sop_has_strong_trigger
-        from tools.metadata_extractor import build_filter, extract_series
+        from tools.model_query import resolve_model_constraints
         from tools.agent import _has_model_ref
 
         if match_sop(query, "service_point", log=False):
@@ -234,10 +212,8 @@ def _strong_ops(query: str) -> set:
         sid = match_sop(query, log=False)
         if sid and sop_has_strong_trigger(sid, query):
             out.add("sop")
-        if build_filter(query):
-            out.add("structured")
-        if extract_series(query):
-            out.add("series")
+        if resolve_model_constraints(query, allow_llm=False):
+            out.add("find_models")
         if _has_model_ref(query):
             out.add("model")
     except Exception as e:  # noqa: BLE001

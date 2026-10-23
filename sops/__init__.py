@@ -5,6 +5,7 @@
 
 from sops.base import (  # noqa: F401
     SOPS,
+    SKIP,
     register,
     start_sop,
     continue_sop,
@@ -29,4 +30,5 @@ from sops.base import (  # noqa: F401
 import sops.service_point  # noqa: F401
 import sops.purchase  # noqa: F401
 import sops.repair  # noqa: F401
+import sops.model_query  # noqa: F401
 

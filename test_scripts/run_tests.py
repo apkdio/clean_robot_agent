@@ -1,4 +1,4 @@
-"""评测入口：只跑 eval/ 下的数据集评测轨（检索质量 / 多轮行为 / 意图分类 + tag 契约自检）。
+"""评测入口：只跑 eval/ 下的数据集评测轨（检索质量 / 多轮行为 / 意图分类 / SOP 状态机 + tag 契约自检）。
 """
 import os
 import sys
@@ -15,6 +15,7 @@ from test_scripts.eval import test_behavior_tags  # noqa: E402
 from test_scripts.eval import test_retrieval_eval  # noqa: E402
 from test_scripts.eval import test_context_eval  # noqa: E402
 from test_scripts.eval import test_intent_eval  # noqa: E402
+from test_scripts.eval import test_sop_eval  # noqa: E402
 
 
 MODULES = [
@@ -22,6 +23,7 @@ MODULES = [
     ("检索质量评测", test_retrieval_eval),
     ("多轮行为评测", test_context_eval),
     ("意图分类评测", test_intent_eval),
+    ("SOP 行为轨", test_sop_eval),
 ]
 
 
@@ -52,7 +54,7 @@ def main():
         print(f"# 未执行任何用例（{grand_s} 个模块被跳过）")
     print("#" * 72)
     if not E2E:
-        print("⚠ 未加 --e2e：三条数据集评测轨全部跳过，本次只跑了纯规则自检。")
+        print("⚠ 未加 --e2e：三条依赖外部模型/检索的数据集评测轨跳过；SOP 行为轨仍会运行。")
         print("  加 --e2e 才是完整评测（需 Ollama + Chroma + reranker）。")
     if grand_t == 0 or grand_s >= 3:
         # 「数据集评测轨全跳过」不等于「评测通过」：退出码要能区分（review §4.6）。

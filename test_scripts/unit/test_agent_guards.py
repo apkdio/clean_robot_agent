@@ -165,6 +165,70 @@ def test_enter_confirm_policy():
         SOPS["purchase"]["enter_confirm"] = saved
 
 
+def test_safety_hint_in_sop_clarify():
+    """安全窗口内，SOP 待确认收到非答案：重问并追加软提醒，不消费 pending。"""
+    from sops import end_sop
+    from tools import pending_store
+    from tools.test_hooks import set_danger_window
+
+    sid = "t-safety-hint-clarify"
+    end_sop(sid)
+    pending_store.close(sid)
+    _reset_session(sid)
+    try:
+        set_danger_window(sid, "漏电")
+        pending_store.ask(sid, pending_store.BIZ_SOP_ENTER,
+                          state={"sop": "purchase", "entry": "帮我推荐一款扫地机器人"})
+        out = "".join(ask_stream("那这个电流现象影响大吗", sid)).strip()
+        _assert_in("安全提醒", out, "非答案保留重问并追加软提醒")
+        _assert_not_in("这个问题我暂时不清楚", out, "澄清内不走硬承接")
+        pend = pending_store.peek(sid) or {}
+        _assert_eq(pend.get("biz"), pending_store.BIZ_SOP_ENTER, "pending 未被消费")
+        _assert_eq(pend.get("retry"), 1, "重问次数 +1")
+    finally:
+        pending_store.close(sid)
+        end_sop(sid)
+
+
+def test_safety_hint_in_active_sop():
+    """活跃 SOP 槽位没听清：SOP 自己重问，追加软提醒，SOP 不结束。"""
+    from sops import end_sop, get_active_sop_id, start_sop
+    from tools.test_hooks import set_danger_window
+
+    sid = "t-safety-hint-sop"
+    end_sop(sid)
+    _reset_session(sid)
+    try:
+        start_sop(sid, "purchase", "帮我推荐一款扫地机器人")
+        set_danger_window(sid, "漏电")
+        out = "".join(ask_stream("我不知道", sid)).strip()
+        _assert_in("安全提醒", out, "SOP 重问后带安全提醒")
+        _assert_eq(get_active_sop_id(sid), "purchase", "SOP 仍活跃，未被提醒打断")
+    finally:
+        end_sop(sid)
+
+
+def test_safety_carry_main_text():
+    """主链路硬承接仍是独立出口，文案改为软警示。"""
+    from sops import end_sop
+    from tools import pending_store
+    from tools.test_hooks import set_danger_window
+
+    sid = "t-safety-carry-main"
+    end_sop(sid)
+    pending_store.close(sid)
+    _reset_session(sid)
+    try:
+        set_danger_window(sid, "漏电")
+        out = "".join(ask_stream("那这个电流现象影响大吗", sid)).strip()
+        _assert_in("这个问题我暂时不清楚", out, "主链路仍走硬承接")
+        _assert_in("安全风险", out, "文案带安全风险")
+        _assert(pending_store.peek(sid) is None, "主链路无 pending")
+    finally:
+        pending_store.close(sid)
+        end_sop(sid)
+
+
 def test_ops_clarify_roundtrip():
     """判别器 ambiguous（分差 < gap）→ 问用户选 1/2 → 按选择重放，trace 记 override。"""
     import tools.agent as am
@@ -179,8 +243,8 @@ def test_ops_clarify_roundtrip():
     _reset_session(sid)
     saved = ops_mod.score_all
     # 两个候选都在 floor 之上、分差 0.05 < gap（配置 0.10）→ ambiguous；两者实际动作不同（追问 vs 发布时间）
-    ops_mod.score_all = lambda q: ({"followup": 1.60, "date": 1.55}, "ok")
-    q = "有没有以旧换新的服务，最近想换一个机器人了"
+    ops_mod.score_all = lambda q: ({"followup": 1.60, "find_models": 1.55}, "ok")
+    q = "2000以内的扫地机器人，有没有更便宜的"
     try:
         first = "".join(ask_stream(q, sid)).strip()
         _assert_in("您是想问", first, "分差过近 → 先问用户")
@@ -217,15 +281,15 @@ def test_clarify_open_trace():
     pending_store.close(sid)
     _reset_session(sid)
     saved = ops_mod.score_all
-    ops_mod.score_all = lambda q: ({"followup": 1.60, "date": 1.55}, "ok")
+    ops_mod.score_all = lambda q: ({"followup": 1.60, "find_models": 1.55}, "ok")
     try:
-        "".join(ask_stream("有没有以旧换新的服务，最近想换一个机器人了", sid)).strip()
+        "".join(ask_stream("2000以内的扫地机器人，有没有更便宜的", sid)).strip()
         row = trace_reader.load(trace_store._path(sid))[-1]
         nodes = [n for n in (row.get("path") or []) if n.get("node") == "clarify.open"]
         _assert(nodes, "提问轮有 clarify.open")
         n = nodes[-1]
         _assert_eq((n.get("in") or {}).get("biz"), pending_store.BIZ_OPS_CLARIFY, "记 biz")
-        _assert_eq((n.get("in") or {}).get("options"), "followup/date", "记选项")
+        _assert_eq((n.get("in") or {}).get("options"), "followup/find_models", "记选项")
         _assert_eq((n.get("in") or {}).get("retry"), 0, "记 retry")
         _assert_eq((n.get("out") or {}).get("replaces"), "-", "没覆盖别人")
         _assert_eq((row.get("shadow") or {}).get("status"), "skipped",
@@ -236,7 +300,7 @@ def test_clarify_open_trace():
         pending_store.ask(sid, pending_store.BIZ_SOP_EXIT, state={"sop_id": "purchase"})
         trace_store.begin_turn(sid, "覆盖测试")
         am._open_clarify(sid, pending_store.BIZ_OPS_CLARIFY,
-                         state={"query": "原问题"}, options=["sop", "date"])
+                         state={"query": "原问题"}, options=["sop", "find_models"])
         trace_store.end_turn()
         row = trace_reader.load(trace_store._path(sid))[-1]
         n = [x for x in (row.get("path") or []) if x.get("node") == "clarify.open"][-1]
@@ -260,8 +324,8 @@ def test_ops_clarify_two_misses_take_top1():
     pending_store.close(sid)
     _reset_session(sid)
     saved = ops_mod.score_all
-    ops_mod.score_all = lambda q: ({"followup": 1.60, "date": 1.55}, "ok")
-    q = "有没有以旧换新的服务，最近想换一个机器人了"
+    ops_mod.score_all = lambda q: ({"followup": 1.60, "find_models": 1.55}, "ok")
+    q = "2000以内的扫地机器人，有没有更便宜的"
     try:
         trace_store.begin_turn(sid, q)
         first = "".join(ask_stream(q, sid)).strip()
@@ -468,13 +532,15 @@ def test_danger_negative():
 # ──────────────────────────────────────────────────────────────
 
 def test_purchase_duration_guard():
-    from tools.agent import _PURCHASE_DURATION_RE, _RELEASE_HINT_RE, _resolve_date_filter
+    from config.word_dict_config import PURCHASE_DURATION_RE as _PURCHASE_DURATION_RE
+    from config.word_dict_config import RELEASE_HINT_RE as _RELEASE_HINT_RE
+    from tools.model_query import resolve_model_constraints
 
     _assert(_PURCHASE_DURATION_RE.search("我这个买了才半年，保修期到了要不要续"), "识别购买时长")
     _assert(not _RELEASE_HINT_RE.search("我这个买了才半年，保修期到了要不要续"), "该句无发布类信号")
     _assert(_PURCHASE_DURATION_RE.search("我用了两年"), "「用了两年」→购买/使用时长")
     _assert(not _PURCHASE_DURATION_RE.search("最近半年有什么新款"), "「最近半年」不是购买时长")
-    _assert(_resolve_date_filter("我这个买了才半年，怎么提示说保修期到了要不要续，不是一年吗？") is None,
+    _assert(resolve_model_constraints("我这个买了才半年，怎么提示说保修期到了要不要续，不是一年吗？") is None,
             "保修咨询不进日期结构化（否则会答成型号列表）")
 
 
@@ -545,6 +611,9 @@ TESTS = [
     test_enter_gate_decline_hint_truthful,
     test_all_sop_entry_gate,
     test_enter_confirm_policy,
+    test_safety_hint_in_sop_clarify,
+    test_safety_hint_in_active_sop,
+    test_safety_carry_main_text,
     test_ops_clarify_roundtrip,
     test_clarify_open_trace,
     test_ops_clarify_two_misses_take_top1,

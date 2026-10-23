@@ -26,7 +26,7 @@ def test_probe_hits():
     hit = ops.probe("离我最近的维修点")
     _assert_in("service_point", hit, "网点词 → service_point")
     _assert_in("sop", hit, "「维修」同时撞 SOP 弱触发（真实竞争，靠表序裁决）")
-    _assert_in("date", hit, "「最近」会误撞时间词表——已知假阳性，靠 allow/判据收窄")
+    _assert("date" not in hit, "date 已并入 find_models，不再是独立操作")
     casual = ops.probe("那你可以陪我玩过家家吗，班里这个游戏很火")
     _assert("model" not in casual, "闲聊句不命中 model（真判据比指代词表窄）")
 
@@ -74,10 +74,10 @@ def test_note_ops_writes_route_and_returns_usable():
     rows = trace_reader.load(trace_store._path("ops1"))
     got = ((rows[0].get("route") or {}).get("ops") if rows else None) or {}
     _assert_eq(got.get("state"), "win", "落 state")
-    _assert_eq(got.get("ops"), "service_point/sop/date/domain", "候选按表序（/ 连接）")
-    _assert_eq(got.get("n"), 4, "落候选数")
+    _assert_eq(got.get("ops"), "service_point/sop/domain", "候选按表序（/ 连接）")
+    _assert_eq(got.get("n"), 3, "落候选数")
     _assert_eq(got.get("winner"), "service_point", "落裁决结果")
-    _assert_eq(note.get("usable"), ["service_point", "sop", "date", "domain"],
+    _assert_eq(note.get("usable"), ["service_point", "sop", "domain"],
                "shadow: usable 按表序给出")
     _assert_eq(casual.get("usable"), [], "casual 时没有可用操作")
 
@@ -89,14 +89,14 @@ def test_order_contract():
     期望值是**业务上该走哪条**，不是"当前恰好走哪条"；两者不一致就是缺陷。
     """
     cases = [
-        # 预算筛选：series 曾因只看枚举词表而误命中（V4），修好后应落到 structured
-        ("那有没有2000以上的产品", "structured"),
+        # 预算/系列筛选都归 find_models
+        ("那有没有2000以上的产品", "find_models"),
         # 网点 + SOP 弱触发竞争：网点更具体，排在 SOP 前
         ("买个扫地机，顺便问问网点", "service_point"),
         ("有更便宜的吗", "followup"),
         # 型号详情（单一命中）与系列枚举各走各的
         ("云顶X2多少钱", "model"),
-        ("净白系列有哪些型号", "series"),
+        ("净白系列有哪些型号", "find_models"),
     ]
     for query, expected in cases:
         got = ops.resolve(ops.probe(query), intent="robot", margin=0.9)
@@ -112,7 +112,7 @@ def test_score_all_shape_and_determinism():
     _assert_eq({k: round(v, 3) for k, v in s1.items()}, {k: round(v, 3) for k, v in s2.items()},
                "同一 query 分数可复现")
     top = max(s1, key=s1.get)
-    _assert_eq(top, "series", "系列问句 series 分最高")
+    _assert_eq(top, "find_models", "系列/预算问句 find_models 分最高")
 
 
 def test_score_all_degrades_without_dense():
@@ -124,7 +124,7 @@ def test_score_all_degrades_without_dense():
     finally:
         ops._dense_scores = saved
     _assert_eq(status, "dense_degraded", "状态标出降级")
-    _assert(scores.get("series", 0) > 0, "BM25 + 强判据仍有分")
+    _assert(scores.get("find_models", 0) > 0, "BM25 + 强判据仍有分")
 
 
 def test_resolve_by_scores():
@@ -180,20 +180,20 @@ def test_two_gates_score_then_vocab():
     """三道门：① 分数过阈值 ② 词表/结构命中 ③ 分差。①②各砍一类候选。"""
     saved = (ops.score_all, ops._ops_cfg)
     ops._ops_cfg = lambda: {"scoring": "on", "floor": 1.2, "gap": 0.10}
-    # model 分数够但词表没命中；date 词表命中但分数不够
-    ops.score_all = lambda q: ({"model": 2.0, "date": 0.10, "service_point": 1.9}, "ok")
+    # model 分数够但词表没命中；find_models 词表命中但分数不够
+    ops.score_all = lambda q: ({"model": 2.0, "find_models": 0.10, "service_point": 1.9}, "ok")
     try:
         note = ops.note_ops("离我最近的维修点", intent="robot", margin=0.9)
     finally:
         ops.score_all, ops._ops_cfg = saved
     _assert("model" not in note["usable"], "分数够但词表没命中 → 第二道门砍掉")
-    _assert("date" not in note["usable"], "词表命中但分数不够 → 第一道门砍掉")
+    _assert("find_models" not in note["usable"], "词表命中但分数不够 → 第一道门砍掉")
     _assert_eq(note["usable"][0], "service_point", "两门都过的排第一")
     _assert_eq(note.get("n_candidates"), 2, "过第一道门的数量（model/service_point）")
 
 
 def test_keyphrases_shape():
-    """关键句表形状：8 个操作都在、每个至少 4 句、无空项（打分的最低前提）。
+    """关键句表形状：6 个操作都在、每个至少 4 句、无空项（打分的最低前提）。
 
     数量口径与 eval 侧 test_operation_keyphrase_coverage 一致（设计 4~6 句）。"""
     from config.word_dict_config import OPERATION_KEYPHRASES

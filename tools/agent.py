@@ -27,7 +27,6 @@ from config.word_dict_config import (DOMAIN_MAP, EMOTION_MILD, EMOTION_STRONG, E
 from config.word_dict_config import (
     AFTERSALES_WORDS, BRAND_WORDS,
     BLOCK_INJECT_REPLY as _BLOCK_INJECT_REPLY,
-    DATE_SELECT_HINT_RE as _DATE_SELECT_HINT_RE,
     ENTER_CONFIRM as _ENTER_CONFIRM,
     CLARIFY_GUESS as _CLARIFY_GUESS,
     EXIT_CONFIRM as _EXIT_CONFIRM,
@@ -35,15 +34,13 @@ from config.word_dict_config import (
     OPERATION_LABELS as _OPERATION_LABELS,
     OPS_CLARIFY as _OPS_CLARIFY,
     OPS_CLARIFY_RETRY as _OPS_CLARIFY_RETRY,
-    PURCHASE_DURATION_RE as _PURCHASE_DURATION_RE,
     REFUSE_OFFTOPIC_REPLY as _REFUSE_OFFTOPIC_REPLY,
-    RELEASE_HINT_RE as _RELEASE_HINT_RE,
-    SAFETY_CARRY as _SAFETY_CARRY,
-    SAFETY_CARRY_PREFIX as _SAFETY_CARRY_PREFIX,
     SOP_ENTER_FAILED_REPLY as _SOP_ENTER_FAILED_REPLY,
     SOP_NAMES as _SOP_NAMES,
-    TIME_HINT_RE as _TIME_HINT_RE,
 )
+from tools.safety import (recent_carry_count, safety_carry_max, safety_carry_text,
+                          window_danger_word, with_safety_hint)
+from tools.model_query import format_model_query, resolve_model_query
 
 logger = get_logger(name="agent")
 
@@ -52,7 +49,7 @@ _llm_cfg = _agent_cfg.get("llm", {})
 _behavior = _agent_cfg.get("behavior", {})
 
 # 没有执行体、属于作答管线的一段：分数排到最前就交给管线，不再试更低分的执行体
-_PIPELINE_OPS = {"date", "structured", "domain"}
+_PIPELINE_OPS = {"domain"}
 
 _hybrid_retriever = None  # 懒加载单例
 
@@ -316,17 +313,6 @@ def _window_messages(session_id: str) -> list:
     return get_recent(session_id, n=n)
 
 
-def _window_danger_word(session_id: str) -> str | None:
-    """窗口内若发生过安全告警，返回命中的危险词（取最近一条）；没有则 None。"""
-    from config.word_dict_config import DANGER_WORDS
-
-    for m in reversed(_window_messages(session_id)):
-        if m.get("danger"):
-            text = m.get("content") or ""
-            return next((w for w in DANGER_WORDS if w in text), "")
-    return None
-
-
 def _window_domain(session_id: str) -> str | None:
     """窗口内最近一条能路由到知识域的 user 消息所属域；没有则 None。
 
@@ -340,21 +326,7 @@ def _window_domain(session_id: str) -> str | None:
     return None
 
 
-# 退出确认门 / 进入确认门 / 安全承接话术：见 config/word_dict_config.py
-
-
-def _recent_carry_count(session_id: str) -> int:
-    """最近连续几条客服回复是安全承接（同一告警最多承接 context.safety_carry_max 次）。
-    """
-    n = 0
-    for m in reversed(_window_messages(session_id)):
-        if m.get("role") != "assistant":
-            continue
-        if (m.get("content") or "").startswith(_SAFETY_CARRY_PREFIX):
-            n += 1
-        else:
-            break
-    return n
+# 退出确认门 / 进入确认门 / 安全承接话术：见 config/word_dict_config.py 与 tools/safety.py
 
 
 def _cosine(a, b) -> float:
@@ -471,49 +443,12 @@ def _rewrite_query(session_id: str, query: str) -> tuple[str, Literal["none"]] |
 
 
 def _resolve_date_filter(query: str) -> dict | None:
-    """把问题里的日期表达（绝对或相对）解析成 Chroma 过滤条件。
+    """兼容读侧/评测的日期 filter 适配器；日期解析与守卫在 model_query。"""
+    from function_tools.date_tool import build_date_filter
+    from tools.model_query import resolve_date_range
 
-    先走确定性规则解析（快且可靠），规则未命中时再回退到 LLM function calling。
-    """
-    # 购买/使用时长不是发布时间区间（「买了才半年」）；带了发布/新品类信号才照常解析
-    if _PURCHASE_DURATION_RE.search(query) and not _RELEASE_HINT_RE.search(query):
-        logger.info("[Agent] 购买/使用时长表达，跳过日期结构化：%s", query[:40])
-        return None
-
-    from function_tools.date_tool import (
-        parse_date,
-        calc_date_range,
-        build_date_filter,
-        DATE_TOOL_SCHEMA,
-    )
-
-    # 1. 确定性规则（先绝对后相对）
-    r = parse_date(query)
-    if r:
-        logger.info("[Agent] Date resolved via rule: %s", r)
-        return build_date_filter(r[0], r[1])
-
-    # 2. LLM function calling 兜底
-    if not _TIME_HINT_RE.search(query):
-        return None
-    try:
-        from tools.llm_tool import chat_with_tools
-        resp = chat_with_tools(
-            [HumanMessage(content=query)],
-            [DATE_TOOL_SCHEMA],
-            model=get_chat_model_name(),
-        )
-        tool_calls = getattr(resp, "tool_calls", None) or []
-        if tool_calls:
-            tc = tool_calls[0]
-            args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
-            result = calc_date_range(args.get("expression", ""))
-            if "error" not in result:
-                logger.info("[Agent] Date resolved via LLM tool: %s", result)
-                return build_date_filter(result["start_date"], result["end_date"])
-    except Exception as e:
-        logger.warning("[Agent] Date tool calling failed: %s", e)
-    return None
+    r = resolve_date_range(query)
+    return build_date_filter(r[0], r[1]) if r else None
 
 
 def _has_model_ref(query: str) -> bool:
@@ -568,30 +503,12 @@ def _resolve_model_query(session_id: str, query: str):
     return None
 
 
-def _resolve_series_query(query: str):
-    """系列查询：系列名 + 枚举意图词 → 枚举该系列型号结构化直出。
-    """
-    from config.word_dict_config import SERIES_QUERY_WORDS
-    if not any(w in query for w in SERIES_QUERY_WORDS):
-        return None
-    try:
-        from tools.metadata_extractor import extract_series, enumerate_models_by_series, format_models
-        series = extract_series(query)
-        if series:
-            models = enumerate_models_by_series(series)
-            if models:
-                logger.info("[Agent] Series query resolved: %s (%d models)", series, len(models))
-                return format_models(models, f"{series}系列有以下型号：")
-    except Exception as e:
-        logger.warning("[Agent] Series query failed: %s", e)
-    return None
-
-
 def _enter_sop(session_id: str, sop_id: str, query: str, **detail) -> str:
     """进一条 SOP：启动 + 记 trace 进度 + 打行为标签，返回要回给用户的话。"""
     from sops import start_sop
     from tools.context_store import set_last_sop
-    reply, _done = start_sop(session_id, sop_id, query)
+    slots = detail.pop("slots", None)
+    reply, _done = start_sop(session_id, sop_id, query, slots=slots)
     _note_sop(session_id, sop_id)
     set_last_sop(session_id, sop_id, query)   # 「重新回答」据此重开同一流程、并送回它的入口 query
     if reply:
@@ -710,17 +627,21 @@ def _clarify_sop_exit(session_id: str, rec: dict, query: str, q: str) -> Clarify
         pending_store.close(session_id, pending_store.BIZ_SOP_EXIT)
         _log_behavior("sop_step", via="confirm_no")
         return ClarifyResult.done("好的，那我们继续刚才的话题～")
-    if ans is True or retry >= 1:
+    if ans is True:
         pending_store.close(session_id, pending_store.BIZ_SOP_EXIT)
         end_sop(session_id)
-        _log_behavior("exit_sop", via="confirm" if ans is True else "confirm_timeout")
-        if ans is True:
-            return ClarifyResult.done(f"好的，已退出「{sop_name}」环节～")
+        _log_behavior("exit_sop", via="confirm")
+        return ClarifyResult.done(f"好的，已退出「{sop_name}」环节～")
+    if retry >= 1:
+        pending_store.close(session_id, pending_store.BIZ_SOP_EXIT)
+        end_sop(session_id)
+        _log_behavior("exit_sop", via="confirm_timeout")
         # 两次都没踩中「是/不是」→ 直接退出，不对这一句做二次意图理解
         return ClarifyResult.done(f"好的，已退出「{sop_name}」环节～有新的问题可以直接问我。")
     pending_store.bump(session_id, pending_store.BIZ_SOP_EXIT)
     _log_behavior("ask_clarify", kind="confirm_exit_retry")
-    return ClarifyResult.done(_EXIT_CONFIRM.format(sop=sop_name))
+    return ClarifyResult.done(with_safety_hint(
+        _EXIT_CONFIRM.format(sop=sop_name), session_id, by="clarify"))
 
 
 def _clarify_sop_enter(session_id: str, rec: dict, query: str, q: str) -> ClarifyResult:
@@ -753,16 +674,23 @@ def _clarify_sop_enter(session_id: str, rec: dict, query: str, q: str) -> Clarif
         pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
         reply = _enter_sop(session_id, sop_id, entry, via="confirm_enter")
         return ClarifyResult.done(reply or _SOP_ENTER_FAILED_REPLY)
-    if ans is False or retry >= 1:
+    if ans is False:
         pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
         # 沿用购买 SOP 的拒绝语义：按 SOP 记一笔，本会话同类泛问不再问门
         mark_enter_declined(session_id, sop_id)
         logger.info("[SOP] enter declined: %s", sop_id)
         return ClarifyResult.resume(
             entry, prefix=enter_decline_hint(sop_id) + "\n\n", enter_declined=True)
+    if retry >= 1:
+        pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
+        mark_enter_declined(session_id, sop_id)
+        logger.info("[SOP] enter declined: %s", sop_id)
+        return ClarifyResult.resume(
+            entry, prefix=enter_decline_hint(sop_id) + "\n\n", enter_declined=True)
     pending_store.bump(session_id, pending_store.BIZ_SOP_ENTER)
     _log_behavior("ask_clarify", kind="confirm_enter_retry")
-    return ClarifyResult.done(_ENTER_CONFIRM.format(sop=_sop_name(sop_id)))
+    return ClarifyResult.done(with_safety_hint(
+        _ENTER_CONFIRM.format(sop=_sop_name(sop_id)), session_id, by="clarify"))
 
 
 def _clarify_ops(session_id: str, rec: dict, query: str, q: str) -> ClarifyResult:
@@ -796,9 +724,9 @@ def _clarify_ops(session_id: str, rec: dict, query: str, q: str) -> ClarifyResul
             prefer_op=opts[0] if opts else None)
     pending_store.bump(session_id, pending_store.BIZ_OPS_CLARIFY)
     _log_behavior("ask_clarify", kind="ops_clarify_retry")
-    return ClarifyResult.done(_OPS_CLARIFY_RETRY.format(
+    return ClarifyResult.done(with_safety_hint(_OPS_CLARIFY_RETRY.format(
         a=_label(opts[0]) if opts else "-",
-        b=_label(opts[1]) if len(opts) > 1 else "-"))
+        b=_label(opts[1]) if len(opts) > 1 else "-"), session_id, by="clarify"))
 
 
 _CLARIFY_HANDLERS = {
@@ -1123,26 +1051,19 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
             intent, margin = intent2, margin2
     trace_store.step("intent", intent=intent, margin=margin, intent_retry=intent_retry)
 
-    # 近期发生过安全告警 → 直接承接（零检索、零 LLM）。
+    # 近期发生过安全告警 → 主链路直接承接（零检索、零 LLM）。
     low_conf = low_conf_margin > 0 and margin < low_conf_margin
-    high_conf_margin = float((_ctx_cfg().get("intent") or {}).get("high_conf_margin", 0) or 0)
-    confident_robot = intent == "robot" and high_conf_margin > 0 and margin >= high_conf_margin
-    max_carry = int((_ctx_cfg().get("context") or {}).get("safety_carry_max", 2) or 0)
-    if _ctx_enabled() and not confident_robot and _recent_carry_count(session_id) < max_carry:
-        danger_word = _window_danger_word(session_id)
-        if danger_word is not None:
-            logger.info(
-                "[Context] intent=%s (margin=%.3f) + 安全告警(%s) → 安全承接",
-                intent, margin, danger_word or "-",
-            )
-            _log_behavior("carry_safety", danger=danger_word or "-")
-            reply = _SAFETY_CARRY.format(danger=f"「{danger_word}」" if danger_word else "情况")
-            trace_store.node("guard.safety_carry", status="hit",
-                             in_={"count": _recent_carry_count(session_id), "max": max_carry,
-                                  "need_margin": high_conf_margin, "margin": round(margin, 3)},
-                             out={"chars": len(reply)})
-            yield reply
-            return
+    danger_word = window_danger_word(session_id)
+    safety_reply = safety_carry_text(session_id, q, intent=intent, margin=margin)
+    if safety_reply:
+        high_conf_margin = float((_ctx_cfg().get("intent") or {}).get("high_conf_margin", 0) or 0)
+        _log_behavior("carry_safety", danger=danger_word or "-")
+        trace_store.node("guard.safety_carry", status="hit",
+                         in_={"count": recent_carry_count(session_id), "max": safety_carry_max(),
+                              "need_margin": high_conf_margin, "margin": round(margin, 3)},
+                         out={"chars": len(safety_reply)})
+        yield safety_reply
+        return
 
     # 低置信的 other 不硬拒答
     # 还要上文有可承接的话题，否则就是真域外，维持拒答。
@@ -1208,13 +1129,18 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
             _log_behavior("structured_answer", kind="model_detail")
         return reply or _NOT_MINE
 
-    def _exec_series(_sid, _q, _declined):
-        reply = _resolve_series_query(_q)
-        if reply:
-            trace_store.node("series_query", status="hit")
-            _shadow_probe(_q, _sid, "model_query", "系列枚举")
-            _log_behavior("structured_answer", kind="series")
-        return reply or _NOT_MINE
+    def _exec_find_models(_sid, _q, _declined):
+        result = resolve_model_query(_q)
+        if result:
+            _shadow_probe(_q, _sid, "model_query", "预算/时间/系列筛选")
+            _log_behavior("structured_answer",
+                          kind="series" if result.kind == "series" else "filter",
+                          n=len(result.models))
+            return format_model_query(result)
+        from tools.model_query import constraints_to_slots, is_model_query_intent
+        if is_model_query_intent(_q):
+            return _enter_sop(_sid, "model_query", _q, slots=constraints_to_slots(_q))
+        return _NOT_MINE
 
     def _exec_service_point(_sid, _q, _declined):
         # 网点词信号强，不依赖 intent（"离我最近的维修点"可能被分类器误判 other）
@@ -1259,7 +1185,7 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
             return enter_confirm_text(sop_id)
         return _enter_sop(_sid, sop_id, _q, via="strong" if strong else "weak")
 
-    _OP_EXEC = {"followup": _exec_followup, "model": _exec_model, "series": _exec_series,
+    _OP_EXEC = {"followup": _exec_followup, "model": _exec_model, "find_models": _exec_find_models,
                 "service_point": _exec_service_point, "sop": _exec_sop}
     # 按表序/分数派发：命中即接管，不是该管的试下一个；日期/结构化/域路由仍走下面的原分支
     for _name in op_note["usable"]:
@@ -1320,49 +1246,23 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
         logger.info("[Agent] stopped before retrieval")
         return
 
-    hr = _get_retriever()
-    from tools.metadata_extractor import resolve_budget_filter
-    metadata_filter = resolve_budget_filter(q)
+    # 预算/日期筛选与直出收在 model_query；无约束或无结果时继续走 RAG。
+    result = resolve_model_query(q)
+    if result:
+        _shadow_probe(q, session_id, "model_query", "预算/时间筛选")
+        _log_behavior("structured_answer", kind="filter", n=len(result.models))
+        yield format_model_query(result)
+        return
 
-    # 解析日期表达（"最近半年"/"2025年三月"）→ 日期过滤
-    from config.word_dict_config import BRAND_EVENT_WORDS
-    if any(w in q for w in BRAND_EVENT_WORDS):
-        date_filter = None
-    else:
-        date_filter = _resolve_date_filter(q)
-    # 日期过滤只在句子里带发布/选型信号时才独立直出：时间词常常只是句子的陪衬
-    # （问保修、问故障的句子也能解析出"今年"），无信号且无预算时交给 RAG。
-    if date_filter is not None and metadata_filter is None and not _DATE_SELECT_HINT_RE.search(q):
-        logger.info("[Agent] 日期命中但无选型信号，跳过日期直出：%s", q[:40])
-        date_filter = None
-    trace_store.node("date", out={"hit": date_filter is not None})
-    filter_kind = "budget" if metadata_filter is not None else ""
-    if metadata_filter is not None and date_filter is not None:
-        metadata_filter = {"$and": [metadata_filter, date_filter]}
-        filter_kind = "budget+date"
-    elif date_filter is not None:
-        metadata_filter = date_filter
-        filter_kind = "date"
-
-    # 结构化查询：按 metadata 枚举所有匹配型号（绕过 top-k，避免漏掉条目）
-    if metadata_filter is not None:
-        from tools.metadata_extractor import enumerate_models, format_model_line
-        models = enumerate_models(metadata_filter)
-        trace_store.node("filter", status="hit" if models else "ok",
-                         in_={"kind": filter_kind}, out={"n": len(models)})
-        if models:
-            _shadow_probe(q, session_id, "model_query", "预算/时间筛选")
-            lines = [format_model_line(m) for m in models]
-            prefix = {
-                "budget": f"在您预算内的机器人有 {len(models)} 款：",
-                "date": f"该时间段内发布的机器人有 {len(models)} 款：",
-                "budget+date": f"符合您预算和时间要求的机器人有 {len(models)} 款：",
-            }.get(filter_kind, f"符合条件的机器人有 {len(models)} 款：")
-            _log_behavior("structured_answer", kind="filter", n=len(models))
-            yield prefix + "\n\n" + "\n".join(lines)
+    # 没有直接约束，但用户在问“型号/产品/系列/推荐” → 进型号查询 SOP 补槽
+    from tools.model_query import constraints_to_slots, is_model_query_intent
+    if is_model_query_intent(q):
+        reply = _enter_sop(session_id, "model_query", q, slots=constraints_to_slots(q))
+        if reply:
+            yield reply
             return
-        # 没有匹配型号 → 回退到普通 RAG
-        logger.warning("[Agent] Structured filter matched no models, falling back to RAG")
+
+    hr = _get_retriever()
 
     # 普通 RAG：双路召回（按知识域定向，识别不准则全库兜底）
     # 探针放在结构化筛选之后：走到这里才是真的 kb_search

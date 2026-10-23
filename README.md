@@ -56,7 +56,7 @@ clean_robot_agent/
 │   ├── service_point/           # 售后网点数据（网点清单，城市坐标由 geonamescache 提供）
 │   ├── bgm_model/               # 训练好的分类头模型
 │   ├── pkl/                     # BM25 pickle 缓存
-│   ├── state/                   # 热更新 sha256 快照 + kb_metadata.jsonl（知识库版本记录）
+│   ├── state/                   # 热更新 sha256 快照 + kb_metadata.jsonl + model_tags.json（型号标签映射）
 │   ├── vector_store/            # Chroma 持久化向量库
 │   └── eval/                    # 评测集与基线：retrieval/ 单轮检索 · context/ 多轮行为 · intent/ 意图分类（本地数据，已 gitignore）
 ├── prompts/                     # Prompt 模板（system/摘要/报告）
@@ -72,6 +72,7 @@ clean_robot_agent/
 ├── sops/                        # SOP 标准操作流程（多轮引导）
 │   ├── base.py                  # 会话状态（按 session_id 隔离，带定义指纹）+ 执行器 + 知识域定义
 │   ├── purchase.py              # 选购推荐 SOP
+│   ├── model_query.py           # 型号查询 SOP（预算/系列/时间/标签补槽）
 │   ├── repair.py                # 故障排查 SOP
 │   └── service_point.py         # 售后网点 SOP（问城市 → 重名选序号）
 ├── test_scripts/                # 测试与评测（run_tests.py 只聚合 eval/ 评测轨；unit/ 功能测试可单独运行）
@@ -84,6 +85,8 @@ clean_robot_agent/
 │   │   ├── test_repair_sop.py   # 故障排查 SOP（症状映射 + 流程）
 │   │   ├── test_context.py      # 上下文存储（append/get_recent/meta/UUID 校验）
 │   │   ├── test_metadata.py     # 结构化提取（价格/日期/型号/系列/过滤）
+│   │   ├── test_model_query.py  # 模型查询收敛（预算/日期/组合/守卫）
+│   │   ├── test_selection_tags.py # 标签序号解析 + 型号标签过滤
 │   │   ├── test_function_tools.py  # 日期/预算/型号/症状/网点五个工具
 │   │   ├── test_retrieval.py    # 检索链路（域路由/分词/过滤/RRF/阈值/精排/条目切分）
 │   │   ├── test_agent_guards.py # Agent 前置防护（情绪/注入/危险/退出意图/域外拒答门）
@@ -100,6 +103,7 @@ clean_robot_agent/
 │       ├── test_behavior_tags.py   # 行为闭集（branch）与 trace 记录契约自检（纯规则，不依赖模型）
 │       ├── test_retrieval_eval.py  # 检索质量评测（hit@k/MRR；评测集 data/eval/retrieval）
 │       ├── test_context_eval.py    # 多轮行为评测（按 trace 的 branch 判出口行为；评测集 data/eval/context）
+│       ├── test_sop_eval.py        # SOP 行为轨（槽位 / flow / 重试；纯确定性，不依赖模型）
 │       └── test_intent_eval.py     # 意图分类评测（留出集；口径见 data/datasets/README.md）
 ├── intent_classifier_training/  # 意图分类模型训练工具
 │   ├── build_intent_dataset.py  # 数据集构建（从知识库抽取 + 规则改写）
@@ -119,7 +123,7 @@ clean_robot_agent/
 | 模块 | 职责 |
 |------|------|
 | `agent.py` | RAG 编排：意图路由 → 知识域路由 → 检索 → 结构化直出或 LLM 生成 |
-| `operations.py` | 操作判别器：把"这一轮算哪个操作"（追问 / 型号 / 系列 / 售后网点 / SOP 触发）从编排的 if 链里抽出来，变成可断言、可留痕的一次判定。8 个操作各配一组**关键句**，用稠密 + BM25 双路打分，主链路按**三段过滤**派发：分数过 `floor` → 词表/结构判据命中 → 前两名分差小于 `gap` 时问用户选哪个；判定与分数落 trace 的 `route.ops` |
+| `operations.py` | 操作判别器：把"这一轮算哪个操作"（追问 / 型号详情 / 售后网点 / SOP 触发 / 型号筛选）从编排的 if 链里抽出来，变成可断言、可留痕的一次判定。6 个操作各配一组**关键句**，用稠密 + BM25 双路打分，主链路按**三段过滤**派发：分数过 `floor` → 词表/结构判据命中 → 前两名分差小于 `gap` 时问用户选哪个；判定与分数落 trace 的 `route.ops` |
 | `intent_router.py` | 意图分类：本地分类头（bge-m3 + Linear）判 robot/casual/other/unknown |
 | `query_normalizer.py` | query 入口归一化（纯规则、幂等）：标点 / 空格 / 全半角 / 同义词映射 |
 | `orchestrator.py` | 工具编排：让模型在工具白名单里做一次决策（选工具 + 填参数），**只出决策、不执行工具**；影子模式用于与现有链路对照并打日志 |
@@ -129,6 +133,9 @@ clean_robot_agent/
 | `rrf_fusion.py` | RRF（倒数排名融合）算法 |
 | `reranker.py` | Cross-Encoder 精排（bge-reranker-v2-m3，本地推理；不可用时降级回 RRF 顺序）|
 | `metadata_extractor.py` | 结构化元数据：价格提取、预算解析、发布时间提取、型号信息抽取 |
+| `model_tags.py` | 型号特点标签：受控标签目录 + `data/state/model_tags.json` 映射；原文 `feature` 保留作证据 |
+| `selection.py` | 多选序号解析：中英文逗号/顿号/全角数字归一化，只认序号与固定跳过命令 |
+| `model_query.py` | 模型查询业务：预算/日期/系列约束 → `find_models` → 结构化直出（不处理型号详情/追问） |
 | `entry_splitter.py` | 编号条目分块器（每个问答/型号一个 chunk） |
 | `hot_ingest.py` | 知识库热更新：定时扫描 + 增量入库 |
 | `file_tools.py` | 文档多策略解析（txt/pdf/csv/docx） |
@@ -162,6 +169,7 @@ clean_robot_agent/
 |------|------|
 | `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 知识域定义（DOMAIN_MAP）+ 追问处理（比较新/更便宜）+ 最近发布查询。**会话状态带定义指纹**：代码改过 SOP 定义后，Redis 里的旧会话读时自动作废（不会拿旧下标续跑）；无 Redis 降级的内存态同样按 TTL 过期 |
 | `purchase.py` | 选购推荐 SOP：收集预算（上限/下限/区间/浮动）+ 宠物 → 结构化推荐 |
+| `model_query.py` | 型号查询 SOP：预算/系列/发布时间/标签补槽（可预填、可跳过）→ `find_models` → 列表 |
 | `repair.py` | 故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤 |
 
 ## 快速开始
@@ -287,13 +295,13 @@ python intent_classifier_training/train_intent_classifier.py
 
 训练产物输出到 `data/bgm_model/`，推理时由 `intent_router.py` 自动加载；**重训后需重启服务**才生效。
 样本要覆盖两侧边界（补一族正例常把邻族带翻），评测集里出现过的句子不能进训练集——改完跑
-`test_scripts/run_tests.py --e2e` 的三条评价轨确认没退化。
+`test_scripts/run_tests.py --e2e` 的三条外部依赖评测轨 + 确定性 SOP 行为轨确认没退化。
 
 ## 测试
 
-测试脚本在 `test_scripts/`。**评测入口 `run_tests.py` 只跑 `eval/` 下的数据集评测轨**（检索质量 / 多轮行为 / 意图分类 + 一条纯规则的 tag 契约自检）：
+测试脚本在 `test_scripts/`。**评测入口 `run_tests.py` 只跑 `eval/` 下的评测轨**（检索质量 / 多轮行为 / 意图分类 / SOP 状态机 + 一条纯规则的 tag 契约自检）：
 
-- **评测轨**（`eval/`，默认）：基于留出集与基线，需本地 Ollama + Chroma + 精排模型，**要加 `--e2e`**；
+- **评测轨**（`eval/`，默认）：检索/多轮/意图基于留出集与基线，需本地 Ollama + Chroma + 精排模型，**要加 `--e2e`**；SOP 行为轨是纯确定性，不加 `--e2e` 也会运行；
 - **单元测试**（`unit/`，**暂搁置**）：纯规则逻辑，快、确定性，不进评测入口；文件都还在，需要时单独运行；
 - **数据隔离**：测试产生的会话/上下文文件写入 `data/test_context/`、`data/test_context_metadata/`，不污染真实会话数据。
 
@@ -320,6 +328,7 @@ python intent_classifier_training/train_intent_classifier.py
 | `eval/test_behavior_tags.py` | 行为观测点 tag 契约自检（采集 / 映射 / 判定四态 / 影子隔离） | |
 | `eval/test_retrieval_eval.py` | 检索质量评测（hit@k / MRR / 无召回率 / 结构化直出命中率） | ✓ |
 | `eval/test_context_eval.py` | 多轮行为评测（按行为观测 tag 判出口行为 + 回归门禁 + 软行为复核清单） | ✓ |
+| `eval/test_sop_eval.py` | SOP 行为轨（确定性状态机 / 槽位 / flow / 重试；不依赖 LLM） | |
 | `eval/test_intent_eval.py` | 意图分类评测（逐条标签 / 各类 F1 / 混淆矩阵 / 高置信错判） | ✓ |
 
 `unit/` 是功能测试，**暂搁置**（不进评测入口，需要时单独运行）：
@@ -330,6 +339,8 @@ python intent_classifier_training/train_intent_classifier.py
 | `unit/test_repair_sop.py` | 故障排查 SOP（症状映射 + 流程） | |
 | `unit/test_context.py` | 上下文存储（消息读写 / meta / UUID 校验 / 会话列表） | |
 | `unit/test_metadata.py` | 结构化提取（价格 / 日期 / 型号 / 系列 / 过滤） | |
+| `unit/test_model_query.py` | 模型查询收敛（预算 / 日期 / 组合 / 守卫） | |
+| `unit/test_selection_tags.py` | 标签序号解析（中英文逗号 / 全角 / 跳过）与型号标签过滤 | |
 | `unit/test_function_tools.py` | 日期 / 预算 / 型号 / 症状 / 网点五个工具 | |
 | `unit/test_retrieval.py` | 检索链路（域路由 / 分词 / 过滤 / RRF / 阈值 / 精排 / 条目切分） | 部分 |
 | `unit/test_agent_guards.py` | Agent 前置防护（情绪 / 注入 / 危险 / 退出意图 / 域外拒答门） | |
@@ -342,7 +353,7 @@ python intent_classifier_training/train_intent_classifier.py
 | `unit/test_webapp_routes.py` | webapp 路由层契约（入参校验 / 状态码 / 并发锁拒绝，不碰模型与真实数据） | |
 | `unit/test_dialogue.py` | 多轮实战对话（正常对话 + 非人类对话） | ✓ |
 
-集成用例用 `@e2e` 装饰器标注，未加 `--e2e` 时这些用例自动跳过；**评测入口缺 `--e2e` 时不会静默通过**——只跑不依赖模型的纯规则用例（tag 契约自检），其余全跳过，且退出码区分「全跳过」（2）与「通过」（0）。意图分类是统计模型，逐条误判只打印、不计失败，但**整体准确率有地板门禁**（跌破即判失败，避免红了也看不出来）。
+集成用例用 `@e2e` 装饰器标注，未加 `--e2e` 时这些用例自动跳过；**评测入口缺 `--e2e` 时不会静默通过**——只跑不依赖模型的纯规则用例（tag 契约自检 + SOP 行为轨），其余全跳过，且退出码区分「全跳过」（2）与「通过」（0）。意图分类是统计模型，逐条误判只打印、不计失败，但**整体准确率有地板门禁**（跌破即判失败，避免红了也看不出来）。
 
 ### 检索质量评测
 
@@ -350,7 +361,7 @@ python intent_classifier_training/train_intent_classifier.py
 
 - **评测集**：`data/eval/retrieval/golden.jsonl`（**本地数据，已 gitignore**，不随仓库发布），覆盖域路由 / 型号精准 / 预算过滤 / 时间过滤 / 领域外五类；每条带 `id`（`R001`…，只增不删 → **id 区间即批次**）；
 - **指标**：域路由准确率（top1）、域覆盖命中率（含双域 `$in`）、hit@1/@3/@5、MRR、无召回率、结构化直出命中率；
-- **构建准则与扩充方法**：见 `data/eval/retrieval/README.md`；三条评测轨的总览见 `data/eval/README.md`；评测集缺失时该模块自动跳过，不影响其它测试。
+- **构建准则与扩充方法**：见 `data/eval/retrieval/README.md`；四条评测轨的总览见 `data/eval/README.md`；评测集缺失时该模块自动跳过，不影响其它测试。
 - **基线记录环境**：`baseline.json` 同时记下采集时的代码提交（含未提交改动清单）、知识库指纹、配置指纹与关键阈值；`--compare` 会先核对这几项，知识库 / 配置变了会明确提示「指标变化可能来自它们」。
 
 ```bash
@@ -383,7 +394,7 @@ python intent_classifier_training/train_intent_classifier.py
 | `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关）、`behavior.verbose_log`（文件日志是否降到 DEBUG）、`behavior.query_normalize`（query 入口归一化 + 判可疑时二次判意图的总开关）、`tools.orchestration`（工具编排：`"off"` 走现有分支 / `"shadow"` 只记对照日志不执行；**`"on"` 尚未接线**，取值需带引号）、`tools.shadow_sample`（影子采样率） |
 | `rag.yaml` | `chunk.chunk_size`、`retrieval.dense_top_k/sparse_top_k/final_top_k/score_threshold`、`retrieval.domain_margin`（域路由 margin 门控，0 关闭）、`rrf.*`、`rerank.*`（精排开关/模型/候选宽度/阈值）、`data_dir`（知识库源目录） |
 | `chroma.yaml` | `persist_dir`、`collection_name`、`embedding.model` |
-| `context.yaml` | `intent.low_conf_margin`（低置信降级阈值，0 关闭）、`intent.high_conf_margin`（安全告警窗口内的放行阀，0 关闭）、`context.topic_window`（回看多少条会话记录判定话题与安全告警）、`context.safety_carry_max`（同一告警最多承接几次，0 关闭）、`context.rewrite.*`（改写开关/模式/选轮相似度阈值） |
+| `context.yaml` | `intent.low_conf_margin`（低置信降级阈值，0 关闭）、`intent.high_conf_margin`（安全告警窗口内的放行阀，0 关闭）、`context.topic_window`（回看多少条会话记录判定话题与安全告警）、`context.safety_carry_max`（同一告警最多硬承接几次，0 关闭；澄清/SOP 软提醒不计入）、`context.rewrite.*`（改写开关/模式/选轮相似度阈值） |
 | `redis.yaml` | `host`/`port`/`password`（Redis 连接）、`sop_ttl`（SOP 会话过期）、`clarify_ttl`（澄清状态过期：SOP 进入/退出确认 / 操作澄清共用，**须 ≥ `sop_ttl`**）、`lock_ttl`（锁过期） |
 | `agent.yaml` 的 `operations` | 操作判别打分：`scoring`（`off` 不算分 / `shadow` 只记分不改派发 / `on` 按分派发，默认 on）、`floor`（分数下限，默认 1.20）、`gap`（前两名分差小于它 → 问用户选哪个，默认 0.10） |
 
@@ -416,12 +427,10 @@ flowchart TD
     O3 --> G5
     G5 --> C1["追问检测 → 基于上一轮推荐筛选"]
     G5 --> C2["型号查询 → 型号详情 / 对比"]
-    G5 --> C3["系列查询 → 系列型号枚举直出"]
+    G5 --> C3["型号筛选（预算 / 日期 / 系列）→ find_models；无约束时进型号查询 SOP"]
     G5 --> C4["网点查询 → geonamescache 解析位置 → 距离直出"]
     G5 --> C5["SOP 触发 → 先问一句「要走引导吗」→ 选购 / 故障排查 / 网点多轮引导"]
-    G5 --> C6["含日期 → 日期工具（规则 / LLM function calling）→ 日期范围"]
-    G5 --> C7["含预算 → metadata 过滤 → 结构化直出型号列表"]
-    G5 --> C8["其他 → 知识域路由 → 双路召回（dense+sparse→RRF）→ 精排（域内得分过低则二次全库召回并合并）→ LLM 生成"]
+    G5 --> C7["其他 → 知识域路由 → 双路召回（dense+sparse→RRF）→ 精排（域内得分过低则二次全库召回并合并）→ LLM 生成"]
     C1 --> OUT["SSE 流式输出"]
     C2 --> OUT
     C3 --> OUT
@@ -433,6 +442,8 @@ flowchart TD
 ```
 
 **检索在最后一段**：前面任一出口命中即返回，只有全部放行（含意图与操作判别）才进入知识域路由与双路召回。
+
+**安全话题分两层**：主链路告警后追问走硬承接（`branch=safety_carry`，零检索零 LLM）；澄清/SOP 重问只在原话术末尾追加“安全提醒”（trace `guard.safety_hint`），不消费待确认、不改变出口。
 
 ## 注意事项
 

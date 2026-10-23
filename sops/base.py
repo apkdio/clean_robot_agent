@@ -10,6 +10,7 @@ import time
 
 from tools import trace_store
 from tools.log_tool import get_logger
+from tools.safety import with_safety_hint
 from config.word_dict_config import (
     AFTERSALES_WORDS,BUY_WORDS, CONSULT_WORDS, BRAND_WORDS,
     ENTER_CONFIRM, LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS, PRICIER_WORDS, NEWER_WORDS, OLDER_WORDS,
@@ -19,6 +20,8 @@ from config.word_dict_config import (
 
 logger = get_logger(name="sops_base")
 SOPS = {}  # sop_id → sop 定义
+# 可选槽位的显式“跳过”返回值；与 None（提取失败）区分
+SKIP = object()
 # 定义形如 {"id": xxx, "trigger": [xxx], "guards": [xxx], "intro": xxx, "max_retry": xxx, "steps": [xxx]}
 # 步骤形如 {"id": xxx, "type": ask|action|reply, "slot": xxx, "ask": xxx, "retry": xxx, "extract": xxx}
 #          （action 步换成 "action"，reply 步换成 "template"（字符串或接收 ctx 的函数）；可选 "when" 条件跳过）
@@ -167,8 +170,8 @@ def get_sop_state(session_id: str) -> dict:
     return _load_session(session_id) or {}
 
 
-def _start(session_id: str, sop_id: str):
-    session = make_session(sop_id)
+def _start(session_id: str, sop_id: str, slots: dict = None):
+    session = make_session(sop_id, slots=slots)
     _save_session(session_id, session)
     return session
 
@@ -191,15 +194,16 @@ def _with_exit_hint(intro: str) -> str:
     return intro + "\n（随时可回复「0」退出本环节）"
 
 
-def start_sop(session_id: str, sop_id: str, query: str):
+def start_sop(session_id: str, sop_id: str, query: str, slots: dict = None):
     """进入一个 SOP。返回 (reply, done)。
 
     首轮先尝试用触发 query 提取第一个槽位（预填用户已给的信息），
-    提取失败再问第一个问题。开场提示（intro）可选，有则先输出。
+    提取失败再问第一个问题。`slots` 可由调用方预填，已填的 ask 槽直接跳过。
+    开场提示（intro）可选，有则先输出。
     """
     from tools.context_store import set_enter_declined
     set_enter_declined(session_id, False)   # 用户这次真进了流程，之前「别再问」的标记作废
-    _start(session_id, sop_id)
+    _start(session_id, sop_id, slots=slots)
     logger.info(f"[SOP] Start SOP: {sop_id}")
     reply, done = _run(session_id, query)
     intro = SOPS[sop_id].get("intro")
@@ -295,8 +299,10 @@ def enter_decline_hint(sop_id: str) -> str:
 
 
 def _ask_text(step: dict, key: str, ctx: dict) -> str:
-    """取问话文案；文案里带 {} 占位时用槽位/结果填充，缺键就原样返回。"""
+    """取问话文案；文案可以是字符串模板或 (ctx) -> str 的函数。"""
     text = step.get(key, step["ask"]) or ""
+    if callable(text):
+        text = text(ctx) or ""
     try:
         return text.format(**ctx)
     except (KeyError, IndexError):
@@ -324,6 +330,14 @@ def _run(session_id: str, user_input: str):
                 continue
 
             if step["type"] == "ask":
+                slot = step.get("slot")
+                # 预填槽：不重复问；进入下一槽/动作
+                if slot and session["slots"].get(slot) is not None:
+                    flow.append({"i": session["step"], "type": "ask", "slot": slot,
+                                 "outcome": "skipped", "by": "prefill"})
+                    session["step"] += 1
+                    user_input = None
+                    continue
                 # 有用户输入 → 尝试提取槽位；否则 → 问问题
                 if user_input is None:
                     logger.info("[SOP] %s ask slot=%s", sop["id"], step.get("slot"))
@@ -331,6 +345,15 @@ def _run(session_id: str, user_input: str):
                                  "slot": step.get("slot"), "outcome": "asked"})
                     return _ask_text(step, "ask", ctx), False
                 value = step["extract"](user_input, session["slots"])
+                if value is SKIP:
+                    # 显式留空：不重试，直接跳过该槽
+                    session["slots"][slot] = None
+                    session["step"] += 1
+                    session["retry_count"] = 0
+                    user_input = None
+                    flow.append({"i": session["step"] - 1, "type": "ask",
+                                 "slot": slot, "outcome": "skipped"})
+                    continue
                 if value is None:
                     # 提取失败：累加重试次数，超过上限则放弃该槽位（记 None 跳过）
                     session["retry_count"] = session.get("retry_count", 0) + 1
@@ -349,10 +372,12 @@ def _run(session_id: str, user_input: str):
                     if session["retry_count"] == 1:
                         flow.append({"i": session["step"], "type": "ask",
                                      "slot": step.get("slot"), "outcome": "asked"})
-                        return _ask_text(step, "ask", ctx), False
+                        return with_safety_hint(_ask_text(step, "ask", ctx), session_id,
+                                                by="sop", sop=sop["id"]), False
                     flow.append({"i": session["step"], "type": "ask",
                                  "slot": step.get("slot"), "outcome": "retry"})
-                    return _ask_text(step, "retry", ctx), False
+                    return with_safety_hint(_ask_text(step, "retry", ctx), session_id,
+                                            by="sop", sop=sop["id"]), False
                 # 提取成功，重置重试计数
                 session["slots"][step["slot"]] = value
                 session["step"] += 1

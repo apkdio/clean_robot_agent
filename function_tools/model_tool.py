@@ -17,6 +17,7 @@ from config.word_dict_config import (
     ENUM_RE as _ENUM_RE,
     PRICE_KEYS as _PRICE_KEYS,
     PUBLISH_KEYS as _PUBLISH_KEYS,
+    TAG_CATALOG as _TAG_CATALOG,
 )
 from tools.llm_tool import get_chat_model_name
 
@@ -298,7 +299,14 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
         models = [m for m in models if int(m.get("price") or 0) <= bmax]
 
     rng = (args.get("publish_range") or "").strip()
-    if rng:
+    start = str(args.get("publish_start") or "").strip()
+    end = str(args.get("publish_end") or "").strip()
+    if start:
+        lo = int(re.sub(r"\D", "", start) or 0)
+        hi = int(re.sub(r"\D", "", end) or 99991231)
+        if lo >= 10000101:
+            models = [m for m in models if lo <= _publish_int(m) <= hi]
+    elif rng:
         from function_tools.date_tool import calc_date_range
 
         parsed = calc_date_range(rng)
@@ -340,6 +348,19 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
     if sort_by:
         order = (args.get("order") or "desc").strip()
         models = sorted(models, key=lambda m: _sort_value_of(m, sort_by), reverse=(order != "asc"))
+
+    tags = [str(t).strip() for t in (args.get("tags") or []) if str(t).strip()]
+    if tags:
+        from tools.model_tags import has_tags
+        filter_tags = [t for t in tags if (_TAG_CATALOG.get(t) or {}).get("mode") == "filter"]
+        boost_tags = [t for t in tags if (_TAG_CATALOG.get(t) or {}).get("mode") == "boost"]
+        if filter_tags:
+            models = [m for m in models if has_tags(m.get("name", ""), filter_tags)]
+        if boost_tags:
+            # 稳定分组：有任一 boost 标签的排前面，组内保留原排序
+            models = sorted(models, key=lambda m: 0 if has_tags(m.get("name", ""), boost_tags) else 1)
+    else:
+        boost_tags = []
 
     limit = args.get("limit") or 5
     try:

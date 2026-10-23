@@ -8,7 +8,7 @@ SOP 会话状态与统一待确认状态——所以把最小的 setup 接口集
     setup = {"danger_word": "糊味", "carry_count": 1, "intent": "unknown"}
     → set_danger_window(sid, "糊味"); set_carry_count(sid, 1)
 
-用到的私有接口（agent._SAFETY_CARRY_PREFIX、sops.base.make_session / _save_session）都在本文件里封住：
+用到的私有接口（config.word_dict_config.SAFETY_CARRY_PREFIX、sops.base.make_session / _save_session）都在本文件里封住：
 将来内部结构变了，只改这一处。
 """
 
@@ -29,15 +29,15 @@ def set_danger_window(session_id: str, word: str = "糊味", text: str = "") -> 
 def set_carry_count(session_id: str, n: int) -> None:
     """把「最近连续安全承接次数」设成 n。
 
-    判定机制：agent._recent_carry_count() 从尾部数连续以 _SAFETY_CARRY_PREFIX
+    判定机制：tools.safety.recent_carry_count() 从尾部数连续以 SAFETY_CARRY_PREFIX
     开头的 assistant 回复，所以这里就追加以该前缀开头的回复。
     """
-    from tools.agent import _SAFETY_CARRY_PREFIX
+    from config.word_dict_config import SAFETY_CARRY_PREFIX
     from tools.context_store import append_message
 
     for _ in range(max(0, int(n))):
         append_message(session_id, "assistant",
-                       _SAFETY_CARRY_PREFIX + "情况属于安全隐患，请保持断电停机并联系官方售后。")
+                       SAFETY_CARRY_PREFIX + "，情况属于安全隐患，请保持断电停机并联系官方售后。")
 
 
 def set_active_sop(session_id: str, sop_id: str, step: int = 0,
