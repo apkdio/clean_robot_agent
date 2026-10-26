@@ -652,7 +652,7 @@ def _clarify_sop_enter(session_id: str, rec: dict, query: str, q: str) -> Clarif
     if not rec:
         return ClarifyResult.drop()
     st = rec.get("state") or {}
-    sop_id = st.get("sop") or "purchase"
+    sop_id = st.get("sop") or "model_query"
     if sop_id not in SOPS:
         pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
         logger.warning("[Clarify] 待确认里的 SOP 已不存在，作废：%s", sop_id)
@@ -676,7 +676,7 @@ def _clarify_sop_enter(session_id: str, rec: dict, query: str, q: str) -> Clarif
         return ClarifyResult.done(reply or _SOP_ENTER_FAILED_REPLY)
     if ans is False:
         pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
-        # 沿用购买 SOP 的拒绝语义：按 SOP 记一笔，本会话同类泛问不再问门
+        # 沿用统一选购 SOP 的拒绝语义：按 SOP 记一笔，本会话同类泛问不再问门
         mark_enter_declined(session_id, sop_id)
         logger.info("[SOP] enter declined: %s", sop_id)
         return ClarifyResult.resume(

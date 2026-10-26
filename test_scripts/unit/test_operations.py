@@ -104,7 +104,7 @@ def test_order_contract():
 
 
 def test_score_all_shape_and_determinism():
-    """8 个操作都有分；同一 query 两次打分一致（可复现、可断言）。"""
+    """6 个操作都有分；同一 query 两次打分一致（可复现、可断言）。"""
     s1, st1 = ops.score_all("净白系列有哪些型号")
     s2, st2 = ops.score_all("净白系列有哪些型号")
     _assert_eq(set(s1), set(ops.OPERATIONS), "每个操作都有分")
@@ -229,11 +229,28 @@ def test_note_ops_missing_section_uses_defaults():
     _assert_eq(note["scoring_status"], "ok", "分数照常落 trace")
 
 
+def test_structured_query_prefers_find_models():
+    """明确预算/系列约束优先直出，不能被泛选购 SOP 抢先开补槽流程。"""
+    saved_cfg, saved_score = ops._ops_cfg, ops.score_all
+    ops._ops_cfg = lambda: {"scoring": "on", "floor": 0.5, "gap": 0.1}
+    ops.score_all = lambda q: ({"sop": 2.0, "find_models": 1.6}, "ok")
+    try:
+        note = ops.note_ops("预算 3000 的扫地机器人", intent="robot")
+        _assert_eq((note.get("state"), note.get("winner")),
+                   ("win", "find_models"), "有明确预算 → 型号筛选直出")
+        _assert_eq(note.get("usable")[:2], ["find_models", "sop"], "find_models 排到 SOP 前")
+        generic = ops.note_ops("帮我推荐一款扫地机器人", intent="robot")
+        _assert_eq(generic.get("winner"), "sop", "无结构约束的泛选购仍进 SOP")
+    finally:
+        ops._ops_cfg, ops.score_all = saved_cfg, saved_score
+
+
 TESTS = [test_registry_shape, test_probe_hits, test_resolve_three_states, test_note_ops_why_none,
          test_note_ops_writes_route_and_returns_usable, test_order_contract,
          test_score_all_shape_and_determinism, test_score_all_degrades_without_dense,
          test_resolve_by_scores, test_note_ops_shadow_keeps_order,
-         test_note_ops_score_mode_orders_by_score, test_two_gates_score_then_vocab,
+         test_note_ops_score_mode_orders_by_score, test_structured_query_prefers_find_models,
+         test_two_gates_score_then_vocab,
          test_cfg_opts_defaults_match_template, test_note_ops_missing_section_uses_defaults,
          test_keyphrases_shape]
 

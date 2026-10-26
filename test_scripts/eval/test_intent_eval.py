@@ -175,24 +175,38 @@ def _env_meta():
 
 
 def _baseline_payload(m, records):
-    return {"accuracy": round(m["accuracy"], 4),
+    from tools.version_store import pin
+
+    return {"baseline_v": 2, "pinned": pin("intent"),
+            "accuracy": round(m["accuracy"], 4),
             "per_class": {lab: {k: round(v, 4) if isinstance(v, float) else v
                                 for k, v in m["per_class"][lab].items()} for lab in _LABELS},
             "ids": [r["id"] for r in records],
-            "per_id": {r["id"]: r["got"] for r in records},
+            "per_id": {r["id"]: {"got": r["got"], "expect": r["expect"]} for r in records},
+            "expect_known": True,
             "env": _env_meta()}
 
 
+def _got_of(value):
+    return value.get("got") if isinstance(value, dict) else value
+
+
 def _diff_baseline(records, base):
-    """按 id 比实判标签；基线是旧格式（无 per_id）时返回 None。"""
+    """按 id 比实判标签；兼容旧 str 与新的 {got, expect}。"""
     per_id = base.get("per_id")
     if not isinstance(per_id, dict):
         return None
     cur = {r["id"]: r["got"] for r in records}
-    changed = sorted(i for i in cur if i in per_id and per_id[i] != cur[i])
+    current = {r["id"]: r for r in records}
+    changed = sorted(i for i in cur if i in per_id and _got_of(per_id[i]) != cur[i])
     added = sorted(i for i in cur if i not in per_id)
     missing = sorted(i for i in per_id if i not in cur)
-    return changed, added, missing
+    expect_changed = sorted(
+        i for i in cur
+        if i in per_id and isinstance(per_id[i], dict)
+        and per_id[i].get("expect") is not None
+        and per_id[i].get("expect") != current[i].get("expect"))
+    return changed, added, missing, expect_changed
 
 
 def _save_baseline(m, records):
@@ -237,12 +251,25 @@ def _compare_baseline(m, records):
     print(f"\n[基线对比] 准确率 {m['accuracy']:.4f}  vs  {base.get('accuracy', float('nan')):.4f}"
           f"  ({m['accuracy'] - base.get('accuracy', 0.0):+.4f})")
     _print_env_compare(_env_meta(), base.get("env"))
+    if base.get("pinned"):
+        from tools.version_store import compare_pinned
+        attr = compare_pinned(base["pinned"])
+        print("\n[版本归因]")
+        if attr["code_recorded"]:
+            print("  代码：%s → %s%s" % (attr["code"]["base"], attr["code"]["current"],
+                                        "  ⚠ 已变" if attr["code_changed"] else ""))
+        else:
+            print("  代码：基线未记录（v1 迁移）")
+        print("  评测集：%s" % ("、".join(attr["eval_changed"]) if attr["eval_changed"] else "未变"))
+        print("  环境：%s" % ("、".join(attr["env_changed"]) if attr["env_changed"] else "未变"))
+        if attr["eval_changed"]:
+            print("  ⚠ 评测集已变：聚合指标不再与旧基线直接可比，先看逐条 diff / bump-eval")
 
     diff = _diff_baseline(records, base)
     if diff is None:
         print("\n[基线逐条] 基线是旧格式（无逐条结果），只能看聚合；跑一次 --save-baseline 后即可逐条比。")
         return
-    changed, added, missing = diff
+    changed, added, missing, expect_changed = diff
     def show(label, ids):
         if not ids:
             print(f"{label}：无")
@@ -254,6 +281,7 @@ def _compare_baseline(m, records):
     show("  标签变了", changed)
     show("  新增（基线无记录）", added)
     show("  未跑（基线有、本次没跑）", missing)
+    show("  期望变更（评测集改了，不应当回归）", expect_changed)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -262,6 +290,13 @@ def _compare_baseline(m, records):
 
 def run():
     reset()
+    try:
+        from tools.version_store import dataset_warning
+        warning = dataset_warning("intent")
+        if warning:
+            print(f"  [版本] ⚠ {warning}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [版本] ⚠ 版本检查失败：{type(exc).__name__}: {exc}")
     if not E2E:
         _skip("意图分类评测需要 torch + Ollama bge-m3 + 已训练的分类头（加 --e2e 运行）")
         return stats()
@@ -307,7 +342,14 @@ def run():
         print(f"  {r['id']}  期望 {r['expect']:<7} 实判 {r['got']:<7} margin={r['margin']:.3f}  {r['query']}")
 
     if "--save-baseline" in sys.argv:
-        _save_baseline(m, records)
+        from tools.version_store import baseline_ready
+        issues = baseline_ready("intent")
+        if issues:
+            for issue in issues:
+                print(f"  [基线] ✗ {issue}")
+            _assert(False, "正式基线要求干净工作区且数据集已登记")
+        else:
+            _save_baseline(m, records)
     if "--compare" in sys.argv:
         _compare_baseline(m, records)
 

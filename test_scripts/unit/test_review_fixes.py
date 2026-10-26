@@ -412,7 +412,7 @@ def test_reenter_sop_logs_node():
              am._enter_sop, cs.get_last_sop, sops.sop_needs_enter_confirm)
     trace_store.find_turn = lambda s, query: {"date": "2026-10-20", "turn_index": 1}
     trace_store.latest_turn = lambda s: {"date": "2026-10-20", "turn_index": 1}
-    trace_store.find_turn_by_index = lambda s, d, i: {"sop": {"id": "purchase"}, "branch": "start_sop"}
+    trace_store.find_turn_by_index = lambda s, d, i: {"sop": {"id": "model_query"}, "branch": "start_sop"}
     am._enter_sop = lambda sid, sop_id, query, **kw: "您的预算大概是多少？"
     cs.get_last_sop = lambda s: {"entry_query": q}
     sops.sop_needs_enter_confirm = lambda *a, **kw: False   # 本用例只测重开，不测进入门
@@ -475,7 +475,7 @@ def test_reenter_across_days():
              am._enter_sop, cs.get_last_sop, sops.sop_needs_enter_confirm)
     trace_store.latest_turn = lambda s: {"date": "2026-10-19", "turn_index": 7}
     trace_store.find_turn = lambda s, query: {"date": "2026-10-19", "turn_index": 7}
-    trace_store.find_turn_by_index = lambda s, d, i: {"sop": {"id": "purchase"}, "branch": "start_sop"}
+    trace_store.find_turn_by_index = lambda s, d, i: {"sop": {"id": "model_query"}, "branch": "start_sop"}
     am._enter_sop = lambda sid, sop_id, query, **kw: "您的预算大概是多少？"
     cs.get_last_sop = lambda s: {"entry_query": q}
     sops.sop_needs_enter_confirm = lambda *a, **kw: False   # 本用例只测跨天重开

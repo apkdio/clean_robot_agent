@@ -1,13 +1,13 @@
-"""选购 SOP 测试：SOP 状态机基础设施 + 选购推荐 SOP。
+"""选购/型号查询 SOP 测试：SOP 状态机基础设施 + model_query 选购流程。
 
 覆盖：
   - sops.base：register / match_sop（trigger + guards）/ start_sop /
     continue_sop / end_sop / has_active_sop / get_active_sop_id
-  - 槽位提取：预算（extract_price_constraint，真实；＋纯数字短答按上限）、宠物（purchase._extract_has_pet，＋裸否定短答）
-  - reply 步：函数模板（按结果分支：0 款换 PURCHASE_EMPTY_REPLIES、有结果保持原格式）
+  - 槽位提取：预算（extract_price_constraint，真实；＋纯数字短答按上限）
+  - reply 步：函数模板（按结果分支：0 款换 MODEL_QUERY_EMPTY_REPLIES、有结果保持原格式）
   - 重试循环 / 槽位放弃（max_retry）/ 模板 fallback / 异常防御
-  - purchase SOP 触发与 guard（选购咨询/售后/品牌不触发选购）
-  - [数据可用时] 选购 SOP 全流程（真实 enumerate_models）"""
+  - model_query 触发与 guard（选购咨询/售后/品牌不触发选购）
+  - [数据可用时] 选购 SOP 全流程（预算 → 系列 → 时间 → 标签）"""
 import sys
 import re
 import os
@@ -19,7 +19,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-import sops  # 触发 purchase/repair SOP 注册
+import sops  # 触发 repair/model_query SOP 注册
 import sops.base
 from test_scripts import trace_reader
 from tools import trace_store
@@ -131,10 +131,10 @@ def test_register_and_match():
     _assert_eq(sops.base.match_sop("边刷多久换一次"), None, "维护不触发")
 
 
-def test_purchase_trigger_and_guards():
-    # 真实 purchase SOP
-    _assert_eq(sops.base.match_sop("帮我推荐一款扫地机器人"), "purchase", "推荐→选购 SOP")
-    _assert_eq(sops.base.match_sop("预算1000以内买一个"), "purchase", "预算/买→选购 SOP")
+def test_model_query_trigger_and_guards():
+    # 合并后通用选购入口由 model_query 承接
+    _assert_eq(sops.base.match_sop("帮我推荐一款扫地机器人"), "model_query", "推荐→选购 SOP")
+    _assert_eq(sops.base.match_sop("预算1000以内买一个"), "model_query", "预算/买→选购 SOP")
     # guard：选购咨询不触发选购 SOP（走 RAG）
     _assert(sops.base.match_sop("选购扫地机器人要注意什么") is None, "选购咨询 guard 拦截")
     _assert(sops.base.match_sop("扫地机器人保修多久") is None, "售后 guard 拦截")
@@ -188,20 +188,8 @@ def test_full_flow():
 # 3. 提取 / 重试 / 放弃 / fallback
 # ──────────────────────────────────────────────────────────────
 
-def test_extract_has_pet():
-    from sops.purchase import _extract_has_pet
-    _assert(_extract_has_pet("有猫", {}) is True, "有猫→True")
-    _assert(_extract_has_pet("养狗", {}) is True, "养狗→True")
-    _assert(_extract_has_pet("没有", {}) is False, "没有→False")
-    _assert(_extract_has_pet("没养", {}) is False, "没养→False")
-    _assert(_extract_has_pet("无", {}) is False, "无→False")
-    _assert(_extract_has_pet("不", {}) is False, "裸「不」→False（槽位短答，别再问一遍）")
-    _assert(_extract_has_pet("不养", {}) is False, "不养→False")
-    _assert(_extract_has_pet("不知道", {}) is None, "不知道→None")
-
-
 def test_extract_budget_bare_number():
-    from sops.purchase import _extract_budget
+    from sops.model_query import _extract_budget
     _assert_eq(_extract_budget("800块以内", {}), (None, 800), "带量词照旧走通用解析")
     _assert(_extract_budget("2000左右", {}) is not None, "区间照旧走通用解析")
     _assert_eq(_extract_budget("800", {}), (None, 800), "纯数字短答按上限收（BC-20261015-03）")
@@ -210,13 +198,13 @@ def test_extract_budget_bare_number():
 
 
 def test_result_reply():
-    from sops.purchase import _render_result
-    full = _render_result({"count": 2, "list": "- A\n- B"})
-    _assert("共找到 2 款" in full and "对比其中某两款" in full, "有结果时保持原格式")
-    empty = _render_result({"count": 0, "list": "", "models": []})
-    _assert("预算" in empty, "0 款时说明是预算内没有")
+    from sops.model_query import _reply
+    full = _reply({"count": 2, "list": "- A\n- B"})
+    _assert("符合您条件" in full and "对比其中两款" in full, "有结果时给出列表并追问对比")
+    empty = _reply({"count": 0, "list": "", "models": []})
+    _assert("放宽预算" in empty or "条件" in empty, "0 款时说明条件太窄")
     _assert(not re.search(r"\d", empty), "0 款时不给价格数字（没有依据的推荐）")
-    _assert("对比" not in empty and "型号" not in empty, "0 款时不追问对比、不提型号")
+    _assert("对比" not in empty, "0 款时不追问对比")
 
 
 def test_retry_then_abandon():
@@ -348,59 +336,40 @@ def test_step_exception_ends_sop():
 # 4. 选购 SOP 全流程（真实 enumerate_models，数据可用时）
 # ──────────────────────────────────────────────────────────────
 
-def test_purchase_sop_full_flow():
+def test_model_query_sop_full_flow():
     if not _models_ready():
         _skip("无型号数据（Chroma/pkl 缓存缺失）")
         return
     _cleanup()
-    sid = "purchase_flow_test"
-    reply, done = sops.base.start_sop(sid, "purchase", "帮我推荐一款")
-    _assert(sops.base.has_active_sop(sid), "purchase SOP 启动")
+    sid = "model_query_flow_test"
+    reply, done = sops.base.start_sop(sid, "model_query", "帮我推荐一款")
+    _assert(sops.base.has_active_sop(sid), "model_query SOP 启动")
     _assert_in("预算", reply, "开场问预算")
 
     reply, done = sops.base.continue_sop(sid, "1000以内")
     _assert(not done, "预算后未结束")
-    _assert_in("宠物", reply, "下一步问宠物")
+    _assert_in("系列", reply, "预算后问系列")
 
-    reply, done = sops.base.continue_sop(sid, "没有")
-    _assert(done, "SOP 结束")
-    _assert_in("共找到", reply, "推荐含统计")
+    reply, done = sops.base.continue_sop(sid, "跳过")
+    _assert_in("发布时间", reply, "系列跳过后问时间")
+    reply, done = sops.base.continue_sop(sid, "跳过")
+    _assert_in("特点", reply, "时间跳过后问标签")
+    reply, done = sops.base.continue_sop(sid, "跳过")
+    _assert(done, "标签跳过后 SOP 结束")
+    _assert_in("符合您条件", reply, "推荐含统计")
     _assert_in("净白 S1", reply, "1000以内含净白 S1(899)")
     _assert_not_in("净界 P1", reply, "1000以内不含净界 P1(1799)")
     _assert(not sops.base.has_active_sop(sid), "会话已结束")
     _cleanup()
 
 
-def test_pet_slot_reorders_results():
-    """有宠物时养宠友好机型排前（L-01）：问话承诺过「优先推荐防毛发缠绕机型」，
-    排序兑现承诺；无宠物时排序不动。词表信号来自知识库「特点」行（feature 字段）。"""
-    from sops.purchase import _search
-    from config.word_dict_config import PET_FRIENDLY_WORDS
-
-    if not _models_ready():
-        _skip("无型号数据（Chroma/pkl 缓存缺失）")
-        return
-
-    no_pet = _search({"budget": (None, 30000), "has_pet": False})["models"]
-    with_pet = _search({"budget": (None, 30000), "has_pet": True})["models"]
-    _assert_eq(sorted(m["name"] for m in no_pet), sorted(m["name"] for m in with_pet),
-               "宠物槽不改变命中集合（只重排）")
-    tops = [m for m in with_pet if any(w in (m.get("feature") or "") for w in PET_FRIENDLY_WORDS)]
-    others = [m for m in with_pet if not any(w in (m.get("feature") or "") for w in PET_FRIENDLY_WORDS)]
-    expected = [m["name"] for m in tops + others]
-    _assert_eq([m["name"] for m in with_pet], expected, "养宠友好机型整体排前（稳定排序）")
-    _assert(tops, "词表在当前知识库有命中（否则断言失效而非真通过）")
-
-
 TESTS = [
     test_register_and_match,
-    test_purchase_trigger_and_guards,
+    test_model_query_trigger_and_guards,
     test_start_and_continue,
     test_continue_no_session,
     test_end_sop,
     test_full_flow,
-    test_pet_slot_reorders_results,
-    test_extract_has_pet,
     test_extract_budget_bare_number,
     test_result_reply,
     test_retry_then_abandon,
@@ -411,13 +380,13 @@ TESTS = [
     test_stale_def_state_recorded_in_trace,
     test_step_exception_ends_sop,
     test_local_session_expires_without_redis,
-    test_purchase_sop_full_flow,
+    test_model_query_sop_full_flow,
 ]
 
 
 def run():
     reset()
-    return run_tests("选购 SOP 测试（sops.base + purchase）", TESTS)
+    return run_tests("选购/型号查询 SOP 测试（sops.base + model_query）", TESTS)
 
 
 if __name__ == "__main__":

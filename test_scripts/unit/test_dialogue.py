@@ -2,7 +2,7 @@
 
 覆盖（均需 Ollama + Chroma，加 --e2e 运行）：
   正常对话：
-    - 选购 SOP 多轮（推荐 → 预算 → 宠物 → 推荐结果）
+    - 选购 SOP 多轮（推荐 → 确认门 → 预算 → 系列 → 时间 → 标签 → 推荐结果）
     - 故障排查 SOP（触发词含症状 → 直接排查）
     - 型号精准查询 / 系列枚举
     - 追问（更便宜）
@@ -50,15 +50,21 @@ def _sid():
 # ──────────────────────────────────────────────────────────────
 
 @e2e("选购 SOP 端到端需要 Ollama + Chroma")
-def test_normal_purchase_sop():
+def test_normal_selection_sop():
     sid = _sid()
     r1 = _chat("帮我推荐一款扫地机器人", sid)
-    _assert_in("预算", r1, "开场问预算")
-    r2 = _chat("1000以内", sid)
-    _assert_in("宠物", r2, "第二步问宠物")
-    r3 = _chat("没有", sid)
-    _assert_in("共找到", r3, "推荐含统计")
-    _assert_in("净白 S1", r3, "推荐含净白 S1(899)")
+    _assert_in("要走引导吗", r1, "强触发先过进入确认门")
+    r2 = _chat("是", sid)
+    _assert_in("预算", r2, "确认后问预算")
+    r3 = _chat("1000以内", sid)
+    _assert_in("系列", r3, "预算后问系列")
+    r4 = _chat("跳过", sid)
+    _assert_in("发布时间", r4, "系列跳过后问时间")
+    r5 = _chat("跳过", sid)
+    _assert_in("特点", r5, "时间跳过后问标签")
+    r6 = _chat("跳过", sid)
+    _assert_in("符合您条件", r6, "推荐含统计")
+    _assert_in("净白 S1", r6, "推荐含净白 S1(899)")
 
 
 @e2e("故障排查 SOP 端到端需要 Ollama + Chroma")
@@ -87,8 +93,11 @@ def test_normal_series_query():
 def test_normal_followup():
     sid = _sid()
     _chat("帮我推荐一款扫地机器人", sid)
+    _chat("是", sid)
     _chat("3000以内", sid)
-    _chat("没有", sid)
+    _chat("跳过", sid)
+    _chat("跳过", sid)
+    _chat("跳过", sid)
     r = _chat("有没有更便宜的", sid)
     _assert(len(r) > 0, "更便宜追问有回应")
 
@@ -148,7 +157,7 @@ def test_nonhuman_weird_input():
 
 
 TESTS = [
-    test_normal_purchase_sop,
+    test_normal_selection_sop,
     test_normal_repair_sop,
     test_normal_model_query,
     test_normal_series_query,

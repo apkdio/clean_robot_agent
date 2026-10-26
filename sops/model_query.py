@@ -1,10 +1,12 @@
-"""型号查询 SOP：预算 / 系列 / 发布时间 / 标签补槽，最后调用 find_models。"""
+"""选购/型号查询 SOP：预算 / 系列 / 发布时间 / 标签补槽，最后调用 find_models。"""
 from __future__ import annotations
 
-from sops.base import SKIP, register
+from sops.base import SKIP, is_aftersales, is_brand, is_consulting, register
 from config.word_dict_config import (
     BARE_BUDGET_RE,
     MODEL_QUERY_EMPTY_REPLIES,
+    MODEL_QUERY_TRIGGER,
+    MODEL_QUERY_WEAK_TRIGGER,
     TAG_ORDER,
 )
 from function_tools.model_tool import find_models_by_args
@@ -88,15 +90,20 @@ def _reply(ctx: dict) -> str:
     if n <= 0:
         return MODEL_QUERY_EMPTY_REPLIES[0]
     head = "符合您条件的机器人有 %d 款：" % n
-    return head + "\n\n" + (ctx.get("list") or "")
+    return head + "\n\n" + (ctx.get("list") or "") + "\n\n需要我帮您对比其中两款吗？"
 
 
 MODEL_QUERY_SOP = {
     "id": "model_query",
-    "trigger": [],          # 只由 find_models 执行体进入，不参与 match_sop
-    "enter_confirm": "never",
-    "guards": [],
-    "intro": "好的，我来帮您筛选型号～",
+    "trigger": MODEL_QUERY_TRIGGER,
+    "enter_confirm": "always",
+    "weak_trigger": MODEL_QUERY_WEAK_TRIGGER,
+    "guards": [
+        {"check": is_consulting},
+        {"check": is_aftersales},
+        {"check": is_brand},
+    ],
+    "intro": "好的，我来帮您筛选合适的型号～",
     "max_retry": 2,
     "steps": [
         {

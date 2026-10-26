@@ -222,7 +222,7 @@ def _strong_ops(query: str) -> set:
 
 
 def score_all(query: str) -> tuple[dict, str]:
-    """给 8 个操作打分，返回 (scores, status)。
+    """给 6 个操作打分，返回 (scores, status)。
 
     status：ok / dense_degraded（只有 BM25 + 强判据）/ disabled（退回原有 bool 排序）。
     归一化按每轮最大分做，抵消余弦基线（关键句间 ~0.57）与 BM25 无上界。
@@ -293,6 +293,23 @@ def resolve(ops: list, *, intent: str = None, margin: float = None,
     return "win", winner
 
 
+def _prefer_structured(usable: list, query: str) -> list:
+    """有明确预算/系列/时间约束时，型号筛选优先于泛选购 SOP。
+
+    否则「预算 2000 推荐」会先开 SOP 补槽，后一句普通追问被槽位吞掉；
+    只有没有结构约束的「推荐/买」才需要 SOP 收集条件。
+    """
+    if "find_models" not in usable or "sop" not in usable:
+        return usable
+    try:
+        from sops import match_sop
+        if match_sop(query, log=False) == "model_query":
+            return ["find_models"] + [o for o in usable if o != "find_models"]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[Ops] structured priority check failed: %s", e)
+    return usable
+
+
 def note_ops(query: str, *, intent: str = None, margin: float = None,
              prefer: str = None) -> dict:
     """判定并落 trace 的 route.ops，返回 {ops, usable, state, winner, why}。
@@ -305,14 +322,20 @@ def note_ops(query: str, *, intent: str = None, margin: float = None,
     scores, scoring = score_all(query) if mode != "off" else ({}, "off")
 
     if mode == "on" and scores:
-        # ① 分数阈值：8 个操作各自过 floor
+        # ① 分数阈值：6 个操作各自过 floor
         above_floor = [o for o in ORDER if scores.get(o, 0.0) >= floor]
         # ② 词表/结构命中 + 意图合法性：只有命中现成判据的才算候选
         usable = [o for o in above_floor if o in raw and _allowed(o, intent)]
         usable.sort(key=lambda o: (-scores.get(o, 0.0), ORDER.index(o)))
+        # 明确的结构约束优先直出：只有没有预算/系列/时间约束的泛选购才进 SOP 补槽
+        preferred = _prefer_structured(usable, query)
+        structured = preferred != usable
+        usable = preferred
         # ③ 分差：交给调用方判 ambiguous（这里给出状态，agent 据此问用户）
         if not usable:
             state, winner = "none", None
+        elif structured:
+            state, winner = "win", usable[0]
         elif len(usable) > 1 and (scores[usable[0]] - scores[usable[1]]) < gap:
             state, winner = "ambiguous", usable[0]
         else:
@@ -320,6 +343,10 @@ def note_ops(query: str, *, intent: str = None, margin: float = None,
     else:
         state, winner = resolve(raw, intent=intent, margin=margin)
         usable = [o for o in raw if _allowed(o, intent)]
+        preferred = _prefer_structured(usable, query)
+        if preferred != usable:
+            usable = preferred
+            state, winner = "win", usable[0]
         above_floor = usable
     candidates = [o for o in raw if _allowed(o, intent)]   # trace 里始终按表序（稳定），派发顺序看 usable
     if prefer and prefer in candidates:                    # 用户澄清选的操作：显式顶到最前

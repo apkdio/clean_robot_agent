@@ -39,7 +39,7 @@ def test_ask_rebuild_clears_old_flag():
 def test_biz_isolation():
     """业务 id 隔离：别的业务既读不到、也清不掉。"""
     ps.close("ps-iso")
-    ps.ask("ps-iso", ps.BIZ_SOP_ENTER, sop="purchase", query="预算 3000")
+    ps.ask("ps-iso", ps.BIZ_SOP_ENTER, sop="model_query", query="预算 3000")
     _assert(ps.take("ps-iso", ps.BIZ_OPS_CLARIFY) is None, "别的业务认领不到")
     _assert(ps.take("ps-iso", ps.BIZ_SOP_ENTER) is not None, "自己的业务能认领")
     _assert_eq(ps.close("ps-iso", ps.BIZ_OPS_CLARIFY), False, "别的业务关不掉")
@@ -51,7 +51,7 @@ def test_biz_isolation():
 def test_bump_only_owner():
     """retry 只由状态所属业务推进。"""
     ps.close("ps-bump")
-    ps.ask("ps-bump", ps.BIZ_SOP_EXIT, sop_id="purchase")
+    ps.ask("ps-bump", ps.BIZ_SOP_EXIT, sop_id="model_query")
     _assert(ps.bump("ps-bump", ps.BIZ_OPS_CLARIFY) is None, "别人 bump 不动")
     _assert_eq(ps.peek("ps-bump").get("retry"), 0, "retry 没变")
     _assert_eq(ps.bump("ps-bump", ps.BIZ_SOP_EXIT).get("retry"), 1, "自己 bump +1")
@@ -61,7 +61,7 @@ def test_bump_only_owner():
 def test_ask_overwrites_other_biz():
     """新澄清覆盖旧澄清（状态单槽），biz 与 state 同步换掉。"""
     ps.close("ps-over")
-    ps.ask("ps-over", ps.BIZ_SOP_ENTER, state={"sop": "purchase", "entry": "旧问题"})
+    ps.ask("ps-over", ps.BIZ_SOP_ENTER, state={"sop": "model_query", "entry": "旧问题"})
     ps.ask("ps-over", ps.BIZ_OPS_CLARIFY, state={"query": "新问题"}, options=["sop", "date"])
     rec = ps.peek("ps-over")
     _assert_eq(rec.get("biz"), ps.BIZ_OPS_CLARIFY, "biz 换成新的")
@@ -77,7 +77,7 @@ def test_memory_expiry():
     ps.clarify_ttl = lambda: 0
     try:
         ps.close("ps-exp")
-        ps.ask("ps-exp", ps.BIZ_SOP_EXIT, sop_id="purchase")
+        ps.ask("ps-exp", ps.BIZ_SOP_EXIT, sop_id="model_query")
         _assert(ps.peek("ps-exp") is None, "TTL 0 → 立即过期")
     finally:
         ps.get_redis, ps.clarify_ttl = saved

@@ -9,7 +9,7 @@
 - **意图分类**：本地深度学习分类头（bge-m3 embedding + Linear 分类器）前置判断用户意图，毫秒级推理
 - **query 入口归一化**：进链路先做纯规则清洗（标点、空格、全半角、同义词映射如「扫托→扫拖」，也兼容型号名不带空格的写法「云顶X2」）；清洗后的文本用于**硬规则（注入/危险/退出/「0」）**、SOP 触发、操作判别、域路由与检索，**判到领域外或低置信闲聊时会拿原文再判一次**，两遍里任一遍判域内就按域内走（宁可多检索一轮，也不误拒答）；原文仍用于生成与对话记录，整条链路可用开关一键关闭
 - **结构化查询**：识别"预算 1000 以内""净白 S 系列"等约束，通过 Chroma metadata 过滤精确枚举预算内/系列内产品；支持"云顶 X2 多少钱"等型号属性精准查询；型号名**精确优先**（问"P2"不会连带返回 P2 Lite / P2 Pro，系列名仍可多命中）
-- **操作判别与澄清**：用关键句 + 稠密/BM25 双路召回给 8 类操作（追问 / 型号 / 系列 / 网点 / SOP / 日期 / 筛选 / 知识问答）打分，先过分数阈值、再看词表命中；前两名分差过近时问用户选 1/2，按选择重放原问题
+- **操作判别与澄清**：用关键句 + 稠密/BM25 双路召回给 6 类操作（追问 / 型号 / 网点 / SOP / 型号筛选 / 知识问答）打分，先过分数阈值、再看词表命中；前两名分差过近时问用户选 1/2，按选择重放原问题
 - **工具调用**：LLM function calling，内置日期/预算/故障分类/型号提取/售后网点五个工具，支持"最近半年""一千来块"等口语化结构化提取；预算同时识别"2000吧"这类语气词尾音
 - **多轮 SOP 引导**：选购推荐、故障排查等场景按标准流程多轮引导，进入时给开场提示；**所有 SOP 进入前先问一句是否要走引导**（进入确认门，SOP 自己声明 `enter_confirm`，默认 `always`；网点查询同样先问），流程内说退出也要先确认（退出确认门）；**拒绝引导后会在答案前补一句「之后怎么再进」**（举的是强触发说法）；同会话拒绝过该 SOP 后，泛问不再问门、强触发仍可直接进；支持追问（比较新/更便宜/最贵）与最近发布查询；**「重新回答」按上一轮出口决定重算**——上一轮是 SOP 收尾轮就重开该流程（重开同样先过确认门），SOP 中途不给重发；重答按**覆盖上一轮**处理，同一句不会在历史里落两遍、也不留两版回答。槽位收口语短答（预算「800」按上限、宠物「不」/「没」算没有）；筛出 0 款时给"预算内暂时没有 + 下一步"的成品话术，**不点型号与价格**（型号与价格只允许来自知识库原文）
 - **售后网点定位**：识别"最近的售后网点"等查询，通过 geonamescache 离线解析城市经纬度 + Haversine 距离排序返回最近网点，重名城市（如"洛阳"）多轮消歧（走 SOP 状态机：先问城市，重名再问一次序号）
@@ -57,6 +57,7 @@ clean_robot_agent/
 │   ├── bgm_model/               # 训练好的分类头模型
 │   ├── pkl/                     # BM25 pickle 缓存
 │   ├── state/                   # 热更新 sha256 快照 + kb_metadata.jsonl + model_tags.json（型号标签映射）
+│   ├── versions/                # 版本中台账本 / run manifest / 评测集快照（gitignore，随数据备份）
 │   ├── vector_store/            # Chroma 持久化向量库
 │   └── eval/                    # 评测集与基线：retrieval/ 单轮检索 · context/ 多轮行为 · intent/ 意图分类（本地数据，已 gitignore）
 ├── prompts/                     # Prompt 模板（system/摘要/报告）
@@ -71,8 +72,7 @@ clean_robot_agent/
 │   └── registry.py              # 工具注册中心（对外暴露的工具白名单 + 编排开关读取）
 ├── sops/                        # SOP 标准操作流程（多轮引导）
 │   ├── base.py                  # 会话状态（按 session_id 隔离，带定义指纹）+ 执行器 + 知识域定义
-│   ├── purchase.py              # 选购推荐 SOP
-│   ├── model_query.py           # 型号查询 SOP（预算/系列/时间/标签补槽）
+│   ├── model_query.py           # 选购/型号查询 SOP（预算/系列/时间/标签补槽，承接推荐/买/预算入口）
 │   ├── repair.py                # 故障排查 SOP
 │   └── service_point.py         # 售后网点 SOP（问城市 → 重名选序号）
 ├── test_scripts/                # 测试与评测（run_tests.py 只聚合 eval/ 评测轨；unit/ 功能测试可单独运行）
@@ -80,8 +80,11 @@ clean_robot_agent/
 │   ├── _runner.py               # 共享断言/汇总/e2e 门控/测试数据隔离
 │   ├── trace_reader.py          # trace 读取层（文本视图与 HTML 报告共用）
 │   ├── trace_report.py          # 读 trace：按会话列出每轮走向（--list/--session/--chunks/--shadow/--feedback）；--html 出 HTML 报告（落 reports/<日期>/）
+│   ├── version_tool.py          # 版本中台：show/check/register-eval/bump-eval/diff-eval/archive-eval/export
+│   ├── migrate_baselines_v2.py  # 旧基线迁移：补 pinned / 升级 per_id
 │   ├── unit/                    # 功能测试（不进评测入口，文件可单独运行）
-│   │   ├── test_purchase_sop.py # 选购 SOP（SOP 状态机 + 选购推荐流程）
+│   │   ├── test_model_query_sop.py # 选购/型号查询 SOP（状态机 + 预算/标签流程）
+│   │   ├── test_version_store.py # 版本中台（登记 / 快照 / 升版 / diff）
 │   │   ├── test_repair_sop.py   # 故障排查 SOP（症状映射 + 流程）
 │   │   ├── test_context.py      # 上下文存储（append/get_recent/meta/UUID 校验）
 │   │   ├── test_metadata.py     # 结构化提取（价格/日期/型号/系列/过滤）
@@ -147,6 +150,7 @@ clean_robot_agent/
 | `pending_store.py` | 统一澄清状态（SOP 进入/退出确认、操作澄清共用）：Redis `clarify:{sid}` + `clarify_ttl`（≥ `sop_ttl`），记录 `{biz, retry, state, data}`（`state` = 业务快照，如 SOP 的 step/slots），业务 id 隔离（`sop.enter` / `sop.exit` / `ops.clarify`），无 Redis 降级内存并校验时间戳；只存状态，不解析回答 |
 | `test_hooks.py` | **仅供测试/评测**的状态注入助手（danger 窗口 / 连续承接计数 / 活跃 SOP / 澄清状态）|
 | `trace_store.py` | 会话级 trace：每轮落一条结构化记录（`logs/trace/<日期>/<会话ID>_<日期>_<时间>/<同名>.jsonl`，先按日期分目录再按会话，best-effort 不影响对话，`TRACE_DIR` 可改落点）；记录与执行同构：进门判断、本轮唯一出口、有序节点（含状态/耗时/进出事实）、两遍召回与各遍计数、最终候选的来源分布、SOP 动作链，另保留旧字段作兼容；同一会话目录下另有三份旁路文件：召回片段全文、影子决策、用户评价 |
+| `version_store.py` | 评测版本中台：代码/环境指纹、评测集账本（登记/升版/归档/快照）、`run_id`、run manifest 与 `diff-eval`；正式基线要求干净工作区 |
 
 > trace 读侧是一个脚本 `test_scripts/trace_report.py`：文本视图按会话列出每轮走向（`--chunks/--shadow/--feedback` 看旁路证据）；
 > 加 `--html` 则把某天渲染成一份自包含 HTML 报告（落 `reports/<日期>/`，`--out-dir` 换根目录、`--out` 给整路径）。
@@ -168,8 +172,7 @@ clean_robot_agent/
 | 模块 | 职责 |
 |------|------|
 | `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 知识域定义（DOMAIN_MAP）+ 追问处理（比较新/更便宜）+ 最近发布查询。**会话状态带定义指纹**：代码改过 SOP 定义后，Redis 里的旧会话读时自动作废（不会拿旧下标续跑）；无 Redis 降级的内存态同样按 TTL 过期 |
-| `purchase.py` | 选购推荐 SOP：收集预算（上限/下限/区间/浮动）+ 宠物 → 结构化推荐 |
-| `model_query.py` | 型号查询 SOP：预算/系列/发布时间/标签补槽（可预填、可跳过）→ `find_models` → 列表 |
+| `model_query.py` | 选购/型号查询 SOP：承接「推荐/买/预算」入口（含进入确认门与选购/售后/品牌 guards），收集预算、系列、发布时间与标签（养宠/静音/防缠绕等）→ `find_models` → 列表；标签只认序号与固定跳过命令 |
 | `repair.py` | 故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤 |
 
 ## 快速开始
@@ -316,8 +319,15 @@ python intent_classifier_training/train_intent_classifier.py
 .venv/Scripts/python.exe test_scripts/eval/test_retrieval_eval.py --e2e --compare
 
 # 单元测试（暂搁置）：不进评测入口，按需单独运行
-.venv/Scripts/python.exe test_scripts/unit/test_purchase_sop.py
+.venv/Scripts/python.exe test_scripts/unit/test_model_query_sop.py
+
+# 版本中台（评测集登记 / 校验 / 快照）
+.venv/Scripts/python.exe test_scripts/version_tool.py show
+.venv/Scripts/python.exe test_scripts/version_tool.py check
+.venv/Scripts/python.exe test_scripts/migrate_baselines_v2.py   # 旧基线迁移（一次性）
 ```
+
+开发回归允许 dirty；正式基线必须干净提交且数据集已 `register-eval`，详见 `notes/version_center.md`。
 
 ### 测试模块
 
@@ -335,7 +345,8 @@ python intent_classifier_training/train_intent_classifier.py
 
 | 模块 | 覆盖范围 | 需 `--e2e` |
 |------|---------|:---------:|
-| `unit/test_purchase_sop.py` | 选购 SOP（状态机 + 选购推荐流程） | |
+| `unit/test_model_query_sop.py` | 选购/型号查询 SOP（状态机 + 预算/标签流程） | |
+| `unit/test_version_store.py` | 版本中台（登记 / 快照 / 升版 / diff） | |
 | `unit/test_repair_sop.py` | 故障排查 SOP（症状映射 + 流程） | |
 | `unit/test_context.py` | 上下文存储（消息读写 / meta / UUID 校验 / 会话列表） | |
 | `unit/test_metadata.py` | 结构化提取（价格 / 日期 / 型号 / 系列 / 过滤） | |

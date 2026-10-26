@@ -83,7 +83,7 @@ def test_enter_gate_decline_reuses_entry_query():
     ir.route_intent_with_margin = lambda text: (captured.append(text), ("robot", 0.9))[1]
     try:
         pending_store.ask(sid, pending_store.BIZ_SOP_ENTER,
-                          state={"sop": "purchase", "entry": "帮我推荐一款扫地机器人！！！"})   # 重复标点：归一化会折叠
+                          state={"sop": "model_query", "entry": "帮我推荐一款扫地机器人！！！"})   # 重复标点：归一化会折叠
         out = "".join(ask_stream("不用了谢谢", sid)).strip()
         _assert(bool(captured), "意图分类被调用了")
         _assert_eq(captured[0], "帮我推荐一款扫地机器人！",
@@ -114,9 +114,9 @@ def test_enter_gate_decline_hint_truthful():
     try:
         # 弱触发入口（带预算）→ 问门 → 答「不是」→ 走正常作答
         pending_store.ask(sid, pending_store.BIZ_SOP_ENTER,
-                          state={"sop": "purchase", "entry": "预算 3000 的扫地机器人"})
+                          state={"sop": "model_query", "entry": "预算 3000 的扫地机器人"})
         out = "".join(ask_stream("不是", sid)).strip()
-        _assert_in(SOP_REENTER_HINT["purchase"], out, "拒绝后给出「怎么再进」的提示")
+        _assert_in(SOP_REENTER_HINT["model_query"], out, "拒绝后给出「怎么再进」的提示")
         _assert_not_in("要走引导吗", out, "拒绝这一轮不再问门")
 
         # 按提示说的强触发再说一次 → 直接进流程，不再问门
@@ -143,7 +143,7 @@ def test_all_sop_entry_gate():
         _assert_in("要走引导吗", out, "强触发也先问意愿")
         pend = pending_store.peek(sid) or {}
         _assert_eq(pend.get("biz"), pending_store.BIZ_SOP_ENTER, "落进入确认门")
-        _assert_eq((pend.get("state") or {}).get("sop"), "purchase", "记下要进的 SOP")
+        _assert_eq((pend.get("state") or {}).get("sop"), "model_query", "记下要进的 SOP")
         out2 = "".join(ask_stream("是", sid)).strip()
         _assert_in("预算", out2, "答是后进选购 SOP")
     finally:
@@ -156,13 +156,13 @@ def test_enter_confirm_policy():
     import sops
     from sops.base import SOPS
 
-    _assert_eq(sops.enter_confirm_mode("purchase"), "always", "默认/声明为 always")
-    saved = SOPS["purchase"].get("enter_confirm")
-    SOPS["purchase"]["enter_confirm"] = "never"
+    _assert_eq(sops.enter_confirm_mode("model_query"), "always", "默认/声明为 always")
+    saved = SOPS["model_query"].get("enter_confirm")
+    SOPS["model_query"]["enter_confirm"] = "never"
     try:
-        _assert(not sops.sop_needs_enter_confirm("purchase", "帮我推荐一款"), "never 不问门")
+        _assert(not sops.sop_needs_enter_confirm("model_query", "帮我推荐一款"), "never 不问门")
     finally:
-        SOPS["purchase"]["enter_confirm"] = saved
+        SOPS["model_query"]["enter_confirm"] = saved
 
 
 def test_safety_hint_in_sop_clarify():
@@ -178,7 +178,7 @@ def test_safety_hint_in_sop_clarify():
     try:
         set_danger_window(sid, "漏电")
         pending_store.ask(sid, pending_store.BIZ_SOP_ENTER,
-                          state={"sop": "purchase", "entry": "帮我推荐一款扫地机器人"})
+                          state={"sop": "model_query", "entry": "帮我推荐一款扫地机器人"})
         out = "".join(ask_stream("那这个电流现象影响大吗", sid)).strip()
         _assert_in("安全提醒", out, "非答案保留重问并追加软提醒")
         _assert_not_in("这个问题我暂时不清楚", out, "澄清内不走硬承接")
@@ -199,11 +199,11 @@ def test_safety_hint_in_active_sop():
     end_sop(sid)
     _reset_session(sid)
     try:
-        start_sop(sid, "purchase", "帮我推荐一款扫地机器人")
+        start_sop(sid, "model_query", "帮我推荐一款扫地机器人")
         set_danger_window(sid, "漏电")
         out = "".join(ask_stream("我不知道", sid)).strip()
         _assert_in("安全提醒", out, "SOP 重问后带安全提醒")
-        _assert_eq(get_active_sop_id(sid), "purchase", "SOP 仍活跃，未被提醒打断")
+        _assert_eq(get_active_sop_id(sid), "model_query", "SOP 仍活跃，未被提醒打断")
     finally:
         end_sop(sid)
 
@@ -297,7 +297,7 @@ def test_clarify_open_trace():
         _assert_eq((row.get("shadow") or {}).get("by"), "clarify", "标出是谁让它跳过")
 
         pending_store.close(sid)
-        pending_store.ask(sid, pending_store.BIZ_SOP_EXIT, state={"sop_id": "purchase"})
+        pending_store.ask(sid, pending_store.BIZ_SOP_EXIT, state={"sop_id": "model_query"})
         trace_store.begin_turn(sid, "覆盖测试")
         am._open_clarify(sid, pending_store.BIZ_OPS_CLARIFY,
                          state={"query": "原问题"}, options=["sop", "find_models"])

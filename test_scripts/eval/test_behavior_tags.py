@@ -8,6 +8,7 @@
   - 评测集里每条期望行为都在闭集内（或属两个无专属 branch 的软行为期望）
   - 主链路 trace（tools/trace_store.py）：一轮一条记录、分层块 + 兼容投影、落在隔离目录、best-effort
 """
+import json
 import os
 import sys
 import time
@@ -637,23 +638,57 @@ def test_sop_enter_confirm_policy():
         if mode == "weak":
             _assert_true(sb.SOPS[sid].get("weak_trigger"), f"{sid} 声明 weak 必须配弱触发词")
 
-    saved = sb.SOPS["purchase"].get("enter_confirm")
+    saved = sb.SOPS["model_query"].get("enter_confirm")
     try:
-        sop = sb.SOPS["purchase"]
+        sop = sb.SOPS["model_query"]
         weak_words = set(sop.get("weak_trigger") or [])
         strong_q = next(w for w in sop["trigger"] if w not in weak_words)
         weak_q = sop["weak_trigger"][0]
         sop["enter_confirm"] = "always"
-        _assert_true(sb.sop_needs_enter_confirm("purchase", strong_q), "always：强触发也过门")
-        _assert_true(sb.sop_has_strong_trigger("purchase", strong_q), "强触发可识别")
+        _assert_true(sb.sop_needs_enter_confirm("model_query", strong_q), "always：强触发也过门")
+        _assert_true(sb.sop_has_strong_trigger("model_query", strong_q), "强触发可识别")
         sop["enter_confirm"] = "weak"
-        _assert_false(sb.sop_needs_enter_confirm("purchase", strong_q), "weak：强触发直接进流程")
-        _assert_true(sb.sop_needs_enter_confirm("purchase", weak_q), "weak：弱触发先问门")
-        _assert_false(sb.sop_has_strong_trigger("purchase", weak_q), "弱触发不算强判据")
+        _assert_false(sb.sop_needs_enter_confirm("model_query", strong_q), "weak：强触发直接进流程")
+        _assert_true(sb.sop_needs_enter_confirm("model_query", weak_q), "weak：弱触发先问门")
+        _assert_false(sb.sop_has_strong_trigger("model_query", weak_q), "弱触发不算强判据")
         sop["enter_confirm"] = "bogus"
-        _assert_eq(sb.enter_confirm_mode("purchase"), "always", "非法模式回落 always")
+        _assert_eq(sb.enter_confirm_mode("model_query"), "always", "非法模式回落 always")
     finally:
-        sb.SOPS["purchase"]["enter_confirm"] = saved
+        sb.SOPS["model_query"]["enter_confirm"] = saved
+
+
+def test_version_registry():
+    """版本账本契约：条目/快照/基线 pinned 三方一致；本地账本缺失时不伪造通过。"""
+    import os
+    from tools import version_store as vs
+
+    if not os.path.isfile(vs._registry_path()):
+        _assert(False, "版本账本缺失：先 register-eval（或显式 --allow-missing）")
+        return
+    reg = vs._read_registry()
+    _assert_eq(reg.get("schema_v"), 1, "账本 schema_v=1")
+    entries = reg.get("entries") or {}
+    for key, entry in entries.items():
+        _assert_true(key.startswith("eval:"), f"{key} 是 eval id")
+        _assert_in(entry.get("track"), vs.TRACKS, f"{key} track 合法")
+        _assert_in(entry.get("status"), {"active", "paused", "archived"}, f"{key} status 合法")
+        _assert_true(bool(entry.get("snapshot")), f"{key} 有快照")
+        _assert_true(os.path.isfile(vs._abs(entry["snapshot"])), f"{key} 快照存在")
+    _assert_eq(vs.check(), [], "账本与现场文件一致")
+    from test_scripts.eval import test_retrieval_eval as retr
+    source = retr._env_meta()
+    shared = vs.collect_env()
+    _assert_eq((source.get("prompts") or {}).get("fingerprint"),
+               (shared.get("prompts") or {}).get("fingerprint"), "版本行与基线 prompts 同源")
+    _assert_eq((source.get("config") or {}).get("fingerprint"),
+               (shared.get("config") or {}).get("fingerprint"), "版本行与基线 config 同源")
+    for track, rel in (("retrieval", "data/eval/retrieval/baseline.json"),
+                       ("intent", "data/eval/intent/baseline.json")):
+        baseline = json.load(open(vs._abs(rel), encoding="utf-8")) \
+            if os.path.isfile(vs._abs(rel)) else {}
+        if baseline:
+            _assert_eq(baseline.get("baseline_v"), 2, f"{track} 基线已升 v2")
+            _assert_true(bool(baseline.get("pinned")), f"{track} 基线有 pinned")
 
 
 TESTS = [
@@ -683,6 +718,7 @@ TESTS = [
     test_check_case_ops_clarify,
     test_clarify_hub_contract,
     test_sop_enter_confirm_policy,
+    test_version_registry,
 ]
 
 

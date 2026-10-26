@@ -34,7 +34,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
@@ -162,6 +161,12 @@ def _fmt(ratio):
     return f"{ratio * 100:.1f}%"
 
 
+def _expect_ref(entry):
+    """评测期望的短指纹：只看 expect_* / type，不看 query/note。"""
+    pairs = [(k, entry.get(k)) for k in sorted(entry) if k.startswith("expect_") or k == "type"]
+    return _digest(pairs)
+
+
 def _compute(entries, hr):
     from tools.agent import _domain_filter, _normalize_enabled, _resolve_date_filter, _route_domain
     from tools.metadata_extractor import enumerate_models, resolve_budget_filter
@@ -187,7 +192,8 @@ def _compute(entries, hr):
     for e in entries:
         raw, t = e["query"], e["type"]
         q = normalize(raw) if normalize else raw
-        rec = {"id": e.get("id", "?"), "query": raw, "type": t, "ok": False, "detail": ""}
+        rec = {"id": e.get("id", "?"), "query": raw, "type": t, "ok": False, "detail": "",
+               "expect_ref": _expect_ref(e)}
 
         if t == "domain":
             route_total += 1
@@ -297,10 +303,6 @@ def _print_metrics(metrics):
 # 环境快照：基线记的是「某版代码 + 某版知识库 + 某套配置」下的表现
 # ──────────────────────────────────────────────────────────────
 
-_CONFIG_FILES = ("config/rag.yaml", "config/chroma.yaml", "config/agent.yaml", "config/context.yaml")
-_PROMPT_DIR = "prompts"          # 提示词目录：直接决定生成，必须逐文件记内容版本
-
-
 def _file_sha256(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -315,66 +317,9 @@ def _digest(pairs):
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
 
 
-def _git(*args):
-    """跑一条 git 命令，返回原始 stdout（不做 strip：porcelain 首行行首是状态位）；失败返回 None。"""
-    try:
-        out = subprocess.run(["git", "-C", _ROOT, *args], capture_output=True, text=True, timeout=15)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return out.stdout if out.returncode == 0 else None
-
-
 def _code_label(code):
     n = len(code.get("changed") or [])
     return f"{code.get('commit', '?')}" + (f"（+{n} 未提交）" if n else "（干净）")
-
-
-def _code_meta():
-    """代码工程状态：提交号 + 未提交改动清单（本项目常在未提交状态下跑评测，必须记下来）。"""
-    porcelain = _git("status", "--porcelain") or ""
-    # porcelain 每行是 XY path：行首两个状态位不能先 strip 掉，否则路径第一个字符被吃掉
-    files = sorted(line[3:].strip() for line in porcelain.splitlines() if len(line) > 3)
-    commit = (_git("rev-parse", "--short", "HEAD") or "").strip() or "unknown"
-    return {"commit": commit, "dirty": bool(files), "changed": files}
-
-
-def _kb_meta():
-    """知识库版本：优先读热更新写的 data/state/kb_metadata.jsonl 最后一行（= 索引里现在是什么）；
-    没有该文件时回退到现场扫描（复用热更新的 scan_files，算法不漂）。"""
-    from tools.config_tool import get_data_dir
-    from tools.hot_ingest import kb_fingerprint, load_kb_metadata, metadata_path, scan_files
-
-    kb_dir = get_data_dir()
-    rel_dir = os.path.relpath(kb_dir, _ROOT).replace("\\", "/")
-    meta = load_kb_metadata()
-    if meta:
-        return {"dir": rel_dir, "files": len(meta.get("file_list") or {}),
-                "fingerprint": meta.get("fingerprint"), "ts": meta.get("ts"),
-                "source": os.path.relpath(metadata_path(), _ROOT).replace("\\", "/")}
-    files = scan_files(kb_dir) if os.path.isdir(kb_dir) else {}
-    return {"dir": rel_dir, "files": len(files), "fingerprint": kb_fingerprint(files),
-            "source": "现场扫描"}
-
-
-def _config_meta():
-    """行为相关配置：指纹 + 关键旋钮现值（阈值/开关改一下，指标就变）。"""
-    from tools.config_tool import load_config
-
-    pairs = [(rel, _file_sha256(os.path.join(_ROOT, rel)))
-             for rel in _CONFIG_FILES if os.path.isfile(os.path.join(_ROOT, rel))]
-    rag = load_config("rag")
-    ops = (load_config("agent") or {}).get("operations") or {}
-    key = {"retrieval.score_threshold": rag["retrieval"]["score_threshold"],
-           "retrieval.final_top_k": rag["retrieval"]["final_top_k"],
-           "retrieval.domain_margin": rag["retrieval"].get("domain_margin", 0),
-           "rerank.enabled": rag["rerank"]["enabled"],
-           "rerank.score_threshold": rag["rerank"]["score_threshold"],
-           "rerank.candidate_top_k": rag["rerank"]["candidate_top_k"],
-           "chunk.chunk_size": rag["chunk"]["chunk_size"],
-           "operations.scoring": ops.get("scoring"),
-           "operations.floor": ops.get("floor"),
-           "operations.gap": ops.get("gap")}
-    return {"files": [rel for rel, _ in pairs], "fingerprint": _digest(pairs), "key": key}
 
 
 def _index_file_shas(names) -> dict:
@@ -450,22 +395,6 @@ def _index_label(idx):
     return idx.get("note", "状态未知")
 
 
-def _prompts_meta():
-    """提示词版本：逐文件 sha256（短）+ 组合短指纹。
-
-    commit 只能说明「哪个提交」；脏工作区里改了提示词，`code.changed` 只有一个文件名，
-    两次不同的未提交版本在 env 里长得一样——生成行为却可能完全不同，所以要单独记内容。
-    """
-    d = os.path.join(_ROOT, _PROMPT_DIR)
-    if not os.path.isdir(d):
-        return {"files": [], "per_file": {}, "fingerprint": "missing"}
-    pairs = [("%s/%s" % (_PROMPT_DIR, fn), _file_sha256(os.path.join(d, fn)))
-             for fn in sorted(os.listdir(d)) if os.path.isfile(os.path.join(d, fn))]
-    return {"files": [rel for rel, _ in pairs],
-            "per_file": {rel: sha[:8] for rel, sha in pairs},
-            "fingerprint": _digest(pairs) if pairs else "empty"}
-
-
 def _evalset_meta(path):
     """评测集版本：文件 + 短哈希 + 条数（一行一条，空行不计）。
 
@@ -483,10 +412,14 @@ def _evalset_meta(path):
 
 
 def _env_meta():
-    return {"created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "code": _code_meta(), "kb": _kb_meta(), "prompts": _prompts_meta(),
-            "evalset": _evalset_meta(_GOLDEN_FILE),
-            "config": _config_meta(), "index": _index_meta()}
+    """环境指纹统一由 version_store 采集；这里只补评测轨自己的 evalset 与采集时间。"""
+    from tools.version_store import collect_code, collect_env
+
+    env = collect_env()
+    env["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    env["code"] = collect_code()
+    env["evalset"] = _evalset_meta(_GOLDEN_FILE)
+    return env
 
 
 def _print_env_compare(env, base_env):
@@ -525,7 +458,11 @@ def _print_env_compare(env, base_env):
 
 
 def _baseline_payload(metrics, records):
+    from tools.version_store import pin
+
     return {
+        "baseline_v": 2,
+        "pinned": pin("retrieval"),
         "route_accuracy": {"correct": metrics["route_accuracy"][0], "total": metrics["route_accuracy"][1]},
         "route_recall": {"covered": metrics["route_recall"][0], "total": metrics["route_recall"][1]},
         "route_via": metrics["route_via"],
@@ -536,22 +473,35 @@ def _baseline_payload(metrics, records):
         "no_recall_rate": {"zero": metrics["no_recall_rate"][0], "total": metrics["no_recall_rate"][1]},
         "structured_hit_rate": {"hit": metrics["structured_hit_rate"][0], "total": metrics["structured_hit_rate"][1]},
         "ids": [r["id"] for r in records],
-        "per_id": {r["id"]: bool(r["ok"]) for r in records},
+        "per_id": {r["id"]: {"pass": bool(r["ok"]),
+                              "expect_ref": r.get("expect_ref", "legacy")} for r in records},
         "env": _env_meta(),
     }
 
 
+def _pass_of(value):
+    return value.get("pass") if isinstance(value, dict) else bool(value)
+
+
 def _diff_baseline(records, base):
-    """按 id 逐条对比基线；基线是旧格式（无 per_id）时返回 None。"""
+    """按 id 逐条对比基线；兼容旧 bool 与新的 {pass, expect_ref}。"""
     per_id = base.get("per_id")
     if not isinstance(per_id, dict):
         return None
     cur = {r["id"]: bool(r["ok"]) for r in records}
-    regress = sorted((i for i in cur if i in per_id and per_id[i] and not cur[i]), key=_id_sort_key)
-    improve = sorted((i for i in cur if i in per_id and not per_id[i] and cur[i]), key=_id_sort_key)
+    current = {r["id"]: r for r in records}
+    regress = sorted((i for i in cur if i in per_id and _pass_of(per_id[i]) and not cur[i]),
+                     key=_id_sort_key)
+    improve = sorted((i for i in cur if i in per_id and not _pass_of(per_id[i]) and cur[i]),
+                     key=_id_sort_key)
     added = sorted((i for i in cur if i not in per_id), key=_id_sort_key)
     missing = sorted((i for i in per_id if i not in cur), key=_id_sort_key)
-    return regress, improve, added, missing
+    expect_changed = sorted(
+        (i for i in cur if i in per_id and isinstance(per_id[i], dict)
+         and per_id[i].get("expect_ref") not in (None, "legacy")
+         and per_id[i].get("expect_ref") != current[i].get("expect_ref")),
+        key=_id_sort_key)
+    return regress, improve, added, missing, expect_changed
 
 
 def _print_id_list(label, ids):
@@ -612,17 +562,31 @@ def _compare_baseline(metrics, records):
     print(f"  结构化直出: {cur['structured_hit_rate']['hit']}/{cur['structured_hit_rate']['total']}  vs  {base['structured_hit_rate']['hit']}/{base['structured_hit_rate']['total']}")
 
     _print_env_compare(cur["env"], base.get("env"))
+    if base.get("pinned"):
+        from tools.version_store import compare_pinned
+        attr = compare_pinned(base["pinned"])
+        print("\n[版本归因]")
+        if attr["code_recorded"]:
+            print("  代码：%s → %s%s" % (attr["code"]["base"], attr["code"]["current"],
+                                        "  ⚠ 已变" if attr["code_changed"] else ""))
+        else:
+            print("  代码：基线未记录（v1 迁移）")
+        print("  评测集：%s" % ("、".join(attr["eval_changed"]) if attr["eval_changed"] else "未变"))
+        print("  环境：%s" % ("、".join(attr["env_changed"]) if attr["env_changed"] else "未变"))
+        if attr["eval_changed"]:
+            print("  ⚠ 评测集已变：聚合指标不再与旧基线直接可比，先看逐条 diff / bump-eval")
 
     diff = _diff_baseline(records, base)
     if diff is None:
         print("\n[基线逐条] 基线是旧格式（无逐条结果），只能看聚合；跑一次 --save-baseline 后即可按 id 逐条回归。")
         return
-    regress, improve, added, missing = diff
+    regress, improve, added, missing, expect_changed = diff
     print("\n[基线逐条]（按 id）")
     _print_id_list("  回归（基线过 → 本次不过）", regress)
     _print_id_list("  改善（基线不过 → 本次过）", improve)
     _print_id_list("  新增（基线无记录，首次）", added)
     _print_id_list("  未跑（基线有、本次没跑）", missing)
+    _print_id_list("  期望变更（评测集改了，不应当回归）", expect_changed)
 
 
 def _kb_metadata_selfcheck():
@@ -651,6 +615,13 @@ def _kb_metadata_selfcheck():
 
 def run():
     reset()
+    try:
+        from tools.version_store import dataset_warning
+        warning = dataset_warning("retrieval")
+        if warning:
+            print(f"  [版本] ⚠ {warning}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [版本] ⚠ 版本检查失败：{type(exc).__name__}: {exc}")
     if not E2E:
         _skip("检索质量评测需要 Ollama + Chroma + reranker 模型（加 --e2e 运行）")
         return stats()
@@ -708,7 +679,14 @@ def run():
         _assert(True, "严格领域外 query 均零召回")
 
     if "--save-baseline" in sys.argv:
-        _save_baseline(metrics, records)
+        from tools.version_store import baseline_ready
+        issues = baseline_ready("retrieval")
+        if issues:
+            for issue in issues:
+                print(f"  [基线] ✗ {issue}")
+            _assert(False, "正式基线要求干净工作区且数据集已登记")
+        else:
+            _save_baseline(metrics, records)
     if "--compare" in sys.argv:
         _compare_baseline(metrics, records)
 

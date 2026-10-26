@@ -79,7 +79,7 @@ def get_last_recommend(session_id: str):
 _sessions = {}
 # 状态形如 {"sop_id": xxx, "def_ver": xxx, "step": xxx, "slots": {xxx}, "retry_count": xxx, "result": {xxx}}
 # （无 Redis 的降级态另带 "ts"，读时按 sop_ttl 校验过期；Redis 在时不带，由 Redis 自己过期）
-_finished = {}  # session_id -> 刚收尾的那份状态（形状同 _sessions，供 CaseTrace 记槽位/结果，取走即清）
+_finished = {}  # session_id -> 刚收尾的那份状态（形状同 _sessions，供「重新回答」判断 last_sop，取走即清）
 
 
 def _session_key(session_id: str) -> str:

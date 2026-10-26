@@ -25,6 +25,14 @@ def test_budget_only():
     _assert_in("在您预算内的机器人有", format_model_query(r), "预算前缀")
 
 
+def test_colloquial_spend_budget():
+    q = "我现在银行卡有3000块，但是我只能在机器人上支出2000块，有什么型号可以买"
+    c, kind = resolve_model_constraints(q, allow_llm=False)
+    _assert_eq(kind, "budget", "「支出 2000 块」按预算上限识别")
+    _assert_eq((c["budget_min"], c["budget_max"]), (0, 2000), "只取支出上限，不取银行卡余额")
+    _assert_eq(resolve_model_constraints("随便聊聊支出"), None, "没有金额不误判预算")
+
+
 def test_date_only():
     q = "2025年发布的扫地机器人有哪些"
     c, kind = resolve_model_constraints(q)
@@ -81,6 +89,7 @@ def test_format_empty_result():
 
 TESTS = [
     test_budget_only,
+    test_colloquial_spend_budget,
     test_date_only,
     test_budget_and_date,
     test_date_gate_and_guards,

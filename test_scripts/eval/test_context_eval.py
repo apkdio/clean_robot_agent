@@ -58,6 +58,10 @@ _REVIEW_DIR = os.path.join(_ROOT, "data", "eval", "output")   # 复核文件：<
 # 基线快照（与检索轨 / 意图轨同一形态：聚合计数 + ids + per_id + env）
 _BASELINE_FILE = os.path.join(_ROOT, "data", "eval", "context", "baseline.json")
 _PREV_BASELINE_FILE = os.path.join(_ROOT, "data", "eval", "context", "baseline.prev.json")
+# 2026-10-26 暂停：v2.9 主链路重构（find_models / model_query SOP / 安全承接分层），
+# 历史会话按旧链路录制，回放会与当前链路错位。数据已归档，恢复步骤见归档目录的 MANIFEST.json。
+_PAUSED = True
+_ARCHIVE_DIR = os.path.join(_ROOT, "data", "eval", "context", "archive", "20261026_baab5452")
 
 # 唯一还靠文本的地方：回放「孤儿危险告警轮」时用它认出那条 assistant 回复（见 _replay_prefix）
 _DANGER_ALERT_MARK = "请立即停止使用"
@@ -587,15 +591,19 @@ def _env_meta() -> dict:
 
 
 def _baseline_payload(rows, results) -> dict:
-    """基线内容：聚合计数 + ids + per_id（每条「与期望行为是否一致」）+ env。
+    """基线内容：聚合计数 + ids + per_id + env。
 
     per_id 的口径：硬行为比 branch 是否等于期望、软行为比是否落在接受集内，
     取不到出口（没记 branch / 未登记）也算不一致。软行为那条只是参考，不当门禁。
     """
+    from tools.version_store import pin
+
     hard = [r for r in results if r["hard"]]
     soft = [r for r in results if not r["hard"]]
     must = [r for r in hard if r["must_pass"]]
     return {
+        "baseline_v": 2,
+        "pinned": pin("context"),
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "counts": {
             "sessions": len(rows), "cases": len(results),
@@ -607,7 +615,9 @@ def _baseline_payload(rows, results) -> dict:
             "soft_deviated": sum(1 for r in soft if r["problems"]),
         },
         "ids": [r["case"]["id"] for r in results],
-        "per_id": {r["case"]["id"]: not r["problems"] for r in results},
+        "per_id": {r["case"]["id"]: {"pass": not r["problems"], "expect_ref": "legacy"}
+                   for r in results},
+        "expect_known": False,
         "env": _env_meta(),
     }
 
@@ -685,16 +695,29 @@ def _compare_baseline(rows, results) -> None:
     with open(_BASELINE_FILE, encoding="utf-8") as f:
         base = json.load(f)
     old = base.get("per_id") or {}
+    def _pass(value):
+        return value.get("pass") if isinstance(value, dict) else bool(value)
     cur = {r["case"]["id"]: (not r["problems"], bool(r["must_pass"])) for r in results}
-    regress = sorted(i for i, (ok, must) in cur.items() if must and old.get(i) is True and not ok)
-    back = sorted(i for i, (ok, must) in cur.items() if not must and old.get(i) is True and not ok)
-    improve = sorted(i for i, (ok, _m) in cur.items() if old.get(i) is False and ok)
+    regress = sorted(i for i, (ok, must) in cur.items() if must and _pass(old.get(i)) and not ok)
+    back = sorted(i for i, (ok, must) in cur.items() if not must and _pass(old.get(i)) and not ok)
+    improve = sorted(i for i, (ok, _m) in cur.items() if i in old and not _pass(old.get(i)) and ok)
     added = sorted(i for i in cur if i not in old)
     missing = sorted(i for i in (base.get("ids") or []) if i not in cur)
 
     print("\n[基线环境]")
     print(f"  基线采集于 {base.get('created_at', '?')}")
     _print_env_compare(_env_meta(), base.get("env") or {})
+    if base.get("pinned"):
+        from tools.version_store import compare_pinned
+        attr = compare_pinned(base["pinned"])
+        print("\n[版本归因]")
+        if attr["code_recorded"]:
+            print("  代码：%s → %s%s" % (attr["code"]["base"], attr["code"]["current"],
+                                        "  ⚠ 已变" if attr["code_changed"] else ""))
+        else:
+            print("  代码：基线未记录（v1 迁移）")
+        print("  评测集：%s" % ("、".join(attr["eval_changed"]) if attr["eval_changed"] else "未变"))
+        print("  环境：%s" % ("、".join(attr["env_changed"]) if attr["env_changed"] else "未变"))
     print("[基线逐条]（按 id 比「与期望行为是否一致」）")
     _print_id_list("  回归（必过条目变红）", regress)
     _print_id_list("  退步（未修 badcase 由通过退回失败）", back)
@@ -803,6 +826,17 @@ def _print_sets(rows) -> None:
 
 def run():
     reset()
+    if _PAUSED:
+        _skip("多轮行为轨暂停中（v2.9 新链路待产出数据）；历史数据已归档 "
+              + os.path.relpath(_ARCHIVE_DIR, _ROOT).replace("\\", "/") + "（见 MANIFEST.json）")
+        return stats()
+    try:
+        from tools.version_store import dataset_warning
+        warning = dataset_warning("context")
+        if warning:
+            print(f"  [版本] ⚠ {warning}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [版本] ⚠ 版本检查失败：{type(exc).__name__}: {exc}")
     if "--list-sets" in sys.argv:            # 纯数据：不用 --e2e 也能看
         if os.path.isfile(_GOLDEN_FILE):
             _print_sets(_load_golden())
