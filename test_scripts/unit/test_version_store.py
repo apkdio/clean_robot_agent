@@ -106,9 +106,22 @@ def test_context_can_be_reactivated():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_missing_git_is_explicit():
+    old = vs._git
+    vs._git = lambda *args: None
+    try:
+        code = vs.collect_code()
+        _assert_eq(code["git_available"], False, "无 git 显式标记")
+        _assert_eq(code["id"], "code:app@unknown", "无 git 不伪造 commit")
+        _assert_raises(RuntimeError, lambda: vs.require_clean(), "干净检查不静默通过")
+        _assert(vs.baseline_ready("retrieval"), "正式基线明确拒绝无 git 环境")
+    finally:
+        vs._git = old
+
+
 TESTS = [test_register_snapshot_and_bump, test_diff_reads_snapshots,
          test_trigger_ver_covers_selection_definition, test_migrate_old_per_id,
-         test_context_can_be_reactivated]
+         test_context_can_be_reactivated, test_missing_git_is_explicit]
 
 
 def run():

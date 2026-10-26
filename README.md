@@ -327,7 +327,7 @@ python intent_classifier_training/train_intent_classifier.py
 .venv/Scripts/python.exe test_scripts/migrate_baselines_v2.py   # 旧基线迁移（一次性）
 ```
 
-开发回归允许 dirty；正式基线必须干净提交且数据集已 `register-eval`，详见 `notes/version_center.md`。
+开发回归允许 dirty；正式基线必须干净提交且数据集已 `register-eval`。没有 git 时版本会显式降级为 `code:app@unknown` 并 WARNING，正式基线前置检查会拒绝，不把“无法判断”当干净。
 
 ### 测试模块
 

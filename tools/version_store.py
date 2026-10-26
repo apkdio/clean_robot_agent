@@ -15,8 +15,10 @@ from contextlib import contextmanager
 from datetime import datetime
 
 from tools.config_tool import get_data_dir, load_config
+from tools.log_tool import get_logger
 from tools.path_tool import get_abs_path, get_project_root
 
+logger = get_logger(name="version_store")
 ROOT = get_project_root()
 VERSIONS_REL = "data/versions"
 REGISTRY_REL = "data/versions/registry.json"
@@ -80,12 +82,19 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+_git_error = None
+
+
 def _git(*args: str) -> str | None:
+    global _git_error
     try:
         out = subprocess.run(["git", "-C", ROOT, *args], capture_output=True,
                              text=True, encoding="utf-8", errors="replace", timeout=15)
         return out.stdout if out.returncode == 0 else None
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - git 不可用是显式降级，由调用方落 warning
+        if _git_error is None:
+            _git_error = "%s: %s" % (type(exc).__name__, exc)
+            logger.warning("[Version] git 不可用，代码版本降级为 unknown：%s", _git_error)
         return None
 
 
@@ -234,10 +243,13 @@ def _models_meta() -> dict:
 
 
 def collect_code() -> dict:
-    commit = (_git("rev-parse", "--short", "HEAD") or "unknown").strip()
-    changed = _status_paths()
+    commit_raw = _git("rev-parse", "--short", "HEAD")
+    git_available = bool(commit_raw and commit_raw.strip())
+    commit = (commit_raw or "unknown").strip()
+    changed = _status_paths() if git_available else []
     content = _dirty_digest(changed) if changed else ""
-    code = {"commit": commit, "dirty": bool(changed), "changed": changed,
+    code = {"commit": commit, "dirty": bool(changed) if git_available else None,
+            "changed": changed, "git_available": git_available,
             "content_digest": content[:8] if content else "",
             "prompts": _prompts_meta().get("fingerprint"),
             "deps": _sha8(_abs("requirements.txt"))}
@@ -293,6 +305,8 @@ def resolve() -> dict:
     code = collect_code()
     eval_components = {}
     warnings = []
+    if not code.get("git_available"):
+        warnings.append("git 不可用：代码版本降级为 unknown，不能判断工作区是否干净")
     for track in ACTIVE_TRACKS:
         info = collect_eval(track)
         eval_components[track] = info.get("id")
@@ -516,13 +530,19 @@ def archive_eval(track: str, reason: str, archive_dir: str = None) -> dict:
 
 def require_clean() -> list:
     """正式基线前置：返回非空表示工作区不干净（含未跟踪文件）。"""
+    if not _git("rev-parse", "--short", "HEAD"):
+        raise RuntimeError("git 不可用，无法判断工作区是否干净")
     return _status_paths()
 
 
 def baseline_ready(track: str) -> list:
     """正式基线前置检查：干净工作区 + 当前数据集已登记为 active。"""
     issues = []
-    dirty = require_clean()
+    try:
+        dirty = require_clean()
+    except RuntimeError as exc:
+        dirty = []
+        issues.append(str(exc))
     if dirty:
         issues.append("工作区未提交：%s" % "、".join(dirty[:8]) + (" …" if len(dirty) > 8 else ""))
     ds = dataset(track)
@@ -713,10 +733,14 @@ def check(strict: bool = False) -> list:
 
 def check_warnings() -> list:
     """非 strict 模式的未登记/暂停提示；不混入硬错误。"""
+    out = []
+    if not collect_code().get("git_available"):
+        out.append("git 不可用：代码版本降级为 unknown")
     active_tracks = list(ACTIVE_TRACKS)
     if os.path.isfile(_abs(EVAL_PATHS.get("context", ""))):
         active_tracks.append("context")
-    return [msg for track in active_tracks for msg in [dataset_warning(track)] if msg]
+    out.extend(msg for track in active_tracks for msg in [dataset_warning(track)] if msg)
+    return out
 
 
 def diff_eval(track: str, rev_a: int, rev_b: int) -> dict:
