@@ -11,7 +11,6 @@
   - 域外拒答门：判成 other 但能路由到知识域 → 不拒答（拒答只留给确认域外）"""
 import sys
 import os
-import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
@@ -231,7 +230,6 @@ def test_safety_carry_main_text():
 
 def test_ops_clarify_roundtrip():
     """判别器 ambiguous（分差 < gap）→ 问用户选 1/2 → 按选择重放，trace 记 override。"""
-    import tools.agent as am
     import tools.operations as ops_mod
     from sops import end_sop
     from tools import pending_store, trace_store
@@ -356,14 +354,14 @@ def test_ops_clarify_two_misses_take_top1():
 
 
 def test_clarify_result_contract():
-    """处理器返回体是闭集 DTO：kind 三种、done 必带 reply、resume 必带 query。"""
+    """处理器返回体是统一 DTO：code 三种、message 承载话术/前缀、data 承载 resume 载荷。"""
     from tools.agent import (CLARIFY_DONE, CLARIFY_DROP, CLARIFY_RESUME, ClarifyResult)
 
-    _assert_eq(ClarifyResult.done("x").kind, CLARIFY_DONE, "done 形态")
-    _assert_eq(ClarifyResult.drop().kind, CLARIFY_DROP, "drop 形态")
+    _assert_eq(ClarifyResult.done("x").code, CLARIFY_DONE, "done 形态")
+    _assert_eq(ClarifyResult.drop().code, CLARIFY_DROP, "drop 形态")
     r = ClarifyResult.resume("原句", prefix="先说", prefer_op="followup", enter_declined=True)
-    _assert_eq((r.kind, r.query, r.prefer_op, r.enter_declined),
-               (CLARIFY_RESUME, "原句", "followup", True), "resume 载荷原样带出")
+    _assert_eq((r.code, r.message, r.data.query, r.data.prefer_op, r.data.enter_declined),
+               (CLARIFY_RESUME, "先说", "原句", "followup", True), "resume 载荷原样带出")
 
     for make, why in ((lambda: ClarifyResult("bogus"), "未知 kind"),
                       (lambda: ClarifyResult.done(""), "done 空回复"),
@@ -407,7 +405,7 @@ class _DocListRetriever:
     def __init__(self, docs):
         self.docs = docs
 
-    def search_with_scores(self, query, filter=None, trace_out=None):
+    def search_with_scores(self, query, filter=None, trace_out=None):  # noqa: ARG002
         return [(d, 0.9, {"file_name": "stub.txt"}) for d in self.docs]
 
 
@@ -433,7 +431,7 @@ def test_retrieved_inject_chunks_dropped():
         ir.route_intent_with_margin, agent_mod._get_retriever, agent_mod.stream_chat)
     ir.route_intent_with_margin = lambda q: ("robot", 0.9)
 
-    def _stub_stream(messages, model="", temperature=0.3, **kw):
+    def _stub_stream(messages, model="", temperature=0.3, **kw):  # noqa: ARG001
         captured.append([getattr(m, "content", "") or "" for m in messages])
         yield "答案"
 
@@ -569,7 +567,7 @@ def test_intent_head_unavailable_degrades():
 class _EmptyRetriever:
     """0 命中的检索桩：这个门只看"走没走 RAG"，不需要真检索（也就不拖慢单测）。"""
 
-    def search_with_scores(self, query, filter=None, trace_out=None):
+    def search_with_scores(self, query, filter=None, trace_out=None):  # noqa: ARG002
         return []
 
 

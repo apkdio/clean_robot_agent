@@ -584,8 +584,8 @@ def test_clarify_hub_contract():
     for biz, handler in agent._CLARIFY_HANDLERS.items():
         _assert_true(callable(handler), f"{biz} 的处理器可调用")
     _assert_eq(set(agent._CLARIFY_KINDS), {"done", "resume", "drop"}, "返回体 kind 是闭集")
-    _assert_raises(ValueError, lambda: agent.ClarifyResult("bad", reply="x"), "闭集外的 kind 直接报错")
-    _assert_raises(ValueError, lambda: agent.ClarifyResult(agent.CLARIFY_DONE), "done 必须带话术")
+    _assert_raises(ValueError, lambda: agent.ClarifyResult("bad", message="x"), "闭集外的 code 直接报错")
+    _assert_raises(ValueError, lambda: agent.ClarifyResult(agent.CLARIFY_DONE), "done 必须带 message")
     _assert_raises(ValueError, lambda: agent.ClarifyResult(agent.CLARIFY_RESUME), "resume 必须带 query")
     _assert_eq(agent.ClarifyResult.drop().kind, "drop", "drop 合法")
     _assert_in("clarify", TRACE_NODE_LABELS, "统一澄清节点已登记（trace 渲染）")
@@ -691,6 +691,30 @@ def test_version_registry():
             _assert_true(bool(baseline.get("pinned")), f"{track} 基线有 pinned")
 
 
+def test_answer_verify_contract():
+    """答案校验契约：只记录、不改出口；节点一轮一个、状态在闭集内。"""
+    from config.word_dict_config import TRACE_NODE_STATUSES
+    from tools import trace_store
+
+    sid = "tracetest-answer-verify"
+    reset_trace(sid)
+    trace_store.begin_turn(sid, "云顶 X2 保修多久")
+    trace_store.note_behavior("retrieve_answer")
+    trace_store.verify(["model:云顶X2", "price:5999"], ["price:5999"],
+                       action="log", exempt=["model:云顶X2"])
+    trace_store.end_turn("该型号保修 2 年。")
+    rec = read_last_turn(sid)
+    _assert_eq(rec.get("branch"), "answer", "校验不改变本轮出口")
+    facts = (rec.get("answer") or {}).get("verify") or {}
+    _assert_eq(facts.get("action"), "log", "action 固定为 log（只记录不拦截）")
+    nodes = [n for n in (rec.get("path") or []) if n.get("node") == "answer.verify"]
+    _assert_eq(len(nodes), 1, "一轮只有一个 answer.verify 节点")
+    _assert_in(nodes[0].get("status"), TRACE_NODE_STATUSES, "节点状态在闭集内")
+    _assert_eq(nodes[0].get("status"), "miss", "有缺失时 status=miss")
+    trace_store.verify(["x"], [])        # 没有活跃 turn 时必须 no-op
+    reset_trace(sid)
+
+
 TESTS = [
     test_branch_closed_set_from_config,
     test_branch_covers_behaviours,
@@ -719,6 +743,7 @@ TESTS = [
     test_clarify_hub_contract,
     test_sop_enter_confirm_policy,
     test_version_registry,
+    test_answer_verify_contract,
 ]
 
 

@@ -89,6 +89,7 @@ clean_robot_agent/
 │   │   ├── test_context.py      # 上下文存储（append/get_recent/meta/UUID 校验）
 │   │   ├── test_metadata.py     # 结构化提取（价格/日期/型号/系列/过滤）
 │   │   ├── test_model_query.py  # 模型查询收敛（预算/日期/组合/守卫）
+│   │   ├── test_answer_checker.py # 答案校验（型号/金额/保修时长 + 用户原话豁免 + trace）
 │   │   ├── test_selection_tags.py # 标签序号解析 + 型号标签过滤
 │   │   ├── test_function_tools.py  # 日期/预算/型号/症状/网点五个工具
 │   │   ├── test_retrieval.py    # 检索链路（域路由/分词/过滤/RRF/阈值/精排/条目切分）
@@ -139,6 +140,7 @@ clean_robot_agent/
 | `model_tags.py` | 型号特点标签：受控标签目录 + `data/state/model_tags.json` 映射；原文 `feature` 保留作证据 |
 | `selection.py` | 多选序号解析：中英文逗号/顿号/全角数字归一化，只认序号与固定跳过命令 |
 | `model_query.py` | 模型查询业务：预算/日期/系列约束 → `find_models` → 结构化直出（不处理型号详情/追问） |
+| `answer_checker.py` | 答案校验：从 RAG 答案抽已知型号、带货币单位的金额、保修语境下的时长，到最终召回片段里做字面核对；用户原话里的实体豁免，目录外/带虚构后缀的型号记 `unchecked`；结果只记日志与 trace，不拦截流式输出 |
 | `entry_splitter.py` | 编号条目分块器（每个问答/型号一个 chunk） |
 | `hot_ingest.py` | 知识库热更新：定时扫描 + 增量入库 |
 | `file_tools.py` | 文档多策略解析（txt/pdf/csv/docx） |

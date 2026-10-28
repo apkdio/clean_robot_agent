@@ -562,40 +562,69 @@ _CLARIFY_KINDS = (CLARIFY_DONE, CLARIFY_RESUME, CLARIFY_DROP)
 
 
 @dataclass(frozen=True)
-class ClarifyResult:
-    """澄清处理器的标准返回体：状态码 + 载荷（字段按 kind 取用）。"""
+class ClarifyData:
+    """resume 的业务载荷：恢复 query、本轮偏好与拒绝标记。"""
 
-    kind: str
-    reply: str = ""
-    prefix: str = ""
-    query: str | None = None
+    query: str
     prefer_op: str | None = None
     enter_declined: bool = False
 
+    def apply(self, query: str, q: str, enter_declined_turn: bool,
+              prefer_op: str | None) -> tuple:
+        """把载荷应用到本轮状态，返回 (query, q, declined, prefer)。"""
+        if self.enter_declined:
+            enter_declined_turn = True
+        if self.prefer_op:
+            prefer_op = self.prefer_op
+        if self.query != query:
+            query = self.query
+            # 恢复成原问题后必须重算归一化，否则意图分类 / SOP 触发 / 检索仍用被否掉那句
+            if _normalize_enabled():
+                from tools.query_normalizer import normalize
+                q = normalize(query)
+                trace_store.step("rewrite", normalize={"changed": q != query, "text": q[:120]})
+            else:
+                q = query
+        return query, q, enter_declined_turn, prefer_op
+
+
+@dataclass(frozen=True)
+class ClarifyResult:
+    """澄清处理器的统一返回体：code + message + data（data 按 code 取用）。"""
+
+    code: str
+    message: str = ""
+    data: ClarifyData | None = None
+
     def __post_init__(self):
-        if self.kind not in _CLARIFY_KINDS:
-            raise ValueError("clarify kind 不在闭集内：%r" % self.kind)
-        if self.kind == CLARIFY_DONE and not self.reply:
-            raise ValueError("clarify done 必须带 reply")
-        if self.kind == CLARIFY_RESUME and not self.query:
+        if self.code not in _CLARIFY_KINDS:
+            raise ValueError("clarify code 不在闭集内：%r" % self.code)
+        if self.code == CLARIFY_DONE and not self.message:
+            raise ValueError("clarify done 必须带 message")
+        if self.code == CLARIFY_RESUME and (not self.data or not self.data.query):
             raise ValueError("clarify resume 必须带 query")
+
+    @property
+    def kind(self) -> str:
+        """兼容旧读侧；新代码用 code。"""
+        return self.code
 
     @classmethod
     def done(cls, reply: str) -> "ClarifyResult":
-        return cls(CLARIFY_DONE, reply=reply)
+        return cls(CLARIFY_DONE, message=reply)
 
     @classmethod
     def resume(cls, query: str, prefix: str = "", prefer_op: str = None,
                enter_declined: bool = False) -> "ClarifyResult":
-        return cls(CLARIFY_RESUME, prefix=prefix, query=query,
-                   prefer_op=prefer_op, enter_declined=enter_declined)
+        return cls(CLARIFY_RESUME, message=prefix, data=ClarifyData(
+            query=query, prefer_op=prefer_op, enter_declined=enter_declined))
 
     @classmethod
     def drop(cls) -> "ClarifyResult":
         return cls(CLARIFY_DROP)
 
 
-def _clarify_sop_exit(session_id: str, rec: dict, query: str, q: str) -> ClarifyResult:
+def _clarify_sop_exit(session_id: str, rec: dict, _query: str, q: str) -> ClarifyResult:
     """SOP 退出确认门：答「是」退出，「不是」继续。"""
     from sops import end_sop, get_active_sop_id, get_sop_state, has_active_sop
 
@@ -644,7 +673,7 @@ def _clarify_sop_exit(session_id: str, rec: dict, query: str, q: str) -> Clarify
         _EXIT_CONFIRM.format(sop=sop_name), session_id, by="clarify"))
 
 
-def _clarify_sop_enter(session_id: str, rec: dict, query: str, q: str) -> ClarifyResult:
+def _clarify_sop_enter(session_id: str, rec: dict, query: str, _q: str) -> ClarifyResult:
     """SOP 进入确认门：答「是」进引导，「不是」恢复原句直接作答。"""
     from sops import SOPS, enter_decline_hint, has_active_sop, mark_enter_declined
 
@@ -693,7 +722,7 @@ def _clarify_sop_enter(session_id: str, rec: dict, query: str, q: str) -> Clarif
         _ENTER_CONFIRM.format(sop=_sop_name(sop_id)), session_id, by="clarify"))
 
 
-def _clarify_ops(session_id: str, rec: dict, query: str, q: str) -> ClarifyResult:
+def _clarify_ops(session_id: str, rec: dict, query: str, _q: str) -> ClarifyResult:
     """操作澄清：答 1/2（或操作别名）按选择重放；两次认不出取 top1。"""
     rec = pending_store.take(session_id, pending_store.BIZ_OPS_CLARIFY)
     if not rec:
@@ -751,28 +780,62 @@ def _open_clarify(session_id: str, biz: str, state: dict = None,
     return rec
 
 
-def _stream_with_fallback(messages: list, temperature: float = 0.3, stop_check=None):
+def _verify_answer(answer: str, chunks: list, query: str) -> None:
+    """核对 RAG 答案里的硬事实；只记日志与 trace，不改变已经输出的内容。"""
+    from tools.answer_checker import check_answer
+
+    try:
+        result = check_answer(answer, chunks, query)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[AnswerVerify] 校验异常，跳过：%s", e)
+        trace_store.node("answer.verify", status="degraded", out={"error": type(e).__name__})
+        return
+
+    if result.get("skipped"):
+        logger.warning("[AnswerVerify] 校验降级：%s", ",".join(result["skipped"]))
+    trace_store.verify(result["checked"], result["missing"],
+                       action="log", exempt=result.get("exempt"),
+                       skipped=result.get("skipped"),
+                       unchecked=result.get("unchecked"))
+    if result.get("unchecked"):
+        logger.warning("[AnswerVerify] 型号目录中没有，未核对：%s", ",".join(result["unchecked"]))
+    if result["missing"]:
+        logger.warning("[AnswerVerify] 召回片段中找不到：%s", ",".join(result["missing"]))
+
+
+def _stream_with_fallback(messages: list, temperature: float = 0.3, stop_check=None,
+                          verify=None):
     """流式生成，失败/零输出时走确定性兜底并留痕。
 
     生成异常或一个字都没吐出来时给兜底话术（不允许空白回复），trace 记
     error + generate 节点 degraded；正常输出过内容则原样透传。
     stop_check 命中时静默中止（半截输出照常透传，停止语义由 webapp 收尾）。
+    verify 只在完整生成（未停止、未异常）后调用，半截答案不参与核对。
     """
     produced = False
+    parts = []
+    stopped = False
+    failed = False
     try:
         for chunk in stream_chat(messages, model=get_chat_model_name(), temperature=temperature):
             if stop_check is not None and stop_check():
                 logger.info("[Agent] stopped during generation")
+                stopped = True
                 return
             produced = True
+            parts.append(chunk)
             yield chunk
     except Exception as e:  # noqa: BLE001
+        failed = True
         logger.warning("[Generate] 流式生成失败：%s", e)
         trace_store.note_error(e)
         trace_store.node("generate", status="degraded")
     if not produced:
         _log_behavior("no_answer_fallback", hits=0, via="generate_failed")
         yield random.choice(NO_ANSWER_REPLIES)
+        return
+    if verify is not None and not stopped and not failed:
+        verify("".join(parts))
 
 
 def _log_behavior(tag: str, **detail) -> None:
@@ -952,26 +1015,14 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
             pending_store.close(session_id)
         else:
             result = handler(session_id, pending, query, q)
-            if result.kind == CLARIFY_DONE:
-                yield result.reply
+            if result.code == CLARIFY_DONE:
+                yield result.message
                 return
-            if result.kind == CLARIFY_RESUME:
-                if result.prefix:
-                    yield result.prefix
-                if result.enter_declined:
-                    enter_declined_turn = True
-                if result.prefer_op:
-                    prefer_op = result.prefer_op
-                if result.query != query:
-                    query = result.query
-                    clean = query
-                    # 恢复成原问题后必须重算归一化，否则意图分类 / SOP 触发 / 检索仍用被否掉那句
-                    if _normalize_enabled():
-                        from tools.query_normalizer import normalize
-                        q = normalize(query)
-                        trace_store.step("rewrite", normalize={"changed": q != query, "text": q[:120]})
-                    else:
-                        q = query
+            if result.code == CLARIFY_RESUME:
+                if result.message:
+                    yield result.message
+                query, q, enter_declined_turn, prefer_op = result.data.apply(
+                    query, q, enter_declined_turn, prefer_op)
             # CLARIFY_DROP：状态作废，按当前 query 继续
 
     # SOP 会话：有活跃 SOP 时继续该流程（不经过意图路由）
@@ -1356,4 +1407,5 @@ def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
         ],
         temperature=_llm_cfg.get("temperature", 0.3),
         stop_check=stop_check,
+        verify=lambda text: _verify_answer(text, chunk_texts, query),
     )

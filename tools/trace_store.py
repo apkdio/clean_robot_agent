@@ -22,7 +22,9 @@ import time
 from datetime import datetime, timedelta
 
 from config.word_dict_config import BEHAVIOR_BY_TAG
-from tools.log_tool import log_path
+from tools.log_tool import get_logger, log_path
+
+logger = get_logger(name="trace_store")
 
 TRACE_VERSION = 3
 # 轮次记录（主干）的 schema 版本；落盘字段名仍是 v，靠所在文件区分是谁的版本。结构见 notes/TRACE.md。
@@ -126,7 +128,7 @@ def _session_dir(session_id: str, create: bool = False, stamp: str = "") -> str:
     return _dir_cache[sid]
 
 
-def _rename_legacy_dir(path: str, sid: str) -> str:
+def _rename_legacy_dir(path: str, _sid: str) -> str:
     """把「目录名只有会话 ID」的旧目录补上时间（取最早一条 trace 的 ts）；失败就沿用原名。"""
     stamp = ""
     try:
@@ -383,6 +385,37 @@ def node(name: str, status: str = "ok", by: str = None, in_: dict = None, out: d
         turn["path"].append(rec)
     except Exception:  # noqa: BLE001
         pass
+
+
+def verify(checked: list, missing: list, action: str = "log", exempt: list = None,
+           skipped: list = None, unchecked: list = None) -> None:
+    """记答案校验结果：完整清单进 answer 块，路径节点只放计数和短摘要。"""
+    turn = getattr(_local, "turn", None)
+    if not turn:
+        return
+    try:
+        checked = list(checked or [])
+        missing = list(missing or [])
+        exempt = list(exempt or [])
+        skipped = list(skipped or [])
+        unchecked = list(unchecked or [])
+        facts = {"checked": checked, "missing": missing,
+                 "exempt": exempt, "action": action}
+        if skipped:
+            facts["skipped"] = skipped
+        if unchecked:
+            facts["unchecked"] = unchecked
+        turn["answer"]["verify"] = facts
+        node("answer.verify", status="degraded" if skipped else ("miss" if missing else "ok"),
+             out={"checked": len(checked), "missing_n": len(missing),
+                  "missing": "/".join(missing)[:120] or "-",
+                  "exempt_n": len(exempt), "unchecked_n": len(unchecked),
+                  "unchecked": "/".join(unchecked)[:120] or "-",
+                  "skipped": "/".join(skipped) or "-",
+                  "action": action})
+    except Exception:  # noqa: BLE001
+        pass
+
 
 
 def retrieval(**facts) -> None:
@@ -750,9 +783,12 @@ def _finalize(turn: dict, reply: str) -> None:
     if tag:
         turn["branch"] = BEHAVIOR_BY_TAG.get(tag)
     if turn["branch"]:
-        turn["answer"] = {"kind": turn["branch"],
-                          "model": (turn.get("answer") or {}).get("model"),
-                          "chars": len(reply or "")}
+        prev = turn.get("answer") or {}
+        answer = {"kind": turn["branch"], "model": prev.get("model"),
+                  "chars": len(reply or "")}
+        if prev.get("verify") is not None:
+            answer["verify"] = prev["verify"]
+        turn["answer"] = answer
         # 判"有没有检索"不能看 retrieval 块整体：入口归一化会先写 retrieval.rewrite，
         # 让块非空——要看检索环节自己的标志（steps.retrieve 才是真跑过检索）
         retrieved = bool(turn.get("steps", {}).get("retrieve"))

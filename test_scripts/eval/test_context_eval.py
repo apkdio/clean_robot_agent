@@ -682,7 +682,7 @@ def _print_env_compare(env, base_env) -> None:
     print(f"  trace   : v{env.get('trace_version')}  vs  基线 v{base_env.get('trace_version')}")
 
 
-def _compare_baseline(rows, results) -> None:
+def _compare_baseline(results) -> None:
     """与基线逐条比 + 核对环境。
 
     分类与检索轨一致，但「回归」只认必过条目：必过变红才是红灯；
@@ -953,7 +953,7 @@ def run():
     if "--compare" in sys.argv:
         if subset_desc:
             print(f"\n[基线] 本次是子集（{subset_desc}）：未跑桶里列的是没选的用例，属正常")
-        _compare_baseline(rows, results)
+        _compare_baseline(results)
 
     if regressions:
         for r in regressions:
