@@ -1,0 +1,79 @@
+tools/trace_store.py
+  s_40681318f5a20b::t_1541800b088cab 390,400,402-405,408-409,415
+  s_40681318f5a20b::t_bfd85fa23d1cbb 786-791
+  s_40681318f5a20b::t_482b754559e7e0 25-27
+  s_40681318f5a20b::t_7aeb405a4eb5d9 392-399,410-411,416-420
+  s_40681318f5a20b::t_0e955c03af3e79 391,401,406-407,412-414
+test_scripts/eval/test_behavior_tags.py
+  s_321753db235424::t_4806c20f1aaba8 694-717
+  s_321753db235424::t_41104346e0c589 746
+  s_40681318f5a20b::t_a2cad0a3b3436b 587-588
+tools/agent.py
+  s_40681318f5a20b::t_86fba9645e5db1 797
+  s_40681318f5a20b::t_bc9d12b8d373f0 676
+  s_40681318f5a20b::t_efc8ff9be4bd2f 565-566,572-588,590,593-597,600-604,608-611,614,619-620
+  s_40681318f5a20b::t_fae3dadceed7d1 798-801
+  s_40681318f5a20b::t_1c8235a0f4fd8d 627
+  s_40681318f5a20b::t_c7c7be1ff3dab6 1018-1019,1021-1025
+  s_40681318f5a20b::t_4868ea2493992f 568,589,591-592,598,607
+  s_40681318f5a20b::t_538b0050f3dfa3 783-796,802-807,813,816-818,823,826,829,836-838
+  s_40681318f5a20b::t_99f3332d1c0bec 1410
+config/word_dict_config.py
+  s_40681318f5a20b::t_02a16252ba74d3 366-371
+  s_40681318f5a20b::t_3d9b3504c4673b 537
+test_scripts/unit/test_answer_checker.py
+  s_40681318f5a20b::t_5d51a9a99f996d 39-61
+  s_40681318f5a20b::t_2e2e6386eab51b 143
+  s_40681318f5a20b::t_aa5c6bd22d7d0c 182-184
+  s_321753db235424::t_cb0cab07a235ff 161-178,188-190
+  s_40681318f5a20b::t_0ff8a2ca76ff00 193
+  s_40681318f5a20b::t_9b207bf28c36fc 102-118
+  s_40681318f5a20b::t_9f491d964a298a 1-38,62-101,119-121,137-142,144-160,179-181,185-187,191,194-205
+  s_40681318f5a20b::t_53e8265124932b 122-136
+  s_40681318f5a20b::t_27d685da9f4171 192
+test_scripts/eval/test_context_eval.py
+  s_40681318f5a20b::t_10ea0eb3129845 956
+  s_40681318f5a20b::t_f280ec52412900 685
+README.md
+  s_40681318f5a20b::t_d10a060481a56e 92
+  s_40681318f5a20b::t_0a0fc00a492340 143
+tools/answer_checker.py
+  s_40681318f5a20b::t_98ea117e5903a4 1-9,11-23,30,50-78,80,83-100,103,109-115,119-134
+  s_40681318f5a20b::t_89ebf70cf2c4fd 79,81-82,101-102,104-108,116-118,135-136
+  s_40681318f5a20b::t_0bed986d878141 24-29,31-49
+  s_40681318f5a20b::t_9dfb48af5697be 10
+test_scripts/unit/test_agent_guards.py
+  s_40681318f5a20b::t_68f076b4ff19c0 434
+  s_40681318f5a20b::t_8b12ed9b0ced41 408
+  s_40681318f5a20b::t_3618a97d2b7844 357,360-361,363-364
+  s_40681318f5a20b::t_d10f2c2ed378a5 570
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "ee07e958725d3058bb04aa12e7e146300731aba5",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_321753db235424": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_vqwohz01c4pd",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    },
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "auto(free)"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
