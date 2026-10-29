@@ -4,9 +4,8 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from tools import trace_store
+from tools.dto.model_query import ModelQueryResult
 from tools.log_tool import get_logger
 from tools.metadata_extractor import (
     build_filter,
@@ -25,13 +24,6 @@ from config.word_dict_config import (
 )
 
 logger = get_logger(name="model_query")
-
-
-@dataclass(frozen=True)
-class ModelQueryResult:
-    models: list
-    kind: str
-    constraints: dict
 
 
 def _budget_bounds(query: str, allow_llm: bool = True) -> tuple[int, int]:

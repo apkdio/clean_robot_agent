@@ -90,6 +90,7 @@ clean_robot_agent/
 │   │   ├── test_metadata.py     # 结构化提取（价格/日期/型号/系列/过滤）
 │   │   ├── test_model_query.py  # 模型查询收敛（预算/日期/组合/守卫）
 │   │   ├── test_answer_checker.py # 答案校验（型号/金额/保修时长 + 用户原话豁免 + trace）
+│   │   ├── test_dto_contracts.py # DTO 契约（控制流 / 执行体 / 澄清 / 传输事件）
 │   │   ├── test_selection_tags.py # 标签序号解析 + 型号标签过滤
 │   │   ├── test_function_tools.py  # 日期/预算/型号/症状/网点五个工具
 │   │   ├── test_retrieval.py    # 检索链路（域路由/分词/过滤/RRF/阈值/精排/条目切分）
@@ -102,6 +103,7 @@ clean_robot_agent/
 │   │   ├── test_trace_report_html.py # trace HTML 报告（数据整形 / 渲染 / 边界）
 │   │   ├── test_review_fixes.py # 代码 review 修复回归（依赖降级 / 日期闸门 / 上传净化 / 重答与历史口径）
 │   │   ├── test_webapp_routes.py # webapp 路由层契约（入参校验 / 状态码 / 并发锁拒绝）
+│   │   ├── test_chat_service.py # chat_service 生命周期（事件序列 / 错误回滚 / 停止语义）
 │   │   └── test_dialogue.py     # 多轮实战对话（正常 + 非人类，需 --e2e）
 │   └── eval/                    # 评测轨（留出集 + 基线，评测入口默认跑这些；多数需 --e2e）
 │       ├── test_behavior_tags.py   # 行为闭集（branch）与 trace 记录契约自检（纯规则，不依赖模型）
@@ -126,7 +128,17 @@ clean_robot_agent/
 
 | 模块 | 职责 |
 |------|------|
-| `agent.py` | RAG 编排：意图路由 → 知识域路由 → 检索 → 结构化直出或 LLM 生成 |
+| `agent.py` | 阶段化主链编排：硬规则 → 归一化 → 澄清 → 活跃 SOP → 意图 → 安全承接 → 操作派发 → 结构化 / 检索 / 生成；阶段返回 `Continue / Finish`，顺序即优先级 |
+| `dto/` | 跨层返回体契约（叶子包）：`stage.py` 控制流、`executor.py` 执行体结果、`clarify.py` 澄清结果、`sop.py` SOP 步骤、`model_query.py` 型号查询结果、`transport.py` 会话事件 |
+| `turn_context.py` | 本轮状态单：`TurnContext`（业务状态）；阶段返回体从 `tools/dto/stage.py` 兼容导出 |
+| `turn_recorder.py` | 旁路记录门面：行为标签、trace 节点、影子探针；不存第二份 trace 状态 |
+| `domain_router.py` | 知识域打分与检索 filter：top1 单域 / top2 双域 / 无域全库兜底 |
+| `query_rewrite.py` | 上下文承接与改写：历史挑选、规则拼接、LLM 改写与忠实性校验 |
+| `sop_runtime.py` | SOP 运行时：进出 SOP、重答重开、SOP 进度记录 |
+| `clarify_service.py` | 统一澄清处理器：SOP 进入/退出确认、操作澄清；使用 `dto/clarify` 的 `ClarifyResult` |
+| `op_executors.py` | 操作执行体注册表：追问 / 型号详情 / 型号筛选 / 网点 / SOP，返回 `ExecOutcome`（`Reply / NotMine`） |
+| `generation.py` | 流式生成与兜底：闲聊 / RAG Prompt、生成失败话术、答案硬事实校验接线 |
+| `chat_service.py` | 一轮对话生命周期：会话锁、停止标志、user/assistant 收尾、标题与 meta 事件；webapp 只做 HTTP/SSE 转换 |
 | `operations.py` | 操作判别器：把"这一轮算哪个操作"（追问 / 型号详情 / 售后网点 / SOP 触发 / 型号筛选）从编排的 if 链里抽出来，变成可断言、可留痕的一次判定。6 个操作各配一组**关键句**，用稠密 + BM25 双路打分，主链路按**三段过滤**派发：分数过 `floor` → 词表/结构判据命中 → 前两名分差小于 `gap` 时问用户选哪个；判定与分数落 trace 的 `route.ops` |
 | `intent_router.py` | 意图分类：本地分类头（bge-m3 + Linear）判 robot/casual/other/unknown |
 | `query_normalizer.py` | query 入口归一化（纯规则、幂等）：标点 / 空格 / 全半角 / 同义词映射 |
@@ -151,7 +163,7 @@ clean_robot_agent/
 | `redis_store.py` | Redis 连接封装 + 互斥锁（SET NX）+ 降级回退：无 Redis 时自动回退本地内存 |
 | `pending_store.py` | 统一澄清状态（SOP 进入/退出确认、操作澄清共用）：Redis `clarify:{sid}` + `clarify_ttl`（≥ `sop_ttl`），记录 `{biz, retry, state, data}`（`state` = 业务快照，如 SOP 的 step/slots），业务 id 隔离（`sop.enter` / `sop.exit` / `ops.clarify`），无 Redis 降级内存并校验时间戳；只存状态，不解析回答 |
 | `test_hooks.py` | **仅供测试/评测**的状态注入助手（danger 窗口 / 连续承接计数 / 活跃 SOP / 澄清状态）|
-| `trace_store.py` | 会话级 trace：每轮落一条结构化记录（`logs/trace/<日期>/<会话ID>_<日期>_<时间>/<同名>.jsonl`，先按日期分目录再按会话，best-effort 不影响对话，`TRACE_DIR` 可改落点）；记录与执行同构：进门判断、本轮唯一出口、有序节点（含状态/耗时/进出事实）、两遍召回与各遍计数、最终候选的来源分布、SOP 动作链，另保留旧字段作兼容；同一会话目录下另有三份旁路文件：召回片段全文、影子决策、用户评价 |
+| `trace_store.py` | 会话级 trace：每轮落一条结构化记录（`logs/trace/<日期>/<会话ID>_<日期>_<时间>/<同名>.jsonl`，先按日期分目录再按会话，best-effort 不影响对话，`TRACE_DIR` 可改落点）；记录与执行同构：进门判断、本轮唯一出口、有序节点（含状态/耗时/进出事实）、两遍召回与各遍计数、最终候选的来源分布、SOP 动作链，另保留旧字段作兼容；同一会话目录下另有四份旁路文件：召回片段全文、影子决策、用户评价、执行事件流（`events.jsonl`，逐条追加用于崩溃复原） |
 | `version_store.py` | 评测版本中台：代码/环境指纹、评测集账本（登记/升版/归档/快照）、`run_id`、run manifest 与 `diff-eval`；正式基线要求干净工作区 |
 
 > trace 读侧是一个脚本 `test_scripts/trace_report.py`：文本视图按会话列出每轮走向（`--chunks/--shadow/--feedback` 看旁路证据）；

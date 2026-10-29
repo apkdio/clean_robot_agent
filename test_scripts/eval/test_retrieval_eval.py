@@ -168,8 +168,16 @@ def _expect_ref(entry):
 
 
 def _compute(entries, hr):
-    from tools.agent import _domain_filter, _normalize_enabled, _resolve_date_filter, _route_domain
+    from function_tools.date_tool import build_date_filter
+    from tools.domain_router import domain_filter as _domain_filter, route_domain as _route_domain
     from tools.metadata_extractor import enumerate_models, resolve_budget_filter
+    from tools.model_query import resolve_date_range
+    from tools.query_rewrite import normalize_enabled as _normalize_enabled
+
+    def _date_filter(query):
+        """日期解析在 model_query，filter 组装在 date_tool（与线上同口径）。"""
+        r = resolve_date_range(query)
+        return build_date_filter(r[0], r[1]) if r else None
 
     # 与线上同口径：入口归一化（agent.py 在注入/危险/情绪三条硬规则之后做）只作用于
     # SOP 匹配 / 域路由 / 检索 query——本轨是直接调路由与 retriever 的，得自己补这一步。
@@ -248,7 +256,7 @@ def _compute(entries, hr):
 
         elif t == "time":
             struct_total += 1
-            f = _resolve_date_filter(q)
+            f = _date_filter(q)
             models = enumerate_models(f) if f is not None else []
             names = {_short_name(m["name"]) for m in models}
             rec["ok"] = names == set(e["expect_models"])

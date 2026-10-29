@@ -7,7 +7,6 @@
   - repair SOP 提取失败 → 反问故障现象（stub 掉 extract）"""
 import sys
 import os
-import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
@@ -19,6 +18,10 @@ import sops.base
 import sops.repair
 from test_scripts import trace_reader
 from tools import trace_store
+
+
+def _pair(result):
+    return result.reply, result.done
 
 
 def _cleanup():
@@ -69,7 +72,7 @@ def test_repair_sop_flow():
     orig = sops.repair.REPAIR_SOP["steps"][1]["action"]
     sops.repair.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"answer": "第一步：检查电源是否接通。"}
     try:
-        reply, done = sops.base.start_sop("r1", "repair", "机器人不动了怎么办")
+        reply, done = _pair(sops.base.start_sop("r1", "repair", "机器人不动了怎么办"))
         _assert(done, "触发词含症状→一次完成")
         _assert_in("第一步", reply, "返回排查步骤")
         _assert(not sops.base.has_active_sop("r1"), "会话已结束")
@@ -83,7 +86,7 @@ def test_repair_sop_ask_fallback():
     orig = sops.repair.REPAIR_SOP["steps"][0]["extract"]
     sops.repair.REPAIR_SOP["steps"][0]["extract"] = lambda text, slots: None
     try:
-        reply, done = sops.base.start_sop("r2", "repair", "机器人不动了怎么办")
+        reply, done = _pair(sops.base.start_sop("r2", "repair", "机器人不动了怎么办"))
         _assert(not done, "提取失败未结束")
         _assert_in("故障现象", reply, "返回 ask 反问现象")
         _assert(sops.base.has_active_sop("r2"), "会话保持活跃")

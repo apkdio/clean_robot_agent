@@ -17,8 +17,8 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools import agent as agent_mod
 from tools.agent import ask_stream
+import tools.agent as agent_mod
 
 
 def _reply(query):
@@ -268,10 +268,10 @@ def test_ops_clarify_roundtrip():
 
 def test_clarify_open_trace():
     """提问轮落 clarify.open：biz、选项、retry，以及被覆盖的 biz。"""
-    import tools.agent as am
     import tools.operations as ops_mod
     from sops import end_sop
     from tools import pending_store, trace_store
+    from tools.clarify_service import open_clarify
     from test_scripts import trace_reader
 
     sid = "t-clarify-open"
@@ -297,8 +297,8 @@ def test_clarify_open_trace():
         pending_store.close(sid)
         pending_store.ask(sid, pending_store.BIZ_SOP_EXIT, state={"sop_id": "model_query"})
         trace_store.begin_turn(sid, "覆盖测试")
-        am._open_clarify(sid, pending_store.BIZ_OPS_CLARIFY,
-                         state={"query": "原问题"}, options=["sop", "find_models"])
+        open_clarify(sid, pending_store.BIZ_OPS_CLARIFY,
+                     state={"query": "原问题"}, options=["sop", "find_models"])
         trace_store.end_turn()
         row = trace_reader.load(trace_store._path(sid))[-1]
         n = [x for x in (row.get("path") or []) if x.get("node") == "clarify.open"][-1]
@@ -355,7 +355,7 @@ def test_ops_clarify_two_misses_take_top1():
 
 def test_clarify_result_contract():
     """处理器返回体是统一 DTO：code 三种、message 承载话术/前缀、data 承载 resume 载荷。"""
-    from tools.agent import (CLARIFY_DONE, CLARIFY_DROP, CLARIFY_RESUME, ClarifyResult)
+    from tools.clarify_service import (CLARIFY_DONE, CLARIFY_DROP, CLARIFY_RESUME, ClarifyResult)
 
     _assert_eq(ClarifyResult.done("x").code, CLARIFY_DONE, "done 形态")
     _assert_eq(ClarifyResult.drop().code, CLARIFY_DROP, "drop 形态")
@@ -456,35 +456,39 @@ def test_retrieved_inject_chunks_dropped():
 
 
 def test_is_symbols_only():
-    _assert(agent_mod._is_symbols_only("？？？"), "纯符号→True")
-    _assert(agent_mod._is_symbols_only("。。。"), "纯标点→True")
-    _assert(agent_mod._is_symbols_only(""), "空串→True")
-    _assert(not agent_mod._is_symbols_only("你好"), "中文→False")
-    _assert(not agent_mod._is_symbols_only("abc123"), "字母数字→False")
+    from tools.sop_runtime import is_symbols_only
+
+    _assert(is_symbols_only("？？？"), "纯符号→True")
+    _assert(is_symbols_only("。。。"), "纯标点→True")
+    _assert(is_symbols_only(""), "空串→True")
+    _assert(not is_symbols_only("你好"), "中文→False")
+    _assert(not is_symbols_only("abc123"), "字母数字→False")
 
 
 def test_match_yes_no():
     """确认门判据：True=是 / False=不是 / None=认不出（由调用方再问一次，两次都认不出才默认退出）。"""
-    _assert(agent_mod._match_yes_no("是") is True, "是→退出")
-    _assert(agent_mod._match_yes_no("退出") is True, "退出→退出")
-    _assert(agent_mod._match_yes_no("确认") is True, "确认→退出")
-    _assert(agent_mod._match_yes_no("不是") is False, "不是→继续")
-    _assert(agent_mod._match_yes_no("继续") is False, "继续→继续")
-    _assert(agent_mod._match_yes_no("不用") is False, "不用→继续")
-    _assert(agent_mod._match_yes_no("不对") is False, "「不对」不能被「对」劫持（先判否定）")
-    _assert(agent_mod._match_yes_no("随便") is None, "认不出→None（不再默认退出）")
-    _assert(agent_mod._match_yes_no("今天天气不错") is None, "无关内容→None")
-    _assert(agent_mod._match_yes_no("嗯嗯这个嘛") is None, "含弱应答词的长句→None（不许判成「是」）")
-    _assert(agent_mod._match_yes_no("嗯") is True, "整句就是「嗯」→是")
-    _assert(agent_mod._match_yes_no("不退出") is False, "「不退出」→继续（不被其中的「退出」抢先判成是）")
-    _assert(agent_mod._match_yes_no("不可以", gate="enter") is False, "「不可以」→不是（不被「可以」吃掉）")
-    _assert(agent_mod._match_yes_no("不行", gate="enter") is False, "「不行」→不是")
-    _assert(agent_mod._match_yes_no("对不起，我想问滤网") is None, "「对不起…」不被单字「对」吃掉 → 认不出")
-    _assert(agent_mod._match_yes_no("对的") is True, "「对的」→是（完整短语子串）")
-    _assert(agent_mod._match_yes_no("对") is True, "整句就是「对」→是")
-    _assert(agent_mod._match_yes_no("嗯好的") is True, "「嗯好的」→是")
-    _assert(agent_mod._match_yes_no("退出", gate="enter") is None, "进入门不认「退出」（那是退出门的词）")
-    _assert(agent_mod._match_yes_no("继续", gate="enter") is None, "进入门不认「继续」")
+    from tools.clarify_service import match_yes_no as m
+
+    _assert(m("是") is True, "是→退出")
+    _assert(m("退出") is True, "退出→退出")
+    _assert(m("确认") is True, "确认→退出")
+    _assert(m("不是") is False, "不是→继续")
+    _assert(m("继续") is False, "继续→继续")
+    _assert(m("不用") is False, "不用→继续")
+    _assert(m("不对") is False, "「不对」不能被「对」劫持（先判否定）")
+    _assert(m("随便") is None, "认不出→None（不再默认退出）")
+    _assert(m("今天天气不错") is None, "无关内容→None")
+    _assert(m("嗯嗯这个嘛") is None, "含弱应答词的长句→None（不许判成「是」）")
+    _assert(m("嗯") is True, "整句就是「嗯」→是")
+    _assert(m("不退出") is False, "「不退出」→继续（不被其中的「退出」抢先判成是）")
+    _assert(m("不可以", gate="enter") is False, "「不可以」→不是（不被「可以」吃掉）")
+    _assert(m("不行", gate="enter") is False, "「不行」→不是")
+    _assert(m("对不起，我想问滤网") is None, "「对不起…」不被单字「对」吃掉 → 认不出")
+    _assert(m("对的") is True, "「对的」→是（完整短语子串）")
+    _assert(m("对") is True, "整句就是「对」→是")
+    _assert(m("嗯好的") is True, "「嗯好的」→是")
+    _assert(m("退出", gate="enter") is None, "进入门不认「退出」（那是退出门的词）")
+    _assert(m("继续", gate="enter") is None, "进入门不认「继续」")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -504,8 +508,10 @@ def test_injection_refused():
 
 
 def test_inject_re_negative():
-    _assert(agent_mod._INJECT_RE.search("边刷多久换一次") is None, "正常问题不命中注入")
-    _assert(agent_mod._INJECT_RE.search("你好") is None, "闲聊不命中注入")
+    from config.word_dict_config import INJECT_RE
+
+    _assert(INJECT_RE.search("边刷多久换一次") is None, "正常问题不命中注入")
+    _assert(INJECT_RE.search("你好") is None, "闲聊不命中注入")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -573,9 +579,10 @@ class _EmptyRetriever:
 
 def test_refuse_only_when_out_of_domain():
     from config.word_dict_config import NO_ANSWER_REPLIES, REFUSE_OFFTOPIC_REPLY as REFUSE
+    from tools.domain_router import route_domain
 
-    _assert(agent_mod._route_domain("边刷多久换一次"), "域内问题路由得到域（分类头误判 other 的正是这类）")
-    _assert(agent_mod._route_domain("今天天气怎么样") is None, "域外问题路由不到域")
+    _assert(route_domain("边刷多久换一次"), "域内问题路由得到域（分类头误判 other 的正是这类）")
+    _assert(route_domain("今天天气怎么样") is None, "域外问题路由不到域")
 
     import tools.intent_router as ir
     saved, saved_retriever = ir.route_intent_with_margin, agent_mod._get_retriever

@@ -178,17 +178,17 @@ def stats():
 
 
 def disable_shadow():
-    """评测期间关掉主链路的影子探针（tools/agent.py::_shadow_probe）。
+    """评测期间关掉主链路的影子探针（tools/turn_recorder.py::shadow_probe）。
 
     影子只落日志、不参与被测行为，却要额外跑一次 LLM 决策（实测每轮 +75~125s），
     白白占住主链路要用的算力。返回 restore 回调，请在 finally 里复现——“run_tests.py
     在同一个进程里顺序跑多个模块，漏复现会污染后面的模块。
     """
-    from tools import agent as agent_mod
+    from tools import turn_recorder
 
-    original = agent_mod._shadow_probe
-    agent_mod._shadow_probe = lambda *args, **kwargs: None
-    return lambda: setattr(agent_mod, "_shadow_probe", original)
+    original = turn_recorder.shadow_probe
+    turn_recorder.shadow_probe = lambda *args, **kwargs: None
+    return lambda: setattr(turn_recorder, "shadow_probe", original)
 
 
 # 双重导入（裸名 + tools. 前缀）曾会加载出两份带状态的模块，两者都能 import 成功。
@@ -206,7 +206,8 @@ def reset_trace(session_id: str) -> None:
     try:
         from tools import trace_store
 
-        for kind in ("", trace_store.CHUNK_KIND, trace_store.SHADOW_KIND, trace_store.FEEDBACK_KIND):
+        for kind in ("", trace_store.CHUNK_KIND, trace_store.SHADOW_KIND,
+                     trace_store.FEEDBACK_KIND, trace_store.EVENT_KIND):
             path = trace_store._path(session_id, kind)
             if os.path.isfile(path):
                 os.remove(path)

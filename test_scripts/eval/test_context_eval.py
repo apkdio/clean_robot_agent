@@ -276,17 +276,17 @@ def _check_case(expect: dict, branch, tag=None, record=None) -> list:
 def _answers_pending(query: str, rec: dict) -> bool:
     """这一句是不是对当前澄清的回答。是 → 让链路消费；不是 → 按新需求处理。"""
     from tools import pending_store
-    import tools.agent as agent
+    from tools.clarify_service import match_op_choice, match_yes_no
 
     biz = rec.get("biz")
     try:
         if biz == pending_store.BIZ_SOP_ENTER:
-            return agent._match_yes_no(query, gate="enter") is not None
+            return match_yes_no(query, gate="enter") is not None
         if biz == pending_store.BIZ_SOP_EXIT:
-            return agent._match_yes_no(query) is not None
+            return match_yes_no(query) is not None
         if biz == pending_store.BIZ_OPS_CLARIFY:
             opts = list((rec.get("data") or {}).get("options") or [])
-            return agent._match_op_choice(query, opts) is not None
+            return match_op_choice(query, opts) is not None
     except Exception:  # noqa: BLE001 - 解析器异常不该拦住评测，按「不是回答」处理
         return False
     return False

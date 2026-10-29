@@ -9,6 +9,7 @@ import re
 import time
 
 from tools import trace_store
+from tools.dto.sop import SopStepResult
 from tools.log_tool import get_logger
 from tools.safety import with_safety_hint
 from config.word_dict_config import (
@@ -194,8 +195,8 @@ def _with_exit_hint(intro: str) -> str:
     return intro + "\n（随时可回复「0」退出本环节）"
 
 
-def start_sop(session_id: str, sop_id: str, query: str, slots: dict = None):
-    """进入一个 SOP。返回 (reply, done)。
+def start_sop(session_id: str, sop_id: str, query: str, slots: dict = None) -> SopStepResult:
+    """进入一个 SOP，返回 SopStepResult。
 
     首轮先尝试用触发 query 提取第一个槽位（预填用户已给的信息），
     提取失败再问第一个问题。`slots` 可由调用方预填，已填的 ask 槽直接跳过。
@@ -205,15 +206,15 @@ def start_sop(session_id: str, sop_id: str, query: str, slots: dict = None):
     set_enter_declined(session_id, False)   # 用户这次真进了流程，之前「别再问」的标记作废
     _start(session_id, sop_id, slots=slots)
     logger.info(f"[SOP] Start SOP: {sop_id}")
-    reply, done = _run(session_id, query)
+    result = _run(session_id, query)
     intro = SOPS[sop_id].get("intro")
     if intro:
-        return _with_exit_hint(intro) + "\n\n" + reply, done
-    return reply, done
+        return SopStepResult(result.kind, _with_exit_hint(intro) + "\n\n" + result.reply, result.done)
+    return result
 
 
-def continue_sop(session_id: str, query: str):
-    """继续指定会话的 SOP。返回 (reply, done)；无活跃 SOP 时返回 None。"""
+def continue_sop(session_id: str, query: str) -> SopStepResult | None:
+    """继续指定会话的 SOP；无活跃 SOP 时返回 None。"""
     if not has_active_sop(session_id):
         return None
     return _run(session_id, query)
@@ -309,11 +310,11 @@ def _ask_text(step: dict, key: str, ctx: dict) -> str:
         return text
 
 
-def _run(session_id: str, user_input: str):
-    """执行/推进指定会话的 SOP。返回 (reply_text, done)。"""
+def _run(session_id: str, user_input: str) -> SopStepResult:
+    """执行/推进指定会话的 SOP。"""
     session = _load_session(session_id)
     if session is None:
-        return "", True
+        return SopStepResult("noop")
     sop = SOPS[session["sop_id"]]
     steps = sop["steps"]
     ended = False  # 是否已结束（reply/异常防御里 _end 置 True）
@@ -343,7 +344,7 @@ def _run(session_id: str, user_input: str):
                     logger.info("[SOP] %s ask slot=%s", sop["id"], step.get("slot"))
                     flow.append({"i": session["step"], "type": "ask",
                                  "slot": step.get("slot"), "outcome": "asked"})
-                    return _ask_text(step, "ask", ctx), False
+                    return SopStepResult("ask", _ask_text(step, "ask", ctx))
                 value = step["extract"](user_input, session["slots"])
                 if value is SKIP:
                     # 显式留空：不重试，直接跳过该槽
@@ -372,12 +373,12 @@ def _run(session_id: str, user_input: str):
                     if session["retry_count"] == 1:
                         flow.append({"i": session["step"], "type": "ask",
                                      "slot": step.get("slot"), "outcome": "asked"})
-                        return with_safety_hint(_ask_text(step, "ask", ctx), session_id,
-                                                by="sop", sop=sop["id"]), False
+                        return SopStepResult("ask", with_safety_hint(
+                            _ask_text(step, "ask", ctx), session_id, by="sop", sop=sop["id"]))
                     flow.append({"i": session["step"], "type": "ask",
                                  "slot": step.get("slot"), "outcome": "retry"})
-                    return with_safety_hint(_ask_text(step, "retry", ctx), session_id,
-                                            by="sop", sop=sop["id"]), False
+                    return SopStepResult("ask", with_safety_hint(
+                        _ask_text(step, "retry", ctx), session_id, by="sop", sop=sop["id"]))
                 # 提取成功，重置重试计数
                 session["slots"][step["slot"]] = value
                 session["step"] += 1
@@ -418,13 +419,13 @@ def _run(session_id: str, user_input: str):
                 _finished[session_id] = session
                 _end(session_id)
                 logger.info("[SOP] %s finished", sop["id"])
-                return reply, True
+                return SopStepResult("reply", reply, done=True)
 
         # 步骤走完但无 reply（异常防御），安全结束
         ended = True
         _end(session_id)
         logger.warning("[SOP] %s ended without reply", sop["id"])
-        return "", True
+        return SopStepResult("done", "", done=True)
     except Exception as e:  # noqa: BLE001
         # 步骤函数（when / extract / action）炸了：结束会话，别让下一轮还停在这一步重复失败；
         # 异常照常向上抛——外层 ask_stream 出兜底话术、trace 记 error

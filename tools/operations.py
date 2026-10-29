@@ -30,10 +30,11 @@ def _p_followup(query: str) -> bool:
 def _p_model(query: str) -> bool:
     """命中型号查询入口：触发词，或咨询词加指代特征。"""
     from config.word_dict_config import MODEL_QUERY_WORDS, MODEL_CONSULT_WORDS
+    from tools.model_ref import has_model_ref
+
     if any(w in query for w in MODEL_QUERY_WORDS):
         return True
-    from tools.agent import _has_model_ref
-    return any(w in query for w in MODEL_CONSULT_WORDS) and _has_model_ref(query)
+    return any(w in query for w in MODEL_CONSULT_WORDS) and has_model_ref(query)
 
 
 def _p_find_models(query: str) -> bool:
@@ -53,8 +54,8 @@ def _p_sop(query: str) -> bool:
 
 
 def _p_domain(query: str) -> bool:
-    from tools.agent import _route_domain
-    return bool(_route_domain(query))
+    from tools.domain_router import route_domain
+    return bool(route_domain(query))
 
 
 # name → (predicate, allow, order)
@@ -205,7 +206,7 @@ def _strong_ops(query: str) -> set:
     try:
         from sops import match_sop, sop_has_strong_trigger
         from tools.model_query import resolve_model_constraints
-        from tools.agent import _has_model_ref
+        from tools.model_ref import has_model_ref
 
         if match_sop(query, "service_point", log=False):
             out.add("service_point")
@@ -214,7 +215,7 @@ def _strong_ops(query: str) -> set:
             out.add("sop")
         if resolve_model_constraints(query, allow_llm=False):
             out.add("find_models")
-        if _has_model_ref(query):
+        if has_model_ref(query):
             out.add("model")
     except Exception as e:  # noqa: BLE001
         logger.warning("[Ops] 强判据计算失败（不影响派发）：%s", e)

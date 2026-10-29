@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import pickle
 import re
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi

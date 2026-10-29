@@ -37,6 +37,7 @@ SIDE_VERSION = 1
 CHUNK_KIND = "chunks"
 SHADOW_KIND = "shadow"
 FEEDBACK_KIND = "feedback"
+EVENT_KIND = "events"
 CHUNK_MAX_CHARS = 4000       # 单片正文上限（防极端长条目把旁路文件撑爆）
 FEEDBACK_LOOKBACK_DAYS = 7   # 标注时按 query 往回找轮次的天数
 
@@ -207,6 +208,61 @@ def _append(path: str, record: dict) -> None:
         pass
 
 
+def _event(event: str, **facts) -> None:
+    """旁路事件日志：执行中逐条追加，进程崩溃后仍可复原到崩溃前一步。
+
+    只存标量事实；主 trace 仍是一轮一条，事件文件不参与行为轨判定。
+    """
+    turn = getattr(_local, "turn", None) or getattr(_local, "event_turn", None)
+    if not turn:
+        return
+    try:
+        sid = turn.get("session_id")
+        path = _path(sid, EVENT_KIND, create=True)
+        if not path:
+            return
+        rec = {
+            "v": SIDE_VERSION,
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "session_id": sid,
+            "turn_index": turn.get("turn_index"),
+            "event": event,
+        }
+        for k, v in facts.items():
+            if isinstance(v, dict):
+                for kk, vv in _scalars(v).items():
+                    rec[kk] = vv
+            elif v is None or isinstance(v, (str, int, float, bool)):
+                rec[k] = v
+        _append(path, rec)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def event(event: str, **facts) -> None:
+    """公开事件入口：业务代码（如 chat_service）也可向旁路日志追加事件。"""
+    _event(event, **facts)
+
+
+def events_of(session_id: str, day: str = "") -> list:
+    """读某会话某天的事件日志；文件不存在返回空列表。"""
+    path = _path(session_id, EVENT_KIND, day=day)
+    out = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        pass
+    return out
+
+
 def _seed(session_id: str, key) -> None:
     """首次用到某会话（当天）时读一次文件：拿行数（轮次序号）与最后一条记录（判「重新回答」）。"""
     n, last = 0, None
@@ -268,8 +324,10 @@ def begin_turn(session_id: str, query: str, retry: bool = None) -> None:
             "aborted": False,
             "error": None,
         }
+        _event("begin", query=query[:120], retry=retry)
     except Exception:  # noqa: BLE001
         _local.turn = None
+    _local.event_turn = _local.turn
 
 
 def step(name: str, **fields) -> None:
@@ -280,6 +338,7 @@ def step(name: str, **fields) -> None:
     try:
         turn["steps"].setdefault(name, {}).update(fields)
         _mirror_step(turn, name, fields)
+        _event("step", name=name, facts=_scalars(fields))
     except Exception:  # noqa: BLE001
         pass
 
@@ -363,6 +422,7 @@ def route(name: str, **facts) -> None:
         if name not in _ROUTE_MIRRORED:
             node("route.%s" % name, status="hit" if facts.get("hit") else "ok",
                  out=_scalars(facts))
+        _event("route", name=name, facts=_scalars(facts))
     except Exception:  # noqa: BLE001
         pass
 
@@ -383,8 +443,12 @@ def node(name: str, status: str = "ok", by: str = None, in_: dict = None, out: d
         if name in turn["ms"]:
             rec["ms"] = turn["ms"][name]
         turn["path"].append(rec)
-    except Exception:  # noqa: BLE001
-        pass
+        node_facts = {**(in_ or {}), **(out or {})}
+        _event("node", name=name, status=status, by=by,
+               facts=_scalars(node_facts),
+               ms=rec.get("ms"))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[Trace] node event failed: %s", e)
 
 
 def verify(checked: list, missing: list, action: str = "log", exempt: list = None,
@@ -425,6 +489,7 @@ def retrieval(**facts) -> None:
         return
     try:
         turn["retrieval"].update(facts)
+        _event("retrieval", facts=_scalars(facts))
     except Exception:  # noqa: BLE001
         pass
 
@@ -439,6 +504,7 @@ def note_behavior(tag: str, detail: dict = None) -> None:
         turn["tags"].append(tag)
         if detail:
             turn["detail"].update({k: v for k, v in detail.items() if isinstance(v, (str, int, float, bool))})
+        _event("behavior", tag=tag, facts=_scalars(detail or {}))
     except Exception:  # noqa: BLE001
         pass
 
@@ -456,6 +522,7 @@ def add_ms(name: str, started_at: float) -> None:
             if rec.get("node") == target:
                 rec["ms"] = spent
                 break
+        _event("ms", name=name, ms=spent)
     except Exception:  # noqa: BLE001
         pass
 
@@ -467,6 +534,7 @@ def note_error(exc: BaseException) -> None:
         return
     try:
         turn["error"] = "%s: %s" % (type(exc).__name__, exc)
+        _event("error", type=type(exc).__name__, message=str(exc)[:200])
     except Exception:  # noqa: BLE001
         pass
 
@@ -586,7 +654,7 @@ def latest_turn(session_id: str) -> dict:
             if not os.path.basename(d).startswith(session_id):
                 continue
             for name in os.listdir(d):
-                if not name.endswith(".jsonl") or re.search(r"\.(chunks|shadow|feedback)\.jsonl$", name):
+                if not name.endswith(".jsonl") or re.search(r"\.(chunks|shadow|feedback|events)\.jsonl$", name):
                     continue
                 p = os.path.join(d, name)
                 m = os.path.getmtime(p)
@@ -746,12 +814,15 @@ def end_turn(aborted: bool = False, reply: str = "") -> None:
     if not turn:
         return
     _local.turn = None
+    _local.event_turn = turn
     try:
         turn["aborted"] = bool(aborted)
         started = getattr(_t0, "start", None)
         if started:
             turn["ms"]["total"] = int((time.perf_counter() - started) * 1000)
         sid = turn.get("session_id")
+        _event("end", aborted=bool(aborted), branch=BEHAVIOR_BY_TAG.get(turn.get("tag")),
+               tag=turn.get("tag"), error=turn.get("error"))
         chunk_list = turn.pop("_chunks", None)
         if chunk_list:
             retrieve = turn["steps"].setdefault("retrieve", {})

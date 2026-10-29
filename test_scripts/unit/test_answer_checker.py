@@ -135,27 +135,24 @@ def test_trace_verify_unchecked():
 
 
 def test_stream_verify_only_on_complete():
-    from tools import agent as agent_mod
+    from tools.generation import stream_with_fallback
 
-    saved = agent_mod.stream_chat
     captured = []
 
     def _stream(*args, **kwargs):  # noqa: ARG001
         yield "完整回答"
 
-    try:
-        agent_mod.stream_chat = _stream
-        out = "".join(agent_mod._stream_with_fallback([], verify=lambda text: captured.append(text)))
-        _assert_eq(out, "完整回答", "流式内容原样输出")
-        _assert_eq(captured, ["完整回答"], "完整生成后调用校验")
+    out = "".join(stream_with_fallback([], verify=lambda text: captured.append(text),
+                                       stream_chat_func=_stream))
+    _assert_eq(out, "完整回答", "流式内容原样输出")
+    _assert_eq(captured, ["完整回答"], "完整生成后调用校验")
 
-        captured.clear()
-        out = "".join(agent_mod._stream_with_fallback(
-            [], stop_check=lambda: True, verify=lambda text: captured.append(text)))
-        _assert_eq(out, "", "停止后不输出半截内容")
-        _assert_eq(captured, [], "停止的轮次不校验半截答案")
-    finally:
-        agent_mod.stream_chat = saved
+    captured.clear()
+    out = "".join(stream_with_fallback(
+        [], stop_check=lambda: True, verify=lambda text: captured.append(text),
+        stream_chat_func=_stream))
+    _assert_eq(out, "", "停止后不输出半截内容")
+    _assert_eq(captured, [], "停止的轮次不校验半截答案")
 
 
 def test_warranty_context_only():

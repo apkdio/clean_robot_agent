@@ -119,9 +119,51 @@ def test_missing_git_is_explicit():
         vs._git = old
 
 
+def test_dataset_prefers_active_when_sha_shared():
+    """归档与 active 同 sha 时（恢复场景），dataset 要认 active，不能报「已归档」。"""
+    tmp, old_abs, old_rel = _fixture()
+    try:
+        vs.register_eval("retrieval", note="首版")
+        vs.archive_eval("retrieval", "暂停")
+        entry = vs.register_eval("retrieval", note="恢复同一份内容")
+        ds = vs.dataset("retrieval")
+        _assert_true(ds["registered"], "同 sha 有 active 时应判 registered")
+        _assert_eq(ds["status"], "active", "状态取 active")
+        _assert_eq(ds["rev"], entry["rev"], "rev 指向新的 active 版本")
+    finally:
+        vs._abs, vs._rel = old_abs, old_rel
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_pin_env_carries_sop_trigger_ver():
+    """pinned.env.sops 必须同时带 def 与 trigger，否则触发/门控变化在归因里看不见。"""
+    env = vs.collect_env()
+    pin_env = vs._pin_env_from_components(env)
+    sops = pin_env.get("sops") or {}
+    _assert_true(sops, "有 SOP 指纹")
+    for sid, item in sops.items():
+        _assert_true(isinstance(item, dict) and "def" in item and "trigger" in item,
+                     f"{sid} 同时带 def/trigger")
+
+
+def test_run_manifest_paths_unique():
+    """同一秒内两次 begin_run 不能互相覆盖。"""
+    tmp, old_abs, old_rel = _fixture()
+    try:
+        h1 = vs.begin_run("probe")
+        h2 = vs.begin_run("probe")
+        _assert_true(h1["path"] != h2["path"], "两次 run manifest 路径不同")
+    finally:
+        vs._abs, vs._rel = old_abs, old_rel
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 TESTS = [test_register_snapshot_and_bump, test_diff_reads_snapshots,
          test_trigger_ver_covers_selection_definition, test_migrate_old_per_id,
-         test_context_can_be_reactivated, test_missing_git_is_explicit]
+         test_context_can_be_reactivated, test_missing_git_is_explicit,
+         test_dataset_prefers_active_when_sha_shared,
+         test_pin_env_carries_sop_trigger_ver,
+         test_run_manifest_paths_unique]
 
 
 def run():

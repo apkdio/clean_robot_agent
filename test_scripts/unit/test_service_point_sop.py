@@ -23,6 +23,10 @@ _CAND = [
 _SHANGHAI = [{"name": "Shanghai", "cn_name": "上海市", "lng": 121.47, "lat": 31.23, "population": 20000000}]
 
 
+def _pair(result):
+    return result.reply, result.done
+
+
 def _cleanup():
     sops.base._sessions = {}
     try:
@@ -83,7 +87,7 @@ def test_unique_city_one_turn():
     restore = _stub_geo({"上海有售后网点吗": _SHANGHAI})
     try:
         sid = "sp_unique"
-        reply, done = sops.base.start_sop(sid, "service_point", "上海有售后网点吗")
+        reply, done = _pair(sops.base.start_sop(sid, "service_point", "上海有售后网点吗"))
         _assert(done, "唯一城市一句问完")
         _assert_in("网点", reply, "给出网点列表")
         _assert(not sops.base.has_active_sop(sid), "已结束，不留状态")
@@ -100,13 +104,13 @@ def test_ambiguous_then_pick():
     restore = _stub_geo({"朝阳有维修点吗": _CAND})
     try:
         sid = "sp_ambiguous"
-        reply, done = sops.base.start_sop(sid, "service_point", "朝阳有维修点吗")
+        reply, done = _pair(sops.base.start_sop(sid, "service_point", "朝阳有维修点吗"))
         _assert(not done, "重名时先问不结束")
         _assert_in("查到多个同名地点", reply, "列出同名候选")
         _assert_in("1.", reply, "候选带序号")
         _assert(sops.base.has_active_sop(sid), "停在选序号那步")
 
-        reply, done = sops.base.continue_sop(sid, "2")
+        reply, done = _pair(sops.base.continue_sop(sid, "2"))
         _assert(done, "选完即结束")
         _assert_in("朝阳（北京）", reply, "按所选候选作答")
         _assert(not sops.base.has_active_sop(sid), "已结束")
@@ -123,15 +127,15 @@ def test_garbage_then_retry_then_city():
     restore = _stub_geo({"杭州": [{"name": "Hangzhou", "cn_name": "杭州市", "lng": 120.15, "lat": 30.28, "population": 9000000}]})
     try:
         sid = "sp_retry"
-        reply, done = sops.base.start_sop(sid, "service_point", "有没有门店")
+        reply, done = _pair(sops.base.start_sop(sid, "service_point", "有没有门店"))
         _assert(not done, "没识出城市 → 反问")
         _assert_in("请问您所在的城市", reply, "首次反问用 ask 话术")
 
-        reply, done = sops.base.continue_sop(sid, "嗯嗯那个")
+        reply, done = _pair(sops.base.continue_sop(sid, "嗯嗯那个"))
         _assert(not done, "还是没识出 → 再问")
         _assert_in("没太听清", reply, "第二次用 retry 话术")
 
-        reply, done = sops.base.continue_sop(sid, "杭州")
+        reply, done = _pair(sops.base.continue_sop(sid, "杭州"))
         _assert(done and "网点" in reply, "答出城市后给结果")
     finally:
         restore()
@@ -157,15 +161,15 @@ def test_when_skips_step_and_formats_ask():
         ],
     })
     sid = "when_probe_big"
-    reply, done = sops.base.start_sop(sid, "when_probe", "3")
+    reply, done = _pair(sops.base.start_sop(sid, "when_probe", "3"))
     _assert(not done, "n=3 → 该步不跳过")
     _assert_in("3 大于 1", reply, "ask 话术按槽位填充")
 
-    reply, done = sops.base.continue_sop(sid, "1")
+    reply, done = _pair(sops.base.continue_sop(sid, "1"))
     _assert(done and reply.strip() == "3", "reply 模板按槽位填充")
 
     sid2 = "when_probe_small"
-    reply, done = sops.base.start_sop(sid2, "when_probe", "1")
+    reply, done = _pair(sops.base.start_sop(sid2, "when_probe", "1"))
     _assert(done and reply.strip() == "1", "n=1 → 该步被跳过")
     _cleanup()
 
@@ -183,7 +187,7 @@ def test_guard_only_vetoes_its_own_sop():
         "steps": [{"id": "r", "type": "reply", "template": "B"}],
     })
     _assert_eq(sops.base.match_sop("zzz-guard 测试"), "guard_probe_b", "A 被 guard 否掉后轮到 B")
-    reply, done = sops.base.start_sop("guard_probe", "guard_probe_a", "zzz-guard 测试")
+    reply, done = _pair(sops.base.start_sop("guard_probe", "guard_probe_a", "zzz-guard 测试"))
     _assert_eq(reply.strip(), "A", "显式指定进哪条就进哪条（guards 只在匹配时评估）")
     _cleanup()
 

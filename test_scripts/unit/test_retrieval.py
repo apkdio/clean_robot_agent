@@ -13,7 +13,6 @@
   - [--e2e] HybridRetriever 端到端：域过滤 / 阈值过滤 / 精排打分（需 Ollama + Chroma + reranker 模型）"""
 import sys
 import os
-import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
@@ -24,53 +23,54 @@ from langchain_core.documents import Document
 
 
 # ──────────────────────────────────────────────────────────────
-# 1. 域路由（真实 agent._route_domain）
+# 1. 域路由（真实 domain_router.route_domain）
 # ──────────────────────────────────────────────────────────────
 
 def test_route_domain():
-    from tools.agent import _route_domain
+    from tools.domain_router import route_domain
+
     # 品牌域（优先于“买”误判）
-    _assert_eq(_route_domain("为什么买不染一尘"), "不染一尘品牌介绍.txt", "为什么买→品牌域")
-    _assert_eq(_route_domain("你们家有什么优势"), "不染一尘品牌介绍.txt", "优势→品牌域")
+    _assert_eq(route_domain("为什么买不染一尘"), "不染一尘品牌介绍.txt", "为什么买→品牌域")
+    _assert_eq(route_domain("你们家有什么优势"), "不染一尘品牌介绍.txt", "优势→品牌域")
     # 售后域（优先于“修”误判）
-    _assert_eq(_route_domain("扫地机器人保修多久"), "不染一尘售后服务.txt", "保修→售后域")
-    _assert_eq(_route_domain("零件掉了可以报修吗"), "不染一尘售后服务.txt", "报修→售后域")
+    _assert_eq(route_domain("扫地机器人保修多久"), "不染一尘售后服务.txt", "保修→售后域")
+    _assert_eq(route_domain("零件掉了可以报修吗"), "不染一尘售后服务.txt", "报修→售后域")
     # 选购咨询域
-    _assert_eq(_route_domain("选购扫地机器人要注意什么"), "不染一尘选购指南.txt", "选购注意→选购域")
-    _assert_eq(_route_domain("买扫地机器人有什么技巧"), "不染一尘选购指南.txt", "购买技巧→选购域")
+    _assert_eq(route_domain("选购扫地机器人要注意什么"), "不染一尘选购指南.txt", "选购注意→选购域")
+    _assert_eq(route_domain("买扫地机器人有什么技巧"), "不染一尘选购指南.txt", "购买技巧→选购域")
     # 故障域
-    _assert_eq(_route_domain("机器人不动了怎么办"), "不染一尘常见维修问题.txt", "不动→维修域")
-    _assert_eq(_route_domain("水箱漏水怎么处理"), "不染一尘常见维修问题.txt", "漏水→维修域")
+    _assert_eq(route_domain("机器人不动了怎么办"), "不染一尘常见维修问题.txt", "不动→维修域")
+    _assert_eq(route_domain("水箱漏水怎么处理"), "不染一尘常见维修问题.txt", "漏水→维修域")
     # 维护域（与维修同文件）
-    _assert_eq(_route_domain("边刷多久换一次"), "不染一尘常见维修问题.txt", "边刷→维护域")
-    _assert_eq(_route_domain("尘盒怎么清洗"), "不染一尘常见维修问题.txt", "尘盒→维护域")
+    _assert_eq(route_domain("边刷多久换一次"), "不染一尘常见维修问题.txt", "边刷→维护域")
+    _assert_eq(route_domain("尘盒怎么清洗"), "不染一尘常见维修问题.txt", "尘盒→维护域")
     # 兜底 None
-    _assert(_route_domain("扫地机器人对哪个牌子好") is None, "品牌对比→None")
-    _assert(_route_domain("今天天气怎么样") is None, "领域外→None")
-    _assert(_route_domain("你好") is None, "闲聊→None")
+    _assert(route_domain("扫地机器人对哪个牌子好") is None, "品牌对比→None")
+    _assert(route_domain("今天天气怎么样") is None, "领域外→None")
+    _assert(route_domain("你好") is None, "闲聊→None")
 
 
 def test_domain_scoring_and_filter():
     """域路由新形态（2026-09-24 打分式）：打分排序 + 平局按优先级 + 可选双域 filter。
 
-    与 _route_domain 的分工：后者保留旧语义（只给 top1 主文件，供 _window_domain 与兼容
-    调用点用）；实际检索走 _domain_filter，两域咬得近时会返回 $in 两文件。
+    与 route_domain 的分工：后者保留旧语义（只给 top1 主文件，供 window_domain 与兼容
+    调用点用）；实际检索走 domain_filter，两域咬得近时会返回 $in 两文件。
     """
-    from tools.agent import _domain_filter, _domain_scores, _route_domain
+    from tools.domain_router import domain_filter, domain_scores, route_domain
 
     # 打分 = 命中词的长度之和（词越长越具体）；同分按历史优先级
-    _assert_eq(_domain_scores("为什么买不染一尘")[0][0], "brand", "品牌优先于「买」误判的选购")
-    _assert_eq(_domain_scores("机器人不动了怎么办"), [("repair", 2.0)], "单域：不动→维修")
-    _assert_eq(_domain_scores("今天天气怎么样"), [], "无域命中")
+    _assert_eq(domain_scores("为什么买不染一尘")[0][0], "brand", "品牌优先于「买」误判的选购")
+    _assert_eq(domain_scores("机器人不动了怎么办"), [("repair", 2.0)], "单域：不动→维修")
+    _assert_eq(domain_scores("今天天气怎么样"), [], "无域命中")
     # 售后与故障咬得近 → 两个域一起搜
-    value, via = _domain_filter("保修期内维修要多少钱")
+    value, via = domain_filter("保修期内维修要多少钱")
     files = set(value.get("$in") or []) if isinstance(value, dict) else {value}
     _assert_eq(via, "top2", "两域接近 → 搜两个域")
     _assert_eq(sorted(files), ["不染一尘售后服务.txt", "不染一尘常见维修问题.txt"], "$in 覆盖两个域")
     # 单域 / 无域
-    _assert_eq(_domain_filter("扫地机器人保修多久")[0], "不染一尘售后服务.txt", "top1 单域")
-    _assert_eq(_domain_filter("今天天气怎么样"), (None, "no-domain"), "无域 → 全库兜底")
-    _assert_eq(_route_domain("保修期内维修要多少钱"), "不染一尘售后服务.txt", "_route_domain 仍是 top1 主文件")
+    _assert_eq(domain_filter("扫地机器人保修多久")[0], "不染一尘售后服务.txt", "top1 单域")
+    _assert_eq(domain_filter("今天天气怎么样"), (None, "no-domain"), "无域 → 全库兜底")
+    _assert_eq(route_domain("保修期内维修要多少钱"), "不染一尘售后服务.txt", "route_domain 仍是 top1 主文件")
 
 
 def test_domain_files_config():
@@ -262,7 +262,7 @@ def test_rerank_degraded_keeps_candidates():
     hr = hrm.HybridRetriever.__new__(hrm.HybridRetriever)   # 跳过 __init__，不碰真实索引
     hr.sparse = type("S", (), {"is_ready": True})()
 
-    def _fake_retrieve(query, filter, facts=None):
+    def _fake_retrieve(query, filter, facts=None):  # noqa: ARG001
         if facts is not None:
             facts.update(rerank={"model": None, "in": 3, "out": 3, "degraded": True})
         return docs
@@ -321,7 +321,7 @@ class _FakeCollection:
     def __init__(self, rows):
         self._rows = rows
 
-    def get(self, where=None, include=None):
+    def get(self, where=None, include=None):  # noqa: ARG002
         return {"metadatas": [{"file_name": f, "file_sha256": h} for f, h in self._rows]}
 
     def count(self):

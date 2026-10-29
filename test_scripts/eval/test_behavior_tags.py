@@ -18,7 +18,6 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools import agent as agent_mod
 from test_scripts.eval import test_context_eval as ctx_eval
 
 
@@ -103,12 +102,16 @@ def test_accepted_branches_cover_mapping():
 
 def test_disable_shadow_restores():
     """评测隔离：跑用例期间影子探针被替掉，跑完能原样放回（否则污染同进程的后继模块）。"""
-    original = agent_mod._shadow_probe
+    from tools import op_executors, turn_recorder
+
+    _assert(not hasattr(op_executors, "shadow_probe"),
+            "执行体走 turn_recorder.shadow_probe 模块调用，不持有直接绑定")
+    original = turn_recorder.shadow_probe
     restore = disable_shadow()
-    _assert_true(agent_mod._shadow_probe is not original, "关闭后探针被替换成空操作")
-    _assert(agent_mod._shadow_probe("q", "sid", "kb_search") is None, "被替换的探针不做事")
+    _assert_true(turn_recorder.shadow_probe is not original, "关闭后探针被替换成空操作")
+    _assert(turn_recorder.shadow_probe("q", "sid", "kb_search") is None, "被替换的探针不做事")
     restore()
-    _assert_true(agent_mod._shadow_probe is original, "复原回调把原探针放回去")
+    _assert_true(turn_recorder.shadow_probe is original, "复原回调把原探针放回去")
 
 
 def test_isolation_and_import_convention():
@@ -158,6 +161,41 @@ def test_trace_record_schema():
 
     reset_trace(sid)
     _assert_eq(read_last_turn(sid), {}, "reset_trace 之后读不到（文件与进程内计数都清了）")
+
+
+def test_trace_event_sidecar():
+    """旁路事件日志：执行中逐条追加，崩溃后仍能复原；主 trace 仍是一轮一条。"""
+    import json
+
+    from tools import trace_store
+
+    sid = "tracetest-events"
+    reset_trace(sid)
+    trace_store.begin_turn(sid, "测试事件")
+    trace_store.route("inject", hit=False)
+    trace_store.step("intent", intent="robot", margin=0.9)
+    trace_store.node("ops.clarify", status="ok", out={"pick": "sop"})
+    trace_store.note_behavior("retrieve_answer", {"hits": 2})
+    trace_store.end_turn()
+
+    event_path = trace_store._path(sid, trace_store.EVENT_KIND)
+    _assert_true(bool(event_path), "事件文件路径能取到")
+    with open(event_path, encoding="utf-8") as f:
+        events = [json.loads(line) for line in f if line.strip()]
+    kinds = [e.get("event") for e in events]
+    _assert_eq(kinds[0], "begin", "事件流以 begin 开头")
+    _assert_eq(kinds[-1], "end", "事件流以 end 收尾")
+    for needed in ("route", "step", "node", "behavior"):
+        _assert_in(needed, kinds, "关键事件都已追加")
+    for event in events:
+        _assert_eq(event.get("session_id"), sid, "事件记录带会话 ID")
+        _assert_in(event.get("turn_index"), (1, "1"), "事件记录带轮次")
+    node_events = [e for e in events if e.get("event") == "node"]
+    _assert_true(any(e.get("pick") == "sop" for e in node_events),
+                 "节点事实进事件（进程崩溃后可复原）")
+    _assert_eq(len([1 for line in open(trace_store._path(sid), encoding="utf-8")
+                    if line.strip()]), 1, "主 trace 仍是一轮一条")
+    reset_trace(sid)
 
 
 def test_trace_best_effort():
@@ -575,19 +613,19 @@ def test_clarify_hub_contract():
     用户那句「是/不是」就被丢掉——所以这里做机器检查。
     """
     from config.word_dict_config import TRACE_NODE_LABELS
-    from tools import agent
+    from tools import clarify_service as clarify
     from tools import pending_store as ps
     from tools.redis_store import clarify_ttl, sop_ttl
 
     biz_consts = {getattr(ps, n) for n in dir(ps) if n.startswith("BIZ_")}
-    _assert_eq(set(agent._CLARIFY_HANDLERS), biz_consts, "每个澄清业务都有处理器，且没有多余键")
-    for biz, handler in agent._CLARIFY_HANDLERS.items():
+    _assert_eq(set(clarify.CLARIFY_HANDLERS), biz_consts, "每个澄清业务都有处理器，且没有多余键")
+    for biz, handler in clarify.CLARIFY_HANDLERS.items():
         _assert_true(callable(handler), f"{biz} 的处理器可调用")
-    _assert_eq(set(agent._CLARIFY_KINDS), {"done", "resume", "drop"}, "返回体 kind 是闭集")
-    _assert_raises(ValueError, lambda: agent.ClarifyResult("bad", message="x"), "闭集外的 code 直接报错")
-    _assert_raises(ValueError, lambda: agent.ClarifyResult(agent.CLARIFY_DONE), "done 必须带 message")
-    _assert_raises(ValueError, lambda: agent.ClarifyResult(agent.CLARIFY_RESUME), "resume 必须带 query")
-    _assert_eq(agent.ClarifyResult.drop().kind, "drop", "drop 合法")
+    _assert_eq(set(clarify._CLARIFY_KINDS), {"done", "resume", "drop"}, "返回体 kind 是闭集")
+    _assert_raises(ValueError, lambda: clarify.ClarifyResult("bad", message="x"), "闭集外的 code 直接报错")
+    _assert_raises(ValueError, lambda: clarify.ClarifyResult(clarify.CLARIFY_DONE), "done 必须带 message")
+    _assert_raises(ValueError, lambda: clarify.ClarifyResult(clarify.CLARIFY_RESUME), "resume 必须带 query")
+    _assert_eq(clarify.ClarifyResult.drop().kind, "drop", "drop 合法")
     _assert_in("clarify", TRACE_NODE_LABELS, "统一澄清节点已登记（trace 渲染）")
     _assert_true(clarify_ttl() >= sop_ttl(), "澄清 TTL 不低于 SOP TTL（否则「是/不是」会被当槽位）")
     _assert_eq((ps.BIZ_SOP_EXIT, ps.BIZ_SOP_ENTER, ps.BIZ_OPS_CLARIFY),
@@ -659,7 +697,6 @@ def test_sop_enter_confirm_policy():
 
 def test_version_registry():
     """版本账本契约：条目/快照/基线 pinned 三方一致；本地账本缺失时不伪造通过。"""
-    import os
     from tools import version_store as vs
 
     if not os.path.isfile(vs._registry_path()):
@@ -715,6 +752,64 @@ def test_answer_verify_contract():
     reset_trace(sid)
 
 
+def test_latest_turn_ignores_event_sidecar():
+    """事件旁路（events.jsonl）不能被 latest_turn 当成一轮 trace。"""
+    import time as _time
+    from tools import trace_store
+
+    sid = "tracetest-event-sidecar"
+    reset_trace(sid)
+    trace_store.begin_turn(sid, "真实一轮")
+    trace_store.note_behavior("retrieve_answer")
+    trace_store.event("probe", step=1)
+    trace_store.end_turn("ok")
+    ev = trace_store._path(sid, trace_store.EVENT_KIND)
+    _assert_true(bool(ev) and os.path.isfile(ev), "事件旁路已生成")
+    os.utime(ev, (_time.time() + 5, _time.time() + 5))   # 事件文件比主 trace 更新
+    last = trace_store.latest_turn(sid)
+    _assert_eq(last.get("query"), "真实一轮", "latest_turn 忽略事件旁路")
+    reset_trace(sid)
+
+
+def test_dto_boundary_contract():
+    """跨层 DTO 的运行时闭集：未知事件不能静默落进 webapp 的 if/elif 空隙。"""
+    from tools.dto.executor import Reply
+    from tools.dto.transport import TurnEvent
+
+    _assert_raises(ValueError, lambda: TurnEvent("bogus"), "未知事件 kind 必须报错")
+    _assert_raises(ValueError, lambda: TurnEvent("delta", text=1), "事件 text 必须是 str")
+    _assert_raises(ValueError, lambda: Reply(None), "Reply.text 必须是 str")
+
+
+def test_transport_event_sequence():
+    """交付层回归：stream_turn 产出的 TurnEvent 序列必须稳定（delta → meta → done）。"""
+    from tools import chat_service
+    from tools.context_store import delete_session, get_recent, set_session_title
+
+    sid = "dto-transport-smoke"
+    delete_session(sid)
+    set_session_title(sid, "transport smoke")
+
+    def fake_ask(query, session_id, *_args, **_kwargs):
+        from tools.context_store import append_message
+
+        append_message(session_id, "user", query)
+        yield "第一段"
+        yield "第二段"
+
+    try:
+        events = list(chat_service.stream_turn("你好", sid, ask_stream_func=fake_ask))
+        _assert_eq([e.kind for e in events], ["delta", "delta", "meta", "done"],
+                   "事件顺序固定：增量 → meta → done")
+        _assert_eq("".join(e.text for e in events if e.kind == "delta"),
+                   "第一段第二段", "增量内容原样透传")
+        _assert_in("branch", events[-2].meta or {}, "meta 带本轮出口")
+        _assert_eq([m.get("role") for m in get_recent(sid, n=10)],
+                   ["user", "assistant"], "一轮正常收尾要补齐上下文")
+    finally:
+        delete_session(sid)
+
+
 TESTS = [
     test_branch_closed_set_from_config,
     test_branch_covers_behaviours,
@@ -725,6 +820,7 @@ TESTS = [
     test_disable_shadow_restores,
     test_isolation_and_import_convention,
     test_trace_record_schema,
+    test_trace_event_sidecar,
     test_trace_nesting,
     test_feedback_one_per_turn,
     test_trace_best_effort,
@@ -741,9 +837,12 @@ TESTS = [
     test_operation_multi_hit_winner,
     test_check_case_ops_clarify,
     test_clarify_hub_contract,
+    test_dto_boundary_contract,
+    test_transport_event_sequence,
     test_sop_enter_confirm_policy,
     test_version_registry,
     test_answer_verify_contract,
+    test_latest_turn_ignores_event_sidecar,
 ]
 
 

@@ -12,7 +12,6 @@ import sys
 import re
 import os
 import time
-import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
@@ -23,6 +22,10 @@ import sops  # 触发 repair/model_query SOP 注册
 import sops.base
 from test_scripts import trace_reader
 from tools import trace_store
+
+
+def _pair(result):
+    return result.reply, result.done
 
 
 def _models_ready():
@@ -50,12 +53,12 @@ def _cleanup():
 # 测试用自包含 SOP（不依赖 Chroma/LLM）
 # ──────────────────────────────────────────────────────────────
 
-def _extract_budget(text, slots):
+def _extract_budget(text, _slots):
     from tools.metadata_extractor import extract_price_constraint
     return extract_price_constraint(text)
 
 
-def _extract_has_pet(text, slots):
+def _extract_has_pet(text, _slots):
     if re.search(r"没|无|不养|没有|没养", text):
         return False
     if re.search(r"有|养|猫|狗|宠物", text):
@@ -105,7 +108,7 @@ _BAD_SOP = {
 }
 
 
-def _boom_action(slots):
+def _boom_action(_slots):
     raise RuntimeError("step boom")
 
 
@@ -147,11 +150,11 @@ def test_model_query_trigger_and_guards():
 
 def test_start_and_continue():
     _cleanup()
-    reply, done = sops.base.start_sop("s1", "sop_unit_test", "帮我看看")
+    reply, done = _pair(sops.base.start_sop("s1", "sop_unit_test", "帮我看看"))
     _assert_eq(reply, "预算多少？", "首轮返回 ask")
     _assert(not done, "未结束")
     _assert(sops.base.has_active_sop("s1"), "有活跃会话")
-    reply, done = sops.base.continue_sop("s1", "1000以内")
+    reply, done = _pair(sops.base.continue_sop("s1", "1000以内"))
     _assert_eq(reply, "有宠物吗？", "推进到 ask_pet")
     _cleanup()
 
@@ -174,7 +177,7 @@ def test_full_flow():
     _cleanup()
     sops.base.start_sop("s1", "sop_unit_test", "x")
     sops.base.continue_sop("s1", "1000以内")
-    reply, done = sops.base.continue_sop("s1", "没有")
+    reply, done = _pair(sops.base.continue_sop("s1", "没有"))
     _assert(done, "SOP 结束")
     _assert_in("共 2 款", reply, "1000以内命中 2 款")
     _assert_in("型号A", reply, "含型号A")
@@ -210,13 +213,13 @@ def test_result_reply():
 def test_retry_then_abandon():
     _cleanup()
     # start_sop 的触发词会先尝试一次提取（失败 → retry=1 → ask 话术）
-    r, _ = sops.base.start_sop("s1", "sop_unit_test", "x")
+    r = _pair(sops.base.start_sop("s1", "sop_unit_test", "x"))[0]
     _assert_eq(r, "预算多少？", "触发词提取失败→ask")
     # 第 2 次失败（retry=2）→ retry 话术
-    r, _ = sops.base.continue_sop("s1", "不知道")
+    r = _pair(sops.base.continue_sop("s1", "不知道"))[0]
     _assert_eq(r, "预算没听清，说个数字。", "重试失败→retry")
     # 第 3 次失败（retry=3 > max_retry=2）→ 放弃预算槽位推进到下一问
-    r, _ = sops.base.continue_sop("s1", "还是不知道")
+    r = _pair(sops.base.continue_sop("s1", "还是不知道"))[0]
     _assert_eq(r, "有宠物吗？", "超重试→放弃预算槽位")
     _cleanup()
 
@@ -225,7 +228,7 @@ def test_template_fallback():
     _cleanup()
     sops.base.register(_BAD_SOP)
     sops.base.start_sop("s1", "sop_bad_template", "")
-    reply, done = sops.base.continue_sop("s1", "张三")
+    reply, done = _pair(sops.base.continue_sop("s1", "张三"))
     _assert(done, "SOP 结束")
     _assert_eq(reply, "抱歉，出了点小问题。", "缺字段触发 fallback")
     _cleanup()
@@ -265,7 +268,7 @@ def test_injected_state_keeps_fingerprint():
     from tools.test_hooks import set_active_sop
     set_active_sop("s1", "sop_unit_test", step=1, slots={"budget": [None, 1000]})
     _assert(sops.base.has_active_sop("s1"), "注入的状态没被当成过期")
-    reply, done = sops.base.continue_sop("s1", "没有")
+    reply, done = _pair(sops.base.continue_sop("s1", "没有"))
     _assert(done, "答完剩下槽位后一轮走完 action + reply")
     _assert_in("型号A", reply, "回复里带推荐结果")
     _cleanup()
@@ -342,19 +345,19 @@ def test_model_query_sop_full_flow():
         return
     _cleanup()
     sid = "model_query_flow_test"
-    reply, done = sops.base.start_sop(sid, "model_query", "帮我推荐一款")
+    reply, done = _pair(sops.base.start_sop(sid, "model_query", "帮我推荐一款"))
     _assert(sops.base.has_active_sop(sid), "model_query SOP 启动")
     _assert_in("预算", reply, "开场问预算")
 
-    reply, done = sops.base.continue_sop(sid, "1000以内")
+    reply, done = _pair(sops.base.continue_sop(sid, "1000以内"))
     _assert(not done, "预算后未结束")
     _assert_in("系列", reply, "预算后问系列")
 
-    reply, done = sops.base.continue_sop(sid, "跳过")
+    reply, done = _pair(sops.base.continue_sop(sid, "跳过"))
     _assert_in("发布时间", reply, "系列跳过后问时间")
-    reply, done = sops.base.continue_sop(sid, "跳过")
+    reply, done = _pair(sops.base.continue_sop(sid, "跳过"))
     _assert_in("特点", reply, "时间跳过后问标签")
-    reply, done = sops.base.continue_sop(sid, "跳过")
+    reply, done = _pair(sops.base.continue_sop(sid, "跳过"))
     _assert(done, "标签跳过后 SOP 结束")
     _assert_in("符合您条件", reply, "推荐含统计")
     _assert_in("净白 S1", reply, "1000以内含净白 S1(899)")

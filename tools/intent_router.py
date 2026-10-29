@@ -118,7 +118,6 @@ def route_intent_with_margin(query: str) -> tuple[str, float]:
         import numpy as np
         import torch
 
-        emb = _get_emb()
         # 用 embed_documents（与训练同一条路径）而非 embed_query，
         # 保证训练与推理的 embedding 一致；向量走缓存，操作判别直接复用。
         vec = get_query_embedding(query)

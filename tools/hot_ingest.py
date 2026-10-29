@@ -306,14 +306,17 @@ def apply_changes(data_dir: str, added: dict, changed: dict, removed: list) -> d
 def invalidate_runtime_caches() -> None:
     """清掉散在各模块的进程内缓存（知识库变更后统一走这里）。
 
-    清单：检索器单例与上下文配置（agent）、型号名单（model_tool）、
-    chat 配置（llm_tool）、网点清单（service_point_tool）。
+    清单：检索器单例与上下文配置（agent）、域路由配置（domain_router）、
+    型号名单（model_tool）、chat 配置（llm_tool）、网点清单（service_point_tool）。
     配置类缓存没有热加载通道——**改 yaml 仍需重启**；这里只是把入口收在一处，
     免得每个调用方各记一份清单、漏掉哪个都不知道。
     """
     from tools import agent as _agent
+    from tools import domain_router as _domain_router
+    from tools import query_rewrite as _query_rewrite
     _agent._hybrid_retriever = None
-    _agent._ctx_cfg_cache = None
+    _domain_router._rag_cfg_cache = None
+    _query_rewrite._cfg_cache = None
     try:
         from tools import llm_tool as _llm
         _llm._chat_cfg_cache = None

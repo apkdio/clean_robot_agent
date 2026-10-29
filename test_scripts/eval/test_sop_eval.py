@@ -55,6 +55,10 @@ def _turn(sid, fn, query):
     return reply, flow
 
 
+def _reply_of(result):
+    return result.reply if result else ""
+
+
 def _load_dataset():
     if not os.path.isfile(_GOLDEN_FILE):
         return None, []
@@ -130,12 +134,12 @@ def _run_case(case):
                 entry = case.get("entry", "")
                 reply, flow = _turn(
                     sid,
-                    lambda: sops.start_sop(sid, case["sop"], entry, slots=case.get("slots")),
+                    lambda: sops.start_sop(sid, case["sop"], entry, slots=case.get("slots")).reply,
                     turn.get("q") or entry)
             else:
                 q = turn.get("q") or ""
                 reply, flow = _turn(
-                    sid, lambda q=q: (sops.continue_sop(sid, q) or ("", False))[0], q)
+                    sid, lambda q=q: _reply_of(sops.continue_sop(sid, q)), q)
             problems += _check_turn(sid, turn.get("expect") or {}, reply, flow,
                                     sops.pop_finished(sid) if not sops.has_active_sop(sid) else None)
         final = case.get("final") or {}

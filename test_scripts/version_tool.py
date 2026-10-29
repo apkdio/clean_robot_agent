@@ -31,10 +31,13 @@ def _show(args) -> int:
     if archived and not comp["eval"].get("context"):
         print("       context@%s#%s（archived）" % (archived.get("rev"), archived.get("sha256")))
     env = comp["env"]
-    print("       env kb#%s · prompts#%s · config#%s" % (
+    models = env.get("models") or {}
+    print("       env kb#%s · prompts#%s · config#%s · trace v%s · models %s" % (
         (env.get("kb") or {}).get("fingerprint"),
         (env.get("prompts") or {}).get("fingerprint"),
-        (env.get("config") or {}).get("fingerprint")))
+        (env.get("config") or {}).get("fingerprint"),
+        env.get("trace"),
+        "/".join(str(models.get(k) or "-") for k in ("chat", "small", "embedding", "reranker"))))
     print("       run %s" % data["run_id"])
     for warning in data.get("warnings") or []:
         print("       ⚠ %s" % warning)

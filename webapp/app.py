@@ -8,7 +8,6 @@
 
 import os
 import sys
-import time
 
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
@@ -18,6 +17,9 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from tools.agent import ask_stream
+from tools.chat_service import (
+    acquire_turn_lock, clear_stop, release_turn_lock, set_stop, stream_turn,
+)
 from tools.config_tool import load_config
 from tools.context_store import ensure_session_id, list_sessions
 from tools.log_tool import get_logger
@@ -55,58 +57,6 @@ def _safe_upload_name(raw: str) -> str:
     name = os.path.basename((raw or "").replace("\\", "/"))
     name = "".join(ch for ch in name if ch not in '<>:"|?*' and ord(ch) >= 32)
     return name.strip().strip(".")[:120]
-
-# 停止回答标志（Redis + 内存降级）。本地态也要带过期：
-# 无 TTL 的残留标志会误杀下一次提问（晚到/双击的 stop 请求）
-_STOP_TTL = 120
-_stop_flags = {}   # session_id → 过期时间戳
-
-
-def _set_stop(session_id: str):
-    from tools.redis_store import get_redis
-    r = get_redis()
-    if r is not None:
-        r.set(f"stop:{session_id}", "1", ex=_STOP_TTL)
-    _stop_flags[session_id] = time.time() + _STOP_TTL
-
-
-def _is_stopped(session_id: str) -> bool:
-    from tools.redis_store import get_redis
-    r = get_redis()
-    if r is not None:
-        return bool(r.exists(f"stop:{session_id}"))
-    expire = _stop_flags.get(session_id)
-    if expire is None:
-        return False
-    if expire <= time.time():
-        _stop_flags.pop(session_id, None)
-        return False
-    return True
-
-
-def _clear_stop(session_id: str):
-    from tools.redis_store import get_redis
-    r = get_redis()
-    if r is not None:
-        r.delete(f"stop:{session_id}")
-    _stop_flags.pop(session_id, None)
-
-
-def _make_stop_probe(session_id: str, min_interval: float = 0.15):
-    """节流的停止探测：流式循环每个 chunk 都查一次，Redis 可用时就是每个 chunk 一次
-    EXISTS 往返——节流到至多 ~7 次/秒，停止感知延迟上限 150ms（人不可察）。"""
-    import time as _time
-    last = [0.0]
-
-    def probe() -> bool:
-        now = _time.monotonic()
-        if now - last[0] >= min_interval:
-            last[0] = now
-            return _is_stopped(session_id)
-        return False
-
-    return probe
-
 
 @app.route("/")
 def index():
@@ -253,7 +203,7 @@ def chat_stop():
     """设置停止标志，中断当前会话的流式回答。"""
     data = request.get_json(silent=True) or {}
     session_id = ensure_session_id(data.get("session_id", ""))
-    _set_stop(session_id)
+    set_stop(session_id)
     logger.info(f"[Stream] stop requested, session={session_id}")
     return jsonify({"status": "ok"})
 
@@ -273,82 +223,32 @@ def chat_stream():
     is_retry = bool(data.get("retry"))     # 前端点「重新回答」时显式带上；不靠"和上一句相同"猜
 
     # 会话级锁：同一会话回答未完成时拒绝新请求（Redis SETNX + 本地降级）
-    from tools.redis_store import acquire_lock
-    lock_key = f"lock:session:{session_id}"
-    if not acquire_lock(lock_key): # 方法内已经实现加锁逻辑
+    if not acquire_turn_lock(session_id):
         return jsonify({"status": "busy", "message": "正在回答中，请稍候"}), 409
 
     # 清掉上一轮残留的停止标志：晚到/重复的 stop 请求会在流结束后留在 Redis，
     # 不清的话下一轮在首个 chunk 前就被误停、user 消息被回滚
-    _clear_stop(session_id)
-
+    clear_stop(session_id)
     logger.info(f"[Stream] query: {query[:60]}... session={session_id}")
 
     def generate():
         completed = False
         try:
             import json
-            from tools.context_store import append_message, rollback_last_user_message
-            from sops.base import get_last_recommend
-            parts = []
-            stopped = False
-            probe = _make_stop_probe(session_id)
-            try:
-                for chunk in ask_stream(query, session_id, lng=lng, lat=lat, retry=is_retry,
-                                        stop_check=probe):
-                    if probe():
-                        stopped = True
-                        break
-                    parts.append(chunk)
-                    # JSON 编码，避免 chunk 内的换行符破坏 SSE 帧格式
-                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                # 链路在阻塞段内被停（stop_check 静默 return）也要走停止收尾，
-                # 不然这轮会被当成自然结束落盘
-                if not stopped and _is_stopped(session_id):
-                    stopped = True
-            except Exception as e:
-                # 错误走独立帧 + 不落盘：错误文案若当正常回答 append，
-                # 下一轮 LLM 会把「错误: 生成失败」当客服回答、标题也会被污染。
-                # user 消息要回滚：否则上下文留下"问了没答"的孤立提问（与停止同语义）。
-                logger.error(f"[Stream] {e}")
-                try:
-                    rollback_last_user_message(session_id)
-                except Exception as rb:  # noqa: BLE001
-                    logger.warning(f"[Stream] rollback on error failed: {rb}")
-                yield f"event: error\ndata: {json.dumps('生成失败，请重试', ensure_ascii=False)}\n\n"
-                yield "data: [DONE]\n\n"
-                completed = True
-                return
-            if stopped:
-                # 停止：回滚这一轮（忽略进上下文），首句取消则会话不落地磁盘
-                rollback_last_user_message(session_id)
-                yield "data: [STOPPED]\n\n"
-                completed = True
-                return
-            # 记录 assistant 完整回答 + 结构化推荐（供自由指代消解）
-            full_answer = "".join(parts)
-            append_message(session_id, "assistant", full_answer, models=get_last_recommend(session_id))
-            # 若会话尚未生成标题（第一轮），则调用 LLM 生成并写入 meta
-            try:
-                from tools.context_store import get_session_title, set_session_title, generate_session_title
-                if not get_session_title(session_id):
-                    title = generate_session_title(query, full_answer)
-                    set_session_title(session_id, title)
-            except Exception as e:
-                logger.warning(f"[Stream] Generate title failed: {e}")
-            # 结构性收尾帧：前端据此禁用「重新回答」（SOP 未结束时不给重发）、并拿到本轮锚点。
-            # 前端按 data:  行解析，event: 开头的帧会被旧版忽略，不破坏兼容。
-            try:
-                from tools import trace_store
-                from sops import has_active_sop
-                turn = trace_store.find_turn(session_id, query) or {}
-                meta = {"branch": turn.get("branch") or "",
-                        "sop_active": bool(has_active_sop(session_id)),
-                        "anchor": {"date": turn.get("date"), "turn_index": turn.get("turn_index")}}
-                yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
-            except Exception as e:
-                logger.warning(f"[Stream] meta frame failed: {e}")
-            yield "data: [DONE]\n\n"
+
+            for event in stream_turn(query, session_id, lng=lng, lat=lat,
+                                      retry=is_retry,
+                                      ask_stream_func=ask_stream):
+                if event.kind == "delta":
+                    yield f"data: {json.dumps(event.text, ensure_ascii=False)}\n\n"
+                elif event.kind == "error":
+                    yield f"event: error\ndata: {json.dumps(event.text, ensure_ascii=False)}\n\n"
+                elif event.kind == "stopped":
+                    yield "data: [STOPPED]\n\n"
+                elif event.kind == "meta":
+                    yield f"event: meta\ndata: {json.dumps(event.meta, ensure_ascii=False)}\n\n"
+                elif event.kind == "done":
+                    yield "data: [DONE]\n\n"
             completed = True
         finally:
             # 客户端断连（GeneratorExit，BaseException 捕不住上面的 except）与
@@ -356,12 +256,12 @@ def chat_stream():
             if not completed:
                 try:
                     from tools.context_store import rollback_last_user_message
+
                     rollback_last_user_message(session_id)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     logger.warning(f"[Stream] rollback on disconnect failed: {e}")
-            from tools.redis_store import release_lock
-            release_lock(lock_key)
-            _clear_stop(session_id)
+            release_turn_lock(session_id)
+            clear_stop(session_id)
 
     return Response(
         stream_with_context(generate()),
@@ -413,9 +313,7 @@ def agent_config():
     """返回当前的 agent 与检索配置，用于前端标识。"""
     try:
         agent_cfg = load_config("agent")
-        rag_cfg = load_config("rag")
         behavior = agent_cfg.get("behavior", {})
-        retrieval = rag_cfg.get("retrieval", {})
         return jsonify({
             "status": "ok",
             "mode": "retrieval_only" if behavior.get("retrieval_only", True) else "rag_full",

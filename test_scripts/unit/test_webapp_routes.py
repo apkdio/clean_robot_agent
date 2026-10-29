@@ -133,15 +133,16 @@ def test_stream_error_rolls_back_user_message():
     delete_session(sid)
     saved = wa.ask_stream
 
-    def boom(*args, **kwargs):
+    def boom(*_args, **_kwargs):
         raise RuntimeError("boom")
-        yield  # noqa: 保持生成器形态
+        yield  # pragma: no cover
 
     wa.ask_stream = boom
     try:
         r = _client().post("/api/chat/stream", json={"query": "边刷多久换一次", "session_id": sid})
         body = r.get_data(as_text=True)
         _assert_in("event: error", body, "错误走独立帧")
+        _assert_in("data: [DONE]", body, "错误收尾同样发 DONE")
         users = [m for m in get_recent(sid, n=1000) if m.get("role") == "user"]
         _assert_eq(len(users), 0, "错误轮不留在上下文")
     finally:

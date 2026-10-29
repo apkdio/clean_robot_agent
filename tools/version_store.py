@@ -342,6 +342,11 @@ def _read_registry(create: bool = False) -> dict:
         return data
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
+    schema = data.get("schema_v")
+    if schema not in (None, REGISTRY_SCHEMA):
+        raise ValueError("版本账本 schema_v=%r 与当前代码（%s）不兼容" %
+                         (schema, REGISTRY_SCHEMA))
+    data.setdefault("schema_v", REGISTRY_SCHEMA)
     data.setdefault("entries", {})
     return data
 
@@ -489,7 +494,8 @@ def dataset(track: str, path: str = None) -> dict:
     info = collect_eval(track, path or EVAL_PATHS.get(track))
     if info.get("missing"):
         return {"track": track, "registered": False, "status": "missing", "warning": "评测集缺失"}
-    entry = _find_eval(track, info["sha256"])
+    entry = _find_eval(track, info["sha256"], status="active") \
+        or _find_eval(track, info["sha256"])
     if not entry:
         return {"track": track, "registered": False, "status": "unregistered",
                 "sha256": info["sha256"], "warning": "未登记变更"}
@@ -577,7 +583,11 @@ def _pin_env_from_components(env: dict) -> dict:
 
     sops = {}
     for sid, item in (env.get("sops") or {}).items():
-        sops[sid] = item.get("def_ver") if isinstance(item, dict) else item
+        if isinstance(item, dict):
+            # def_ver 管续跑兼容、trigger_ver 管触发/门控；两枚都要进 pinned，否则归因看不见后者的变化
+            sops[sid] = {"def": item.get("def_ver"), "trigger": item.get("trigger_ver")}
+        else:
+            sops[sid] = item
     out = {"kb": _fp("kb"), "prompts": _fp("prompts"), "config": _fp("config"),
            "index": (env.get("index") or {}).get("in_sync"),
            "intent": env.get("intent"), "sops": sops,
@@ -656,22 +666,29 @@ def check(strict: bool = False) -> list:
     reg = _read_registry()
     entries = reg.get("entries") or {}
     for key, entry in entries.items():
+        snap = entry.get("snapshot")
+        snap_path = _abs(snap) if snap else ""
         path = _abs(entry.get("path") or "")
-        if not path or not os.path.isfile(path):
-            issues.append("%s 文件不存在：%s" % (key, entry.get("path")))
-            continue
-        check_path = path
-        if entry.get("status") != "active" and entry.get("snapshot"):
-            check_path = _abs(entry["snapshot"])
+        if entry.get("status") == "active":
+            if not path or not os.path.isfile(path):
+                issues.append("%s 文件不存在：%s" % (key, entry.get("path")))
+                continue
+            check_path = path
+        else:
+            # 归档条目以快照为准；原路径可能已随数据集目录迁移/删除
+            if snap_path and os.path.isfile(snap_path):
+                check_path = snap_path
+            elif path and os.path.isfile(path):
+                check_path = path
+            else:
+                issues.append("%s 文件与快照都不存在：%s" % (key, entry.get("path")))
+                continue
         if os.path.isfile(check_path) and _sha256(check_path)[:8] != entry.get("sha256"):
             issues.append("%s 文件 sha 与账本不一致" % key)
-        snap = entry.get("snapshot")
-        if snap and not os.path.isfile(_abs(snap)):
+        if snap and not os.path.isfile(snap_path):
             issues.append("%s 缺少快照：%s" % (key, snap))
-        if entry.get("status") == "active":
-            p = entry.get("path")
-            if not p:
-                issues.append("%s 缺少 path" % key)
+        if entry.get("status") == "active" and not entry.get("path"):
+            issues.append("%s 缺少 path" % key)
     active_tracks = list(ACTIVE_TRACKS)
     if os.path.isfile(_abs(EVAL_PATHS.get("context", ""))):
         active_tracks.append("context")
@@ -725,9 +742,12 @@ def check(strict: bool = False) -> list:
                     issues.append("SOP %s %s 与当前定义不一致" % (sid, field))
         sop_entry = _latest("sop")
         if sop_entry:
-            for field, key in (("sop_def_ver", "def_ver"), ("sop_trigger_ver", "trigger_ver")):
-                if not sop_entry.get(field):
-                    issues.append("SOP 账本条目缺 %s" % field)
+            cur_def = {sid: item.get("def_ver") for sid, item in cur.items()}
+            cur_trig = {sid: item.get("trigger_ver") for sid, item in cur.items()}
+            if sop_entry.get("sop_def_ver") != cur_def:
+                issues.append("SOP 账本条目的 def_ver 与当前定义不一致")
+            if sop_entry.get("sop_trigger_ver") != cur_trig:
+                issues.append("SOP 账本条目的 trigger_ver 与当前定义不一致")
     return issues
 
 
@@ -745,6 +765,12 @@ def check_warnings() -> list:
 
 def diff_eval(track: str, rev_a: int, rev_b: int) -> dict:
     def _snapshot(rev):
+        # 以账本登记的 snapshot 为准；目录扫描只做旧数据兼容
+        for entry in (_read_registry().get("entries") or {}).values():
+            if entry.get("track") == track and entry.get("rev") == rev and entry.get("snapshot"):
+                p = _abs(entry["snapshot"])
+                if os.path.isfile(p):
+                    return p
         rel = "%s/%s/%d" % (EVALS_REL, track, rev)
         dir_path = _abs(rel)
         if not os.path.isdir(dir_path):
@@ -814,8 +840,9 @@ def begin_run(entry: str, resolved: dict = None) -> dict:
            "entry": entry, "code": resolved["components"]["code"],
            "eval": resolved["components"]["eval"], "env": resolved["components"]["env"],
            "warnings": resolved.get("warnings") or []}
-    stamp = datetime.now().strftime("%Y%m%d-%H%M")
-    path = _abs("%s/%s_%s.json" % (RUNS_REL, stamp, resolved["run_id"].split(":", 1)[-1]))
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S%f")
+    path = _abs("%s/%s_%s_%s.json" % (RUNS_REL, stamp,
+                                      resolved["run_id"].split(":", 1)[-1], os.getpid()))
     _write_json(path, rec)
     return {"record": rec, "path": path}
 

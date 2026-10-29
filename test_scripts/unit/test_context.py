@@ -13,7 +13,6 @@
 import sys
 import uuid
 import os
-import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
@@ -85,6 +84,38 @@ def test_session_title_roundtrip():
     _assert_eq(ctx.get_session_title(sid), "扫地机选购", "标题写读一致")
     ctx.set_session_title(sid, "新标题")
     _assert_eq(ctx.get_session_title(sid), "新标题", "标题覆盖更新")
+    ctx.delete_session(sid)
+
+
+def test_meta_io_failures_are_degraded():
+    """meta 读写失败只告警不抛异常：标题链路不能因 meta 文件抖动把整轮打断。"""
+    import json
+
+    sid = _new_sid()
+    ctx.set_session_title(sid, "旧标题")
+    saved_load, saved_dump = json.load, json.dump
+
+    def _load_fail(*_a, **_k):
+        raise RuntimeError("meta read failed")
+
+    def _dump_fail(*_a, **_k):
+        raise RuntimeError("meta write failed")
+
+    json.load = _load_fail
+    try:
+        ctx.set_session_title(sid, "读失败后的新标题")
+    finally:
+        json.load = saved_load
+    _assert_eq(ctx.get_session_title(sid), "读失败后的新标题",
+               "读失败按空 meta 继续，本轮字段照常写入")
+
+    json.dump = _dump_fail
+    try:
+        ctx.set_session_title(sid, "写失败标题")
+    finally:
+        json.dump = saved_dump
+    _assert_eq(ctx.get_session_title(sid), "读失败后的新标题",
+               "写失败保留旧标题，不抛异常")
     ctx.delete_session(sid)
 
 
@@ -170,7 +201,7 @@ def test_generate_session_title_fallback():
     import tools.llm_tool as lt
     orig = lt.get_chat_model
 
-    def _boom(*a, **k):
+    def _boom(*_a, **_k):
         raise RuntimeError("no llm")
 
     lt.get_chat_model = _boom
@@ -189,6 +220,7 @@ TESTS = [
     test_recent_from_file,
     test_last_models_roundtrip,
     test_session_title_roundtrip,
+    test_meta_io_failures_are_degraded,
     test_delete_session,
     test_ensure_session_id,
     test_list_sessions,
