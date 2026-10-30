@@ -451,6 +451,24 @@ def node(name: str, status: str = "ok", by: str = None, in_: dict = None, out: d
         logger.warning("[Trace] node event failed: %s", e)
 
 
+def stage(name: str, status: str = "ok", ms: int = None, out: dict = None) -> None:
+    """记一个阶段 span：由主链统一写入，耗时和结果不依赖阶段内部节点。"""
+    turn = getattr(_local, "turn", None)
+    if not turn:
+        return
+    try:
+        rec = {"node": name, "status": status}
+        if ms is not None:
+            rec["ms"] = int(ms)
+        if out:
+            rec["out"] = _scalars(out)
+        turn["path"].append(rec)
+        _event("stage", name=name, status=status, ms=rec.get("ms"),
+               facts=_scalars(out or {}))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[Trace] stage event failed: %s", e)
+
+
 def verify(checked: list, missing: list, action: str = "log", exempt: list = None,
            skipped: list = None, unchecked: list = None) -> None:
     """记答案校验结果：完整清单进 answer 块，路径节点只放计数和短摘要。"""

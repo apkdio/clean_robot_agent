@@ -5,11 +5,13 @@ Chroma 作为持久化向量库。
 """
 
 import os
+import time
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from tools import trace_store
 from tools.config_tool import load_config
 from tools.file_tools import extract_file, get_file_sha256_hex
 from tools.llm_tool import get_embedding_model
@@ -203,7 +205,23 @@ class DenseRetriever:
     ) -> list[tuple[Document, float]]:
         k = top_k if top_k is not None else _rag_cfg.get("retrieval", {}).get("dense_top_k", 10)
         store = get_vector_store()
-        results = store.similarity_search_with_relevance_scores(query, k=k, filter=filter)
+        embedding_fn = getattr(store, "_embedding_function", None)
+        if embedding_fn is not None:
+            # 先单独计时 query embedding，再按向量查库；两步结果与
+            # similarity_search_with_relevance_scores 等价，只是把耗时拆开。
+            started = time.perf_counter()
+            query_embedding = embedding_fn.embed_query(query)
+            trace_store.add_ms("embed_query", started)
+            started = time.perf_counter()
+            results = store.similarity_search_by_vector_with_relevance_scores(
+                query_embedding, k=k, filter=filter)
+            trace_store.add_ms("chroma_dense", started)
+            relevance = store._select_relevance_score_fn()
+            results = [(doc, relevance(score)) for doc, score in results]
+        else:
+            started = time.perf_counter()
+            results = store.similarity_search_with_relevance_scores(query, k=k, filter=filter)
+            trace_store.add_ms("chroma_dense", started)
 
         # 相关性阈值过滤（0 或未配置 = 不过滤）。bge-m3 + cosine 实测：领域内 query 通常
         # 0.36+，领域外（天气/闲聊/乱码）落在 0.16~0.24，0.25 压在噪声底噪之上。

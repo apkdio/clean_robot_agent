@@ -38,9 +38,12 @@ def _p_model(query: str) -> bool:
 
 
 def _p_find_models(query: str) -> bool:
-    """预算 / 日期 / 系列任一规则约束命中，就交给型号筛选（判别阶段不调 LLM）。"""
+    """预算 / 日期 / 系列规则约束，或明确的型号枚举问法，交给型号筛选。"""
+    from config.word_dict_config import MODEL_LIST_WORDS
     from tools.model_query import resolve_model_constraints
-    return resolve_model_constraints(query, allow_llm=False) is not None
+
+    return (resolve_model_constraints(query, allow_llm=False) is not None
+            or any(w in query for w in MODEL_LIST_WORDS))
 
 
 def _p_service_point(query: str) -> bool:
@@ -204,6 +207,7 @@ def _strong_ops(query: str) -> set:
     """强判据命中的操作（确定性证据，给固定加分；不是"像"）。"""
     out = set()
     try:
+        from config.word_dict_config import MODEL_LIST_WORDS
         from sops import match_sop, sop_has_strong_trigger
         from tools.model_query import resolve_model_constraints
         from tools.model_ref import has_model_ref
@@ -213,7 +217,8 @@ def _strong_ops(query: str) -> set:
         sid = match_sop(query, log=False)
         if sid and sop_has_strong_trigger(sid, query):
             out.add("sop")
-        if resolve_model_constraints(query, allow_llm=False):
+        if (resolve_model_constraints(query, allow_llm=False)
+                or any(w in query for w in MODEL_LIST_WORDS)):
             out.add("find_models")
         if has_model_ref(query):
             out.add("model")

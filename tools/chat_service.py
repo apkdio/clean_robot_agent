@@ -7,6 +7,7 @@ from __future__ import annotations
 import time
 from typing import Callable, Iterator
 
+from tools.dto.request import ChatRequest
 from tools.dto.transport import TurnEvent
 from tools.log_tool import get_logger
 
@@ -115,46 +116,53 @@ def _finish_turn(session_id: str, query: str, answer: str) -> dict:
     return meta
 
 
-def stream_turn(query: str, session_id: str, lng=None, lat=None,
-                retry: bool = False, ask_stream_func=None) -> Iterator[TurnEvent]:
+def stream_turn(request: ChatRequest | str, session_id: str = "default",
+                lng=None, lat=None, retry: bool = False,
+                ask_stream_func=None) -> Iterator[TurnEvent]:
     """跑完一轮问答并交付统一事件。
 
     调用方需先 acquire_turn_lock；停止 / 异常 / 断连的收尾都在这里完成。
+    request 传字符串时按旧签名构造 ChatRequest，供存量测试与低层调用。
     """
+    if isinstance(request, ChatRequest):
+        req = request
+    else:
+        req = ChatRequest(query=request, session_id=session_id,
+                          lng=lng, lat=lat, retry=retry)
     if ask_stream_func is None:
         from tools.agent import ask_stream as ask_stream_func
 
-    probe = make_stop_probe(session_id)
+    sid = req.session_id
+    probe = make_stop_probe(sid)
     parts: list[str] = []
     completed = False
     stopped = False
     try:
         try:
-            for chunk in ask_stream_func(query, session_id, lng=lng, lat=lat,
-                                         retry=retry, stop_check=probe):
+            for chunk in ask_stream_func(req, stop_check=probe):
                 if probe():
                     stopped = True
                     break
                 parts.append(chunk)
                 yield TurnEvent(kind="delta", text=chunk)
-            if not stopped and is_stopped(session_id):
+            if not stopped and is_stopped(sid):
                 stopped = True
         except Exception as e:  # noqa: BLE001
             logger.error("[ChatService] turn failed: %s", e)
-            _rollback_user(session_id)
+            _rollback_user(sid)
             yield TurnEvent(kind="error", text="生成失败，请重试")
             yield TurnEvent(kind="done")
             completed = True
             return
         if stopped:
-            _rollback_user(session_id)
+            _rollback_user(sid)
             yield TurnEvent(kind="stopped")
             completed = True
             return
-        meta = _finish_turn(session_id, query, "".join(parts))
+        meta = _finish_turn(sid, req.query, "".join(parts))
         yield TurnEvent(kind="meta", meta=meta)
         yield TurnEvent(kind="done")
         completed = True
     finally:
         if not completed:
-            _rollback_user(session_id)
+            _rollback_user(sid)

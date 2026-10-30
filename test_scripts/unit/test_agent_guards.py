@@ -66,7 +66,8 @@ def test_hard_guards_use_normalized_text():
 def test_enter_gate_decline_reuses_entry_query():
     """进入确认门答「不是」后按入口 query 继续，且归一化文本同步重算。
 
-    确认门话术已明确要求答是/不是，两次没听懂按拒绝处理是有意设计（ADR-23/24 同口径）；
+    确认门话术已明确要求答是/不是；两次没听懂只恢复原句并跳过本轮进入门，
+    不写持久拒绝标记（由 test_enter_gate_timeout_is_not_decline 单独覆盖）。
     这里锁的是同步缺陷：换回入口 query 后 q 必须重算，否则意图 / SOP 触发 / 检索
     用的还是被否掉那句的归一化文本。
     """
@@ -92,6 +93,38 @@ def test_enter_gate_decline_reuses_entry_query():
         ir.route_intent_with_margin = saved_intent
         pending_store.close(sid)
         end_sop(sid)
+
+
+def test_enter_gate_timeout_is_not_decline():
+    """进入确认门两次没听懂只跳过本轮，不写持久拒绝标记。"""
+    from tools import pending_store, trace_store
+    from tools.clarify_service import CLARIFY_DONE, CLARIFY_RESUME, _clarify_sop_enter
+    from tools.context_store import is_enter_declined
+    from test_scripts import trace_reader
+
+    sid = "t-enter-timeout"
+    pending_store.close(sid)
+    _reset_session(sid)
+    reset_trace(sid)
+    try:
+        pending_store.ask(sid, pending_store.BIZ_SOP_ENTER,
+                          state={"sop": "model_query", "entry": "预算 3000 的扫地机器人"})
+        trace_store.begin_turn(sid, "嗯嗯那个")
+        first = _clarify_sop_enter(sid, "嗯嗯那个", "嗯嗯那个")
+        second = _clarify_sop_enter(sid, "嗯嗯那个", "嗯嗯那个")
+        trace_store.end_turn()
+        _assert_eq(first.code, CLARIFY_DONE, "第一次认不出 → 重问")
+        _assert_eq(second.code, CLARIFY_RESUME, "第二次认不出 → 恢复原句")
+        _assert_true(second.data.enter_declined, "本轮跳过进入门")
+        _assert_false(is_enter_declined(sid, "model_query"),
+                      "超限不是用户主动拒绝，不能写持久拒绝标记")
+        row = trace_reader.load(trace_store._path(sid))[-1]
+        gate = [n for n in (row.get("path") or []) if n.get("node") == "sop.enter_gate"][-1]
+        _assert_eq((gate.get("out") or {}).get("decision"), "timeout",
+                   "trace 明确标出超时，不和「不是」混在一起")
+    finally:
+        pending_store.close(sid)
+        _reset_session(sid)
 
 
 def test_enter_gate_decline_hint_truthful():
@@ -207,6 +240,53 @@ def test_safety_hint_in_active_sop():
         end_sop(sid)
 
 
+def test_model_list_routes_through_find_models():
+    """型号枚举没有专门兜底 stage，也必须由 find_models 操作器接进 SOP。"""
+    from sops import end_sop
+
+    sid = "t-model-list"
+    end_sop(sid)
+    _reset_session(sid)
+    try:
+        out = "".join(ask_stream("有哪些型号", sid)).strip()
+        _assert_in("预算", out, "型号枚举进入 model_query SOP 补预算")
+    finally:
+        end_sop(sid)
+        _reset_session(sid)
+
+
+def test_exit_with_residual_uses_trace_not_behavior():
+    """退出但带诉求：中间退出只落 sop.exit，不污染 tags / branch。"""
+    from sops import end_sop, start_sop
+    from tools import pending_store, trace_store
+    from tools.agent import _stage_active_sop
+    from tools.dto.request import ChatRequest
+    from tools.turn_context import TurnContext
+    from test_scripts import trace_reader
+
+    sid = "t-exit-residual"
+    end_sop(sid)
+    pending_store.close(sid)
+    _reset_session(sid)
+    reset_trace(sid)
+    try:
+        start_sop(sid, "model_query", "x")
+        q = "退出，但我想问边刷多久换一次"
+        trace_store.begin_turn(sid, q)
+        outcome = _stage_active_sop(TurnContext.from_request(ChatRequest(q, sid)))
+        trace_store.end_turn(reply=getattr(outcome, "prefix", ""))
+        row = trace_reader.load(trace_store._path(sid))[-1]
+        nodes = [n.get("node") for n in (row.get("path") or [])]
+        _assert("sop.exit" in nodes, "退出继续处理原句落 sop.exit 节点")
+        _assert("exit_sop" not in (row.get("tags") or []),
+                "中间退出不再占用行为 tags")
+        _assert_eq(row.get("branch"), None, "没有最终出口标签时不伪造 branch")
+    finally:
+        pending_store.close(sid)
+        end_sop(sid)
+        _reset_session(sid)
+
+
 def test_safety_carry_main_text():
     """主链路硬承接仍是独立出口，文案改为软警示。"""
     from sops import end_sop
@@ -308,6 +388,59 @@ def test_clarify_open_trace():
         ops_mod.score_all = saved
         pending_store.close(sid)
         end_sop(sid)
+
+
+def test_sop_exit_confirm_does_not_emit_sop_active():
+    """退出确认是 clarify 分支：不能伪装成 _stage_active_sop 的 sop.active。"""
+    from sops import end_sop, start_sop
+    from tools import pending_store, trace_store
+    from tools.clarify_service import _clarify_sop_exit
+    from test_scripts import trace_reader
+
+    sid = "t-sop-exit-trace"
+    end_sop(sid)
+    pending_store.close(sid)
+    _reset_session(sid)
+    reset_trace(sid)
+    try:
+        start_sop(sid, "model_query", "x")
+        pending_store.ask(sid, pending_store.BIZ_SOP_EXIT,
+                          state={"sop_id": "model_query", "step": 0})
+        trace_store.begin_turn(sid, "是")
+        result = _clarify_sop_exit(sid, "是", "是")
+        trace_store.end_turn(reply=result.message)
+        row = trace_reader.load(trace_store._path(sid))[-1]
+        nodes = [n.get("node") for n in (row.get("path") or [])]
+        _assert("sop.active" not in nodes, "确认退出轮不再落 sop.active")
+        _assert_eq((row.get("sop") or {}).get("id"), "model_query",
+                   "确认退出轮仍保留 sop 状态块，便于追溯")
+        _assert_eq(row.get("branch"), "exit_sop", "出口仍是 exit_sop")
+    finally:
+        pending_store.close(sid)
+        end_sop(sid)
+        _reset_session(sid)
+
+
+def test_ops_clarify_single_option_does_not_ask_two():
+    """单候选不是二选一：直接按唯一候选继续，不能拼出「2=-」。"""
+    from tools import pending_store
+    from tools.clarify_service import CLARIFY_RESUME, _clarify_ops, match_op_choice
+
+    _assert_eq(match_op_choice("筛选", ["find_models", "sop"]), "find_models",
+               "find_models 的别名已同步并可用于选择")
+
+    sid = "t-ops-single"
+    pending_store.close(sid)
+    try:
+        pending_store.ask(sid, pending_store.BIZ_OPS_CLARIFY,
+                          state={"query": "原问题"}, options=["sop"])
+        result = _clarify_ops(sid, "嗯嗯那个", "嗯嗯那个")
+        _assert_eq(result.code, CLARIFY_RESUME, "单候选直接恢复")
+        _assert_eq(result.data.prefer_op, "sop", "按唯一候选继续")
+        _assert_eq(result.message, "", "不再生成 1/2 重问话术")
+        _assert_eq(pending_store.peek(sid), None, "澄清状态已清")
+    finally:
+        pending_store.close(sid)
 
 
 def test_ops_clarify_two_misses_take_top1():
@@ -613,14 +746,19 @@ TESTS = [
     test_refuse_only_when_out_of_domain,
     test_retrieved_inject_chunks_dropped,
     test_enter_gate_decline_reuses_entry_query,
+    test_enter_gate_timeout_is_not_decline,
     test_enter_gate_decline_hint_truthful,
     test_all_sop_entry_gate,
     test_enter_confirm_policy,
     test_safety_hint_in_sop_clarify,
     test_safety_hint_in_active_sop,
+    test_model_list_routes_through_find_models,
+    test_exit_with_residual_uses_trace_not_behavior,
     test_safety_carry_main_text,
     test_ops_clarify_roundtrip,
     test_clarify_open_trace,
+    test_sop_exit_confirm_does_not_emit_sop_active,
+    test_ops_clarify_single_option_does_not_ask_two,
     test_ops_clarify_two_misses_take_top1,
     test_clarify_result_contract,
     test_ops_clarify_only_when_close,

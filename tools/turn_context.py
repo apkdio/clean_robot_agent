@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+from tools.dto.request import ChatRequest
 from tools.dto.stage import Continue, Finish, StageOutcome
 
 __all__ = ["TurnContext", "Continue", "Finish", "StageOutcome"]
@@ -17,12 +18,9 @@ __all__ = ["TurnContext", "Continue", "Finish", "StageOutcome"]
 class TurnContext:
     """本轮状态单：阶段之间只通过它传递业务事实。"""
 
-    session_id: str
+    request: ChatRequest
     query: str
     q: str
-    lng: float | None = None
-    lat: float | None = None
-    retry: bool = False
     stop_check: Callable[[], bool] | None = None
 
     intent: str | None = None
@@ -33,3 +31,25 @@ class TurnContext:
     enter_declined_turn: bool = False
     op_note: dict = field(default_factory=dict)
     chunks: list | None = None
+
+    @classmethod
+    def from_request(cls, request: ChatRequest,
+                     stop_check: Callable[[], bool] | None = None) -> "TurnContext":
+        return cls(request=request, query=request.query, q=request.query,
+                   stop_check=stop_check)
+
+    @property
+    def session_id(self) -> str:
+        return self.request.session_id
+
+    @property
+    def lng(self) -> float | None:
+        return self.request.lng
+
+    @property
+    def lat(self) -> float | None:
+        return self.request.lat
+
+    @property
+    def retry(self) -> bool:
+        return self.request.retry

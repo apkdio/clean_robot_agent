@@ -8,6 +8,7 @@ from tools.dto.clarify import (
 )
 from tools.dto.executor import ExecOutcome, NotMine, Reply
 from tools.dto.model_query import ModelQueryResult
+from tools.dto.request import ChatRequest
 from tools.dto.sop import SopStepResult
 from tools.dto.stage import Continue, Finish, StageOutcome
 from tools.dto.transport import TurnEvent
@@ -18,6 +19,7 @@ __all__ = [
     "ClarifyData", "ClarifyResult",
     "CLARIFY_DONE", "CLARIFY_RESUME", "CLARIFY_DROP", "CLARIFY_KINDS",
     "ModelQueryResult",
+    "ChatRequest",
     "SopStepResult",
     "TurnEvent",
 ]

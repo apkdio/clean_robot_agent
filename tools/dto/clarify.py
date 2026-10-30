@@ -15,7 +15,7 @@ class ClarifyData:
 
     query: str
     prefer_op: str | None = None
-    enter_declined: bool = False
+    enter_declined: bool = False   # 本轮跳过进入门；持久拒绝标记由业务另行写入
 
 
 @dataclass(frozen=True)

@@ -79,6 +79,7 @@ def get_last_recommend(session_id: str):
 # 当前活跃会话，按 session_id 隔离（Redis 可用时存 Redis，否则本地降级）
 _sessions = {}
 # 状态形如 {"sop_id": xxx, "def_ver": xxx, "step": xxx, "slots": {xxx}, "retry_count": xxx, "result": {xxx}}
+# retry_count 只对当前 step 有效；所有推进都走 _advance()，跨 step 自动清零。
 # （无 Redis 的降级态另带 "ts"，读时按 sop_ttl 校验过期；Redis 在时不带，由 Redis 自己过期）
 _finished = {}  # session_id -> 刚收尾的那份状态（形状同 _sessions，供「重新回答」判断 last_sop，取走即清）
 
@@ -91,6 +92,12 @@ def make_session(sop_id: str, step: int = 0, slots: dict = None, retry_count: in
     """造一份带定义指纹的会话状态（_start 与测试注入共用，避免手搓状态漏指纹）。"""
     return {"sop_id": sop_id, "def_ver": (SOPS.get(sop_id) or {}).get("def_ver"),
             "step": int(step), "slots": dict(slots or {}), "retry_count": int(retry_count)}
+
+
+def _advance(session: dict) -> None:
+    """推进到下一步；retry_count 只属于当前 step，跨 step 必须清零。"""
+    session["step"] = int(session.get("step", 0)) + 1
+    session["retry_count"] = 0
 
 
 def _same_def(session: dict) -> bool:
@@ -327,7 +334,7 @@ def _run(session_id: str, user_input: str) -> SopStepResult:
             # 针对网点的结果，如果结果只有一个，跳过反问澄清环节
             if step.get("when") and not step["when"](ctx):
                 flow.append({"i": session["step"], "type": step["type"], "outcome": "skipped"})
-                session["step"] += 1
+                _advance(session)
                 continue
 
             if step["type"] == "ask":
@@ -336,7 +343,7 @@ def _run(session_id: str, user_input: str) -> SopStepResult:
                 if slot and session["slots"].get(slot) is not None:
                     flow.append({"i": session["step"], "type": "ask", "slot": slot,
                                  "outcome": "skipped", "by": "prefill"})
-                    session["step"] += 1
+                    _advance(session)
                     user_input = None
                     continue
                 # 有用户输入 → 尝试提取槽位；否则 → 问问题
@@ -349,8 +356,7 @@ def _run(session_id: str, user_input: str) -> SopStepResult:
                 if value is SKIP:
                     # 显式留空：不重试，直接跳过该槽
                     session["slots"][slot] = None
-                    session["step"] += 1
-                    session["retry_count"] = 0
+                    _advance(session)
                     user_input = None
                     flow.append({"i": session["step"] - 1, "type": "ask",
                                  "slot": slot, "outcome": "skipped"})
@@ -360,8 +366,7 @@ def _run(session_id: str, user_input: str) -> SopStepResult:
                     session["retry_count"] = session.get("retry_count", 0) + 1
                     if session["retry_count"] > sop.get("max_retry", 2):
                         session["slots"][step["slot"]] = None
-                        session["step"] += 1
-                        session["retry_count"] = 0
+                        _advance(session)
                         user_input = None
                         logger.warning("[SOP] %s slot %s abandoned after retries", sop["id"], step["slot"])
                         flow.append({"i": session["step"] - 1, "type": "ask",
@@ -381,8 +386,7 @@ def _run(session_id: str, user_input: str) -> SopStepResult:
                         _ask_text(step, "retry", ctx), session_id, by="sop", sop=sop["id"]))
                 # 提取成功，重置重试计数
                 session["slots"][step["slot"]] = value
-                session["step"] += 1
-                session["retry_count"] = 0
+                _advance(session)
                 user_input = None
                 logger.info("[SOP] %s slot %s = %s", sop["id"], step["slot"], value)
                 flow.append({"i": session["step"] - 1, "type": "ask", "slot": step.get("slot"),
@@ -402,7 +406,7 @@ def _run(session_id: str, user_input: str) -> SopStepResult:
                     logger.info("[SOP] %s action executed (%d models)", sop["id"], n_models)
                 else:
                     logger.info("[SOP] %s action executed",sop["id"])
-                session["step"] += 1
+                _advance(session)
                 continue
 
             elif step["type"] == "reply":

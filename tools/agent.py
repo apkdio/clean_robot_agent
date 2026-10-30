@@ -8,11 +8,12 @@
 import random
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Callable
 
 from tools import pending_store, trace_store
 from tools.config_tool import load_config
 from tools.log_tool import clear_log_session, get_logger, set_log_session
-from tools.model_query import format_model_query, resolve_model_query
 from tools.query_rewrite import (
     history_block as _history_block,
     last_user_message as _last_user_message,
@@ -44,6 +45,7 @@ from tools.domain_router import (
 )
 from tools import turn_recorder
 from tools.dto.executor import NotMine, Reply
+from tools.dto.request import ChatRequest
 from tools.dto.stage import Continue, Finish, StageOutcome
 from tools.turn_context import TurnContext
 from tools.turn_recorder import log_behavior as _log_behavior
@@ -195,7 +197,7 @@ def _stage_pending_clarify(ctx: TurnContext) -> StageOutcome:
         logger.warning("[Clarify] 未登记的业务 %r，退出澄清", biz)
         pending_store.close(ctx.session_id)
         return Continue()
-    result = handler(ctx.session_id, pending, ctx.query, ctx.q)
+    result = handler(ctx.session_id, ctx.query, ctx.q)
     if result.code == CLARIFY_DONE:
         return Finish(text=result.message)
     if result.code == CLARIFY_RESUME:
@@ -227,7 +229,9 @@ def _stage_active_sop(ctx: TurnContext) -> StageOutcome:
         if not symbols_only and _has_residual_request(ctx.q):
             pending_store.close(ctx.session_id)
             end_sop(ctx.session_id)
-            _log_behavior("exit_sop", via="exit_word_with_request")
+            # 退出后还要继续理解原句，这是中间动作，不占用本轮行为出口。
+            trace_store.node("sop.exit", status="hit",
+                             in_={"sop": sop_id, "via": "exit_word_with_request"})
             return Continue(prefix=f"好的，已退出「{name}」环节～")
         st = get_sop_state(ctx.session_id)
         _open_clarify(ctx.session_id, pending_store.BIZ_SOP_EXIT,
@@ -409,23 +413,6 @@ def _stage_intent_exit(ctx: TurnContext) -> StageOutcome:
     return Continue()
 
 
-def _stage_structured_query(ctx: TurnContext) -> StageOutcome:
-    """预算 / 日期 / 系列结构化直出与型号查询 SOP 补槽。"""
-    from tools.model_query import constraints_to_slots, is_model_query_intent
-
-    result = resolve_model_query(ctx.q)
-    if result:
-        turn_recorder.shadow_probe(ctx.q, ctx.session_id, "model_query", "预算/时间筛选")
-        _log_behavior("structured_answer", kind="filter", n=len(result.models))
-        return Finish(text=format_model_query(result))
-    if is_model_query_intent(ctx.q):
-        reply = _enter_sop(ctx.session_id, "model_query", ctx.q,
-                           slots=constraints_to_slots(ctx.q))
-        if reply:
-            return Finish(text=reply)
-    return Continue()
-
-
 def _stage_retrieve(ctx: TurnContext) -> StageOutcome:
     """检索：改写 → 域定向 → 双路召回 → 注入过滤。"""
     from config.word_dict_config import INJECT_RE
@@ -487,7 +474,7 @@ def _stage_retrieve(ctx: TurnContext) -> StageOutcome:
     if _behavior.get("retrieval_only", False):
         _log_behavior("retrieve_answer", mode="retrieval_only")
         src = chunks[0].metadata.get("file_name", "")
-        return Finish(text=f"📄 来源：{src}\n\n{chunks[0].page_content}")
+        return Finish(text=f"来源：{src}\n\n{chunks[0].page_content}")
     ctx.chunks = chunks
     return Continue()
 
@@ -505,65 +492,153 @@ def _stage_generate(ctx: TurnContext) -> StageOutcome:
     ))
 
 
+@dataclass(frozen=True)
+class StageSpec:
+    """一个阶段的名字、trace 节点和实现；顺序由 _STAGES 决定。"""
+
+    id: str
+    node: str
+    fn: Callable[[TurnContext], StageOutcome]
+
+
 _STAGES = (
-    _stage_normalize,
-    _stage_inject_guard,
-    _stage_danger_guard,
-    _stage_record_user,
-    _stage_emotion,
-    _stage_pending_clarify,
-    _stage_active_sop,
-    _stage_retry_reopen_sop,
-    _stage_intent,
-    _stage_safety_carry,
-    _stage_other_downgrade,
-    _stage_ops_decide,
-    _stage_ops_clarify,
-    _stage_ops_dispatch,
-    _stage_intent_exit,
-    _stage_structured_query,
-    _stage_retrieve,
-    _stage_generate,
+    StageSpec("normalize", "stage.normalize", _stage_normalize),
+    StageSpec("inject", "stage.inject", _stage_inject_guard),
+    StageSpec("danger", "stage.danger", _stage_danger_guard),
+    StageSpec("record_user", "stage.record_user", _stage_record_user),
+    StageSpec("emotion", "stage.emotion", _stage_emotion),
+    StageSpec("clarify", "stage.clarify", _stage_pending_clarify),
+    StageSpec("sop", "stage.sop", _stage_active_sop),
+    StageSpec("sop_retry", "stage.sop_retry", _stage_retry_reopen_sop),
+    StageSpec("intent", "stage.intent", _stage_intent),
+    StageSpec("safety_carry", "stage.safety_carry", _stage_safety_carry),
+    StageSpec("other_downgrade", "stage.other_downgrade", _stage_other_downgrade),
+    StageSpec("ops_decide", "stage.ops_decide", _stage_ops_decide),
+    StageSpec("ops_clarify", "stage.ops_clarify", _stage_ops_clarify),
+    StageSpec("ops_dispatch", "stage.ops_dispatch", _stage_ops_dispatch),
+    StageSpec("intent_exit", "stage.intent_exit", _stage_intent_exit),
+    StageSpec("retrieve", "stage.retrieve", _stage_retrieve),
+    StageSpec("generate", "stage.generate", _stage_generate),
 )
 
 
+def _ctx_mark(ctx: TurnContext) -> tuple:
+    """阶段前后对比用的轻量指纹，不深拷贝 chunks。"""
+    op = ctx.op_note if isinstance(ctx.op_note, dict) else {}
+    return (ctx.query, ctx.q, ctx.intent, ctx.margin, ctx.low_conf,
+            repr(ctx.intent_retry), ctx.prefer_op, ctx.enter_declined_turn,
+            op.get("state"), op.get("winner"), tuple(op.get("usable") or []),
+            id(ctx.chunks), len(ctx.chunks or ()))
+
+
+def _stage_acted(outcome: StageOutcome, changed: bool) -> bool:
+    return isinstance(outcome, Finish) or bool(outcome.prefix) or changed
+
+
+def _stage_out(outcome: StageOutcome | None, acted: bool, stream_completed=None,
+               error: BaseException = None) -> dict:
+    if outcome is None:
+        out = {"result": "error", "acted": bool(acted)}
+    elif isinstance(outcome, Continue):
+        out = {"result": "continue", "prefix_chars": len(outcome.prefix),
+               "acted": bool(acted)}
+    else:
+        out = {"result": "finish", "prefix_chars": len(outcome.prefix),
+               "text_chars": len(outcome.text or ""),
+               "stream": bool(outcome.stream), "acted": bool(acted)}
+        if stream_completed is not None:
+            out["stream_completed"] = bool(stream_completed)
+    if error is not None:
+        out["error"] = type(error).__name__
+    return out
+
+
+def _record_stage(spec: StageSpec, outcome: StageOutcome | None, started: float,
+                  acted: bool, stream_completed=None, error: BaseException = None) -> None:
+    status = "error" if error is not None else (
+        "hit" if isinstance(outcome, Finish) else "ok")
+    trace_store.stage(spec.node, status=status,
+                      ms=int((time.perf_counter() - started) * 1000),
+                      out=_stage_out(outcome, acted, stream_completed, error))
+
+
 def _run_stages(ctx: TurnContext) -> Iterator[str]:
-    """按固定顺序跑阶段：前缀先输出，Finish 即本轮出口。"""
-    for stage in _STAGES:
-        outcome = stage(ctx)
+    """按固定顺序跑阶段：前缀先输出，Finish 即本轮出口。
+
+    阶段 span 由这里统一落；流式出口要等流消费完才关，避免父节点先于 answer.verify。
+    """
+    for spec in _STAGES:
+        started = time.perf_counter()
+        before = _ctx_mark(ctx)
+        try:
+            outcome = spec.fn(ctx)
+        except Exception as exc:  # noqa: BLE001
+            _record_stage(spec, None, started, True, error=exc)
+            raise
         if isinstance(outcome, Continue):
+            _record_stage(spec, outcome, started,
+                          _stage_acted(outcome, _ctx_mark(ctx) != before))
             if outcome.prefix:
                 yield outcome.prefix
             continue
         if isinstance(outcome, Finish):
+            acted = _stage_acted(outcome, _ctx_mark(ctx) != before)
+            if outcome.stream is None:
+                _record_stage(spec, outcome, started, acted)
+                if outcome.prefix:
+                    yield outcome.prefix
+                if outcome.text:
+                    yield outcome.text
+                return
             if outcome.prefix:
                 yield outcome.prefix
             if outcome.text:
                 yield outcome.text
-            if outcome.stream is not None:
+            completed = False
+            failed = False
+            try:
                 yield from outcome.stream
+                completed = True
+            except Exception as exc:  # noqa: BLE001
+                failed = True
+                _record_stage(spec, outcome, started, acted, error=exc)
+                raise
+            finally:
+                if not failed:
+                    _record_stage(spec, outcome, started, acted,
+                                  stream_completed=completed)
             return
-        raise TypeError("阶段返回了未知 outcome：%r" % (outcome,))
+        error = TypeError("阶段返回了未知 outcome：%r" % (outcome,))
+        _record_stage(spec, None, started, True, error=error)
+        raise error
 
 
 def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
                 retry: bool = False, stop_check=None):
     """旧主链入口：保留给测试与低层调用，行为与 ask_stream 相同。"""
-    ctx = TurnContext(session_id=session_id, query=query, q=query, lng=lng, lat=lat,
-                      retry=retry, stop_check=stop_check)
-    yield from _run_stages(ctx)
+    request = ChatRequest(query=query, session_id=session_id,
+                          lng=lng, lat=lat, retry=retry)
+    yield from _run_stages(TurnContext.from_request(request, stop_check))
 
 
-def ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
-               retry: bool = False, stop_check=None):
-    """流式问答入口：开一轮 trace，交给阶段序列，收尾时落盘。"""
-    trace_store.begin_turn(session_id, query, retry=True if retry else None)
-    set_log_session(session_id)
+def ask_stream(request: ChatRequest | str, session_id: str = "default",
+               lng=None, lat=None, retry: bool = False, stop_check=None):
+    """流式问答入口：开一轮 trace，交给阶段序列，收尾时落盘。
+
+    request 传 ChatRequest 时其余参数忽略；传字符串时按旧签名构造请求。
+    """
+    if isinstance(request, ChatRequest):
+        req = request
+    else:
+        req = ChatRequest(query=request, session_id=session_id,
+                          lng=lng, lat=lat, retry=retry)
+    trace_store.begin_turn(req.session_id, req.query,
+                           retry=True if req.retry else None)
+    set_log_session(req.session_id)
     completed = False
     reply_parts = []
     try:
-        for piece in _ask_stream(query, session_id, lng, lat, retry=retry,
-                                 stop_check=stop_check):
+        for piece in _run_stages(TurnContext.from_request(req, stop_check)):
             reply_parts.append(piece)
             yield piece
         completed = not (stop_check is not None and stop_check())

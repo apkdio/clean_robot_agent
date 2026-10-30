@@ -20,6 +20,7 @@ from tools.agent import ask_stream
 from tools.chat_service import (
     acquire_turn_lock, clear_stop, release_turn_lock, set_stop, stream_turn,
 )
+from tools.dto.request import ChatRequest
 from tools.config_tool import load_config
 from tools.context_store import ensure_session_id, list_sessions
 from tools.log_tool import get_logger
@@ -221,6 +222,11 @@ def chat_stream():
     lng = data.get("lng")
     lat = data.get("lat")
     is_retry = bool(data.get("retry"))     # 前端点「重新回答」时显式带上；不靠"和上一句相同"猜
+    try:
+        chat_request = ChatRequest(query=query, session_id=session_id,
+                                   lng=lng, lat=lat, retry=is_retry)
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
 
     # 会话级锁：同一会话回答未完成时拒绝新请求（Redis SETNX + 本地降级）
     if not acquire_turn_lock(session_id):
@@ -236,9 +242,7 @@ def chat_stream():
         try:
             import json
 
-            for event in stream_turn(query, session_id, lng=lng, lat=lat,
-                                      retry=is_retry,
-                                      ask_stream_func=ask_stream):
+            for event in stream_turn(chat_request, ask_stream_func=ask_stream):
                 if event.kind == "delta":
                     yield f"data: {json.dumps(event.text, ensure_ascii=False)}\n\n"
                 elif event.kind == "error":

@@ -11,6 +11,7 @@ from test_scripts._runner import *
 from tools.dto.clarify import CLARIFY_DONE, ClarifyResult
 from tools.dto.executor import NotMine, Reply
 from tools.dto.model_query import ModelQueryResult
+from tools.dto.request import ChatRequest
 from tools.dto.sop import SopStepResult
 from tools.dto.stage import Continue, Finish
 from tools.dto.transport import TurnEvent
@@ -58,7 +59,7 @@ def test_ops_dispatch_rejects_unknown_outcome():
     agent_mod._OP_EXEC = {"bad": lambda _ctx: "not a dto"}
     agent_mod._PIPELINE_OPS = ()
     try:
-        ctx = TurnContext(session_id="t-dto", query="q", q="q")
+        ctx = TurnContext.from_request(ChatRequest("q", "t-dto"))
         ctx.op_note = {"usable": ["bad"]}
         _assert_raises(TypeError, lambda: agent_mod._stage_ops_dispatch(ctx),
                        "执行体返回错类型不能当 Reply 用")
@@ -87,14 +88,49 @@ def test_run_stages_rejects_unknown_outcome():
     from tools.turn_context import TurnContext
 
     saved = agent_mod._STAGES
-    agent_mod._STAGES = (lambda _ctx: "not an outcome",)
+    agent_mod._STAGES = (
+        agent_mod.StageSpec("normalize", "stage.normalize",
+                            lambda _ctx: "not an outcome"),
+    )
     try:
-        ctx = TurnContext(session_id="t-dto", query="q", q="q")
+        ctx = TurnContext.from_request(ChatRequest("q", "t-dto"))
         _assert_raises(TypeError,
                        lambda: list(agent_mod._run_stages(ctx)),
                        "未知阶段返回体必须报错")
     finally:
         agent_mod._STAGES = saved
+
+
+def test_chat_request():
+    _assert_eq(ChatRequest("q", "sid").query, "q", "请求体保留 query")
+    _assert_raises(ValueError, lambda: ChatRequest("", "sid"), "空 query 报错")
+    _assert_raises(ValueError, lambda: ChatRequest("q", ""), "空 session_id 报错")
+    _assert_raises(ValueError, lambda: ChatRequest("q", "sid", lng=1.0),
+                   "lng/lat 必须成对")
+    _assert_raises(ValueError, lambda: ChatRequest("q", "sid", lng=181.0, lat=0.0),
+                   "经度越界报错")
+    _assert_raises(ValueError, lambda: ChatRequest("q", "sid", lng=0.0, lat=91.0),
+                   "纬度越界报错")
+    _assert_raises(ValueError, lambda: ChatRequest("q", "sid", lng=float("nan"), lat=0.0),
+                   "非有限坐标报错")
+    _assert_raises(ValueError, lambda: ChatRequest("q", "sid", lng=True, lat=0.0),
+                   "坐标不接受 bool")
+    _assert_raises(ValueError, lambda: ChatRequest("q", "sid", retry="yes"),
+                   "retry 必须是 bool")
+
+
+def test_stage_registry():
+    """阶段注册表：id/node 唯一、实现可调用、节点标签已登记。"""
+    from config.word_dict_config import TRACE_NODE_LABELS
+    from tools.agent import _STAGES
+
+    ids = [spec.id for spec in _STAGES]
+    nodes = [spec.node for spec in _STAGES]
+    _assert_eq(len(ids), len(set(ids)), "阶段 id 不重复")
+    _assert_eq(len(nodes), len(set(nodes)), "阶段节点不重复")
+    for spec in _STAGES:
+        _assert_true(callable(spec.fn), "%s 的实现可调用" % spec.id)
+        _assert_in(spec.node, TRACE_NODE_LABELS, "%s 已登记 trace 标签" % spec.node)
 
 
 TESTS = [
@@ -106,6 +142,8 @@ TESTS = [
     test_run_stages_rejects_unknown_outcome,
     test_sop_result,
     test_model_query_result,
+    test_chat_request,
+    test_stage_registry,
 ]
 
 

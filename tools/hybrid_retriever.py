@@ -9,10 +9,12 @@
 
 from __future__ import annotations
 
+import time
 from typing import Dict, List, Tuple
 
 from langchain_core.documents import Document
 
+from tools import trace_store
 from tools.config_tool import load_config
 from tools.log_tool import get_logger
 from tools.reranker import rerank
@@ -64,13 +66,18 @@ class HybridRetriever:
         dense_results = self.dense.search(query, filter=filter)
 
         # 2. 稀疏（在 BM25 候选之上再套用过滤）
+        started = time.perf_counter()
         sparse_results = self.sparse.search(query, filter=filter)
+        trace_store.add_ms("bm25_score", started)
 
         # 3. RRF 融合
         fused = reciprocal_rank_fusion(dense_results, sparse_results, top_k=candidate_top_k)
 
         # 4. 精排：把「排名融合」升级为「语义相关性排序」
+        started = time.perf_counter()
         reranked = rerank(query, fused) if rerank_on else None
+        if rerank_on:
+            trace_store.add_ms("rerank", started)
         if reranked is not None:
             out, degraded = reranked, False
         else:

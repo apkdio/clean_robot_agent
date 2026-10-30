@@ -10,6 +10,32 @@ from test_scripts._runner import *
 
 from tools import chat_service as cs
 from tools.context_store import delete_session, get_recent
+from tools.dto.request import ChatRequest
+
+
+def test_stream_turn_accepts_chat_request():
+    """新入口直接传 ChatRequest：query/session/lng/lat/retry 不再拆参数。"""
+    sid = "11111111-2222-3333-4444-555566667780"
+    delete_session(sid)
+    from tools.context_store import set_session_title
+    set_session_title(sid, "request smoke")
+    seen = {}
+
+    def fake_ask(request, **_kwargs):
+        from tools.context_store import append_message
+
+        seen["request"] = request
+        append_message(request.session_id, "user", request.query)
+        yield "ok"
+
+    req = ChatRequest("推荐一款", sid, lng=121.5, lat=31.2, retry=True)
+    try:
+        events = list(cs.stream_turn(req, ask_stream_func=fake_ask))
+        _assert_eq([e.kind for e in events], ["delta", "meta", "done"],
+                   "ChatRequest 入口事件契约不变")
+        _assert_eq(seen["request"], req, "请求体原样传给 ask_stream")
+    finally:
+        delete_session(sid)
 
 
 def test_stop_flags_expire_in_local_mode():
@@ -39,10 +65,10 @@ def test_stream_turn_events_and_context():
     sid = "11111111-2222-3333-4444-555566667777"
     delete_session(sid)
 
-    def fake_ask(query, session_id, *_args, **_kwargs):
+    def fake_ask(request, *_args, **_kwargs):
         from tools.context_store import append_message
 
-        append_message(session_id, "user", query)
+        append_message(request.session_id, "user", request.query)
         yield "你好"
         yield "，我是扫地机器人助手"
 
@@ -106,6 +132,7 @@ def test_stream_turn_stopped_rolls_back_user():
 
 TESTS = [
     test_stop_flags_expire_in_local_mode,
+    test_stream_turn_accepts_chat_request,
     test_stream_turn_events_and_context,
     test_stream_turn_error_rolls_back_user,
     test_stream_turn_stopped_rolls_back_user,

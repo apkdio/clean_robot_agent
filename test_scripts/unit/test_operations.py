@@ -27,6 +27,7 @@ def test_probe_hits():
     _assert_in("service_point", hit, "网点词 → service_point")
     _assert_in("sop", hit, "「维修」同时撞 SOP 弱触发（真实竞争，靠表序裁决）")
     _assert("date" not in hit, "date 已并入 find_models，不再是独立操作")
+    _assert_in("find_models", ops.probe("有哪些型号"), "型号枚举词命中 find_models")
     casual = ops.probe("那你可以陪我玩过家家吗，班里这个游戏很火")
     _assert("model" not in casual, "闲聊句不命中 model（真判据比指代词表窄）")
 
@@ -97,6 +98,7 @@ def test_order_contract():
         # 型号详情（单一命中）与系列枚举各走各的
         ("云顶X2多少钱", "model"),
         ("净白系列有哪些型号", "find_models"),
+        ("有哪些型号", "find_models"),
     ]
     for query, expected in cases:
         got = ops.resolve(ops.probe(query), intent="robot", margin=0.9)
@@ -229,7 +231,7 @@ def test_note_ops_missing_section_uses_defaults():
     _assert_eq(note["scoring_status"], "ok", "分数照常落 trace")
 
 
-def test_structured_query_prefers_find_models():
+def test_find_models_prefers_over_sop():
     """明确预算/系列约束优先直出，不能被泛选购 SOP 抢先开补槽流程。"""
     saved_cfg, saved_score = ops._ops_cfg, ops.score_all
     ops._ops_cfg = lambda: {"scoring": "on", "floor": 0.5, "gap": 0.1}
@@ -245,11 +247,22 @@ def test_structured_query_prefers_find_models():
         ops._ops_cfg, ops.score_all = saved_cfg, saved_score
 
 
-TESTS = [test_registry_shape, test_probe_hits, test_resolve_three_states, test_note_ops_why_none,
+def test_operation_labels_sync():
+    """澄清别名表必须和当前操作表同步，不能留已删操作或缺新操作。"""
+    from config.word_dict_config import OPERATION_LABELS
+
+    _assert_eq(set(OPERATION_LABELS), set(ops.ORDER),
+               "OPERATION_LABELS 与 ORDER 一一对应")
+    for name, labels in OPERATION_LABELS.items():
+        _assert_true(bool(labels), "%s 至少有一个别名" % name)
+        _assert_eq(len(labels), len(set(labels)), "%s 的别名校内不重复" % name)
+
+
+TESTS = [test_registry_shape, test_operation_labels_sync, test_probe_hits, test_resolve_three_states, test_note_ops_why_none,
          test_note_ops_writes_route_and_returns_usable, test_order_contract,
          test_score_all_shape_and_determinism, test_score_all_degrades_without_dense,
          test_resolve_by_scores, test_note_ops_shadow_keeps_order,
-         test_note_ops_score_mode_orders_by_score, test_structured_query_prefers_find_models,
+         test_note_ops_score_mode_orders_by_score, test_find_models_prefers_over_sop,
          test_two_gates_score_then_vocab,
          test_cfg_opts_defaults_match_template, test_note_ops_missing_section_uses_defaults,
          test_keyphrases_shape]

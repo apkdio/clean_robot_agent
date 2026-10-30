@@ -17,7 +17,7 @@ from tools.dto.clarify import ClarifyData, ClarifyResult
 from tools.dto import clarify as _clarify_dto
 from tools.log_tool import get_logger
 from tools.safety import with_safety_hint
-from tools.sop_runtime import enter_sop, note_sop, sop_name
+from tools.sop_runtime import enter_sop, sop_name, note_sop
 from tools.turn_recorder import log_behavior
 
 logger = get_logger(name="clarify_service")
@@ -108,7 +108,7 @@ def open_clarify(session_id: str, biz: str, state: dict = None,
     return rec
 
 
-def _clarify_sop_exit(session_id: str, rec: dict, _query: str, q: str) -> ClarifyResult:
+def _clarify_sop_exit(session_id: str, _query: str, q: str) -> ClarifyResult:
     """SOP 退出确认门：答「是」退出，「不是」继续。"""
     from sops import end_sop, get_active_sop_id, get_sop_state, has_active_sop
 
@@ -130,7 +130,6 @@ def _clarify_sop_exit(session_id: str, rec: dict, _query: str, q: str) -> Clarif
 
     sop_id = st.get("sop_id") or get_active_sop_id(session_id)
     name = sop_name(sop_id)
-    trace_store.node("sop.active", status="hit", in_={"sop": sop_id})
     note_sop(session_id, sop_id)
 
     ans = match_yes_no(q)
@@ -155,7 +154,7 @@ def _clarify_sop_exit(session_id: str, rec: dict, _query: str, q: str) -> Clarif
         _EXIT_CONFIRM.format(sop=name), session_id, by="clarify"))
 
 
-def _clarify_sop_enter(session_id: str, rec: dict, query: str, _q: str) -> ClarifyResult:
+def _clarify_sop_enter(session_id: str, query: str, _q: str) -> ClarifyResult:
     """SOP 进入确认门：答「是」进引导，「不是」恢复原句直接作答。"""
     from sops import SOPS, enter_decline_hint, has_active_sop, mark_enter_declined
 
@@ -176,9 +175,15 @@ def _clarify_sop_enter(session_id: str, rec: dict, query: str, _q: str) -> Clari
     entry = st.get("entry") or query
     ans = match_yes_no(query, gate="enter")
     retry = int(rec.get("retry") or 0)
+    if ans is not None:
+        decision = "yes" if ans else "no"
+    elif retry >= 1:
+        decision = "timeout"
+    else:
+        decision = "unknown"
     trace_store.node("sop.enter_gate",
                      in_={"answer": query[:40], "entry": entry[:40]},
-                     out={"decision": {True: "yes", False: "no"}.get(ans, "unknown")})
+                     out={"decision": decision})
     if ans is True:
         pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
         reply = enter_sop(session_id, sop_id, entry, via="confirm_enter")
@@ -191,17 +196,17 @@ def _clarify_sop_enter(session_id: str, rec: dict, query: str, _q: str) -> Clari
             entry, prefix=enter_decline_hint(sop_id) + "\n\n", enter_declined=True)
     if retry >= 1:
         pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
-        mark_enter_declined(session_id, sop_id)
-        logger.info("[SOP] enter declined: %s", sop_id)
-        return ClarifyResult.resume(
-            entry, prefix=enter_decline_hint(sop_id) + "\n\n", enter_declined=True)
+        # 用户没有明确拒绝，只是两次都没答清；不写持久拒绝标记，但本轮仍跳过进入门，
+        # 否则恢复原句后会在同一轮再次问门。
+        logger.info("[SOP] enter gate timed out: %s", sop_id)
+        return ClarifyResult.resume(entry, enter_declined=True)
     pending_store.bump(session_id, pending_store.BIZ_SOP_ENTER)
     log_behavior("ask_clarify", kind="confirm_enter_retry")
     return ClarifyResult.done(with_safety_hint(
         _ENTER_CONFIRM.format(sop=sop_name(sop_id)), session_id, by="clarify"))
 
 
-def _clarify_ops(session_id: str, rec: dict, query: str, _q: str) -> ClarifyResult:
+def _clarify_ops(session_id: str, query: str, _q: str) -> ClarifyResult:
     """操作澄清：答 1/2（或操作别名）按选择重放；两次认不出取 top1。"""
     rec = pending_store.take(session_id, pending_store.BIZ_OPS_CLARIFY)
     if not rec:
@@ -212,6 +217,18 @@ def _clarify_ops(session_id: str, rec: dict, query: str, _q: str) -> ClarifyResu
 
     def _label(op):
         return (_OPERATION_LABELS.get(op) or (op,))[0]
+
+    if not opts:
+        pending_store.close(session_id, pending_store.BIZ_OPS_CLARIFY)
+        logger.warning("[Clarify] ops.clarify 没有候选，退出澄清 session=%s", session_id)
+        return ClarifyResult.drop()
+    if len(opts) == 1:
+        # 单候选不是真正的二选一；直接按唯一候选继续，避免拼出 "1=x，2=-"。
+        pending_store.close(session_id, pending_store.BIZ_OPS_CLARIFY)
+        trace_store.node("ops.clarify", status="skipped",
+                         in_={"top1": opts[0]},
+                         out={"pick": opts[0]})
+        return ClarifyResult.resume(st.get("query") or query, prefer_op=opts[0])
 
     pick = match_op_choice(query, opts)
     if pick:

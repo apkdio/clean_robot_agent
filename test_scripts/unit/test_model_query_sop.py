@@ -221,6 +221,14 @@ def test_retry_then_abandon():
     # 第 3 次失败（retry=3 > max_retry=2）→ 放弃预算槽位推进到下一问
     r = _pair(sops.base.continue_sop("s1", "还是不知道"))[0]
     _assert_eq(r, "有宠物吗？", "超重试→放弃预算槽位")
+    state = sops.base.get_sop_state("s1")
+    _assert_eq(state.get("step"), 1, "已推进到第 2 步")
+    _assert_eq(state.get("retry_count"), 0, "跨 step 时 retry_count 清零，不继承上一槽")
+    # 第 2 步第一次失败：从 0 重新计数，而不是接着第 1 步的 3
+    r = _pair(sops.base.continue_sop("s1", "不知道"))[0]
+    _assert_eq(r, "有宠物吗？", "第 2 步首次失败仍用 ask 话术")
+    state = sops.base.get_sop_state("s1")
+    _assert_eq(state.get("retry_count"), 1, "第 2 步 retry 从 1 开始")
     _cleanup()
 
 

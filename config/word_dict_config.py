@@ -136,6 +136,10 @@ CONSULT_WORDS = ["问题", "技巧", "知识", "要点", "建议", "事项", "�
 MODEL_QUERY_TRIGGER = ["推荐", "选购", "买", "预算", "想买", "性价比", "帮忙选", "挑"]
 # 弱触发：只命中这些（没有「推荐 / 想买 / 帮忙选」这类明确诉求）→ 先问一句要不要进引导（进入侧确认门）
 MODEL_QUERY_WEAK_TRIGGER = ["选购", "买", "预算", "性价比"]
+# 型号枚举类问法：没有预算/系列约束，但明确是在要型号清单。
+# 操作器用它作为 find_models 的入口兜底词；命中后仍由执行体判断是否进 SOP 补槽。
+MODEL_LIST_WORDS = ["有哪些型号", "有什么型号", "型号有哪些", "型号清单", "型号列表",
+                    "型号汇总", "哪些型号", "哪几款", "系列有哪些", "系列型号"]
 
 # 维修强触发词（去掉"修"单字）：意图分类器对"维修""怎么维修"这类短口语可能判 other，
 REPAIR_STRONG_WORDS = REPAIR_BASE_WORDS + ["水痕", "水印", "修理", "维修"]
@@ -250,7 +254,7 @@ OPERATION_KEYPHRASES = {
     "model": "XX多少钱##这款值不值得买##两个型号有什么区别##XXX的参数是什么##这个型号怎么样",
     "service_point": "附近有维修站吗##离我最近的网点在哪##寄修怎么操作##上门维修怎么约##哪个网点能修",
     "sop": "推荐一款扫地机器人##机器不转了怎么办##想买个扫地机##有预算怎么选##机器漏水了",
-    "find_models": "预算以内有哪些##按导航方式筛选##大吸力的型号##吸力大于多少的##最近发布的新款##净白系列有哪些",
+    "find_models": "预算以内有哪些##按导航方式筛选##大吸力的型号##吸力大于多少的##最近发布的新款##净白系列有哪些##有哪些型号##型号清单##哪几款",
     "domain": "保修政策是什么##耗材多久换一次##品牌历史有多久##维修渠道有哪些##日常保养要注意什么##售后政策怎么规定的",
 }
 
@@ -454,11 +458,9 @@ MODEL_QUERY_EMPTY_REPLIES = [
 OPERATION_LABELS = {
     "followup": ("继续筛选", "更便宜", "更新", "追问"),
     "model": ("型号详情", "型号", "参数", "多少钱"),
-    "series": ("系列型号", "系列", "哪几款"),
     "service_point": ("售后网点", "网点", "维修点", "寄修"),
     "sop": ("流程引导", "引导", "选购", "故障"),
-    "date": ("发布时间", "新品", "最近", "今年"),
-    "structured": ("按条件筛型号", "筛选", "预算", "参数"),
+    "find_models": ("按条件筛型号", "筛选", "预算", "系列", "参数"),
     "domain": ("知识问答", "问答", "保修", "维护", "使用"),
 }
 OPS_CLARIFY = "您是想问「{a}」还是「{b}」？回复 1 或 2 就行～"
@@ -511,6 +513,7 @@ TRACE_NODE_LABELS = {
     "route.emotion": "情绪安抚",
     "route.intent": "意图分类",
     "sop.active": "活跃 SOP",
+    "sop.exit": "退出 SOP（继续处理原句）",
     "clarify": "澄清分派",
     "clarify.open": "开澄清",
     "sop.pending": "待确认状态（旧）",
@@ -535,6 +538,23 @@ TRACE_NODE_LABELS = {
     "retrieve": "向量检索",
     "generate": "LLM 生成",
     "answer.verify": "答案校验",
+    "stage.normalize": "阶段：入口归一化",
+    "stage.inject": "阶段：注入检测",
+    "stage.danger": "阶段：危险拦截",
+    "stage.record_user": "阶段：记录用户消息",
+    "stage.emotion": "阶段：情绪安抚",
+    "stage.clarify": "阶段：待澄清",
+    "stage.sop": "阶段：活跃 SOP",
+    "stage.sop_retry": "阶段：重答重开 SOP",
+    "stage.intent": "阶段：意图分类",
+    "stage.safety_carry": "阶段：安全承接",
+    "stage.other_downgrade": "阶段：other 降级",
+    "stage.ops_decide": "阶段：操作判别",
+    "stage.ops_clarify": "阶段：操作澄清",
+    "stage.ops_dispatch": "阶段：操作派发",
+    "stage.intent_exit": "阶段：意图出口",
+    "stage.retrieve": "阶段：检索",
+    "stage.generate": "阶段：生成",
 }
 
 # 节点状态：ok=执行 / hit=命中并出口 / skipped=走到但未执行 / degraded=降级执行 / error=异常

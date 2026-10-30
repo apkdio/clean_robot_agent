@@ -93,6 +93,11 @@ def test_stop_and_stream_rejects():
                "停止请求 → 200（只置标志，不依赖流在跑）")
     _assert_eq(c.post("/api/chat/stream", json={}).status_code, 400, "缺 query → 400")
     _assert_eq(c.post("/api/chat/stream", json={"query": "   "}).status_code, 400, "空 query → 400")
+    _assert_eq(c.post("/api/chat/stream", json={"query": "测试", "lng": 1.0}).status_code, 400,
+               "lng/lat 不成对 → 400")
+    _assert_eq(c.post("/api/chat/stream",
+                      json={"query": "测试", "lng": 181.0, "lat": 0.0}).status_code, 400,
+               "坐标越界 → 400")
 
     got, release = _hold(f"lock:session:{_SID}")
     _assert_true(got, "测试占住该会话的锁")

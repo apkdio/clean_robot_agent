@@ -352,7 +352,61 @@ def test_bm25_cache_stale_on_content_change():
             _assert_eq(SparseRetriever().load(), expect, msg)
     finally:
         vector_store.get_vector_store = real_store
-        SparseRetriever._cache_path = real_path
+        SparseRetriever._cache_path = staticmethod(real_path)
+
+
+def test_dense_search_embedding_path_and_fallback():
+    """稠密检索拆分 query embedding 后，向量查询与相关性分数口径不能变。"""
+    import tools.vector_store as vs
+    from tools import trace_store
+
+    class _Emb:
+        def __init__(self):
+            self.queries = []
+
+        def embed_query(self, query):
+            self.queries.append(query)
+            return [0.1, 0.2]
+
+    class _Store:
+        def __init__(self):
+            self._embedding_function = _Emb()
+            self.calls = []
+
+        def similarity_search_by_vector_with_relevance_scores(self, vec, k, filter=None):
+            self.calls.append((vec, k, filter))
+            return [(Document(page_content="x", metadata={"file_name": "a.txt"}), 0.5)]
+
+        def _select_relevance_score_fn(self):
+            return lambda score: score + 0.25
+
+    class _LegacyStore:
+        def __init__(self):
+            self.calls = []
+
+        def similarity_search_with_relevance_scores(self, query, k, filter=None):
+            self.calls.append((query, k, filter))
+            return [(Document(page_content="y", metadata={"file_name": "b.txt"}), 0.8)]
+
+    saved_store, saved_cfg = vs.get_vector_store, vs._rag_cfg
+    saved_ms = trace_store.add_ms
+    store, legacy = _Store(), _LegacyStore()
+    trace_store.add_ms = lambda *args, **kwargs: None
+    try:
+        vs._rag_cfg = {"retrieval": {"dense_top_k": 5, "score_threshold": 0}}
+        vs.get_vector_store = lambda: store
+        out = vs.DenseRetriever().search("问题")
+        _assert_eq(out[0][1], 0.75, "向量查询的分值仍按相关性函数换算")
+        _assert_eq(store.calls, [([0.1, 0.2], 5, None)], "先 embedding 再按向量查库")
+        _assert_eq(store._embedding_function.queries, ["问题"], "query 只 embedding 一次")
+
+        vs.get_vector_store = lambda: legacy
+        out = vs.DenseRetriever().search("问题")
+        _assert_eq(out[0][1], 0.8, "无 embedding_function 时走原 API")
+        _assert_eq(legacy.calls, [("问题", 5, None)], "旧 API 调用参数不变")
+    finally:
+        vs.get_vector_store, vs._rag_cfg = saved_store, saved_cfg
+        trace_store.add_ms = saved_ms
 
 
 TESTS = [
@@ -367,6 +421,7 @@ TESTS = [
     test_matches_filter,
     test_rrf_fusion,
     test_split_numbered_entries,
+    test_dense_search_embedding_path_and_fallback,
     test_drop_without_dense_support,
     test_bm25_cache_stale_on_content_change,
     test_reranker_unavailable_returns_none,
