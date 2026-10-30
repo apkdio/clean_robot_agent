@@ -1,0 +1,144 @@
+test_scripts/unit/test_chat_service.py
+  s_40681318f5a20b::t_ff51ee3aff30c6 135
+  s_40681318f5a20b::t_aa9d7a027bb96e 68,71
+  s_40681318f5a20b::t_b662a025fd47fa 20-21
+  s_40681318f5a20b::t_a36305ce9c7624 13
+  s_40681318f5a20b::t_03db76631ab692 16-19,22-38
+tools/dto/clarify.py
+  s_40681318f5a20b::t_e2222629fd54c8 18
+webapp/app.py
+  s_40681318f5a20b::t_f56bdacf4aa038 23
+  s_40681318f5a20b::t_add34d73de2a2e 245
+  s_40681318f5a20b::t_f4c34a41b6cc7d 225-229
+tools/vector_store.py
+  s_40681318f5a20b::t_8deeb4fae2fe0f 208-224
+  s_40681318f5a20b::t_825f7d03e53160 8,14
+test_scripts/unit/test_agent_guards.py
+  s_40681318f5a20b::t_6ebf1e55780256 756
+  s_40681318f5a20b::t_0d950096570613 243-257
+  s_40681318f5a20b::t_f89888f8e9ce27 410
+  s_40681318f5a20b::t_e7d8d7dab0cbc9 404
+  s_40681318f5a20b::t_5201a8a1d6ca18 98-129
+  s_40681318f5a20b::t_486b9b5083bbe3 427-430
+  s_40681318f5a20b::t_bd2db65b5f7ea4 393-403,405-409,411-414,417-423
+  s_40681318f5a20b::t_bb99d640dd3d51 424-426,431-445
+  s_40681318f5a20b::t_4e9219a18bfede 761
+  s_40681318f5a20b::t_c3c8519e2da148 755
+  s_40681318f5a20b::t_24d2c8fd6fed7f 749
+  s_40681318f5a20b::t_68112d1a9fd846 261
+  s_40681318f5a20b::t_74a6628f1612b7 415-416
+  s_40681318f5a20b::t_c1cf00b14e850f 258-260,262-289
+  s_40681318f5a20b::t_03c623af0ffdac 760
+README.md
+  s_40681318f5a20b::t_43ec6714ec2a78 14
+  s_40681318f5a20b::t_ac6fa24ed794f6 93
+  s_40681318f5a20b::t_64cf457ebd0155 132-133
+  s_40681318f5a20b::t_e23e8767f6259c 131
+  s_40681318f5a20b::t_54879809b9d903 430-468
+  s_40681318f5a20b::t_551e9513aa2a44 166
+tools/operations.py
+  s_40681318f5a20b::t_34671c51dabca2 41-42,44-46
+  s_40681318f5a20b::t_a6f427939fe79c 210,220-221
+sops/base.py
+  s_40681318f5a20b::t_8b6286267311e0 97-102
+  s_40681318f5a20b::t_0b10500ce3883c 359
+  s_40681318f5a20b::t_63a4e970ca85bc 409
+  s_40681318f5a20b::t_b52258ee3f86d1 369
+  s_40681318f5a20b::t_f444809ba2e699 337
+  s_40681318f5a20b::t_99b31b2df1e1c4 389
+  s_40681318f5a20b::t_c6d9736fca24e8 82
+  s_40681318f5a20b::t_2ca2785f74a9d8 346
+test_scripts/unit/test_dto_contracts.py
+  s_40681318f5a20b::t_488a9327a41324 91-94,96,104-111
+  s_321753db235424::t_92198d962cbd88 122-135
+  s_321753db235424::t_69873b284e10f2 112-119
+  s_40681318f5a20b::t_a38587ad841fa9 14
+  s_40681318f5a20b::t_58f54d372b8f10 62
+  s_40681318f5a20b::t_23cbb1d8c89cf5 145
+  s_321753db235424::t_bc642b42e3ff1c 146
+tools/turn_context.py
+  s_40681318f5a20b::t_1ef35f02077fdf 11,21,34-55
+tools/agent.py
+  s_40681318f5a20b::t_4339f014dc5c88 232-234
+  s_40681318f5a20b::t_3da03257606d87 200
+  s_40681318f5a20b::t_f39d2721eb8ce1 48
+  h_26b9a38f4942dd 477
+  s_40681318f5a20b::t_c2862ef9a9b581 538,540-544,548
+  s_40681318f5a20b::t_8e602ac8c4829a 586-592,597-599,601-609
+  s_40681318f5a20b::t_3b14d8b76876dc 556
+  s_40681318f5a20b::t_2fdc0c812e43d6 11-12
+  s_40681318f5a20b::t_7c49507204d588 495-503,505-521,525-535,539,545-547,549-555,557-564,566-577,579-580,585,611-613,619-621,624-637,641
+test_scripts/unit/test_retrieval.py
+  s_321753db235424::t_abad492b8f4feb 424
+  s_40681318f5a20b::t_2220a26c4fc010 355
+  s_321753db235424::t_e3cca3bdb1fb4d 358-409
+tools/hybrid_retriever.py
+  s_40681318f5a20b::t_482e5f663df6b0 12,17
+  s_40681318f5a20b::t_e2ddc61e9bec50 69,71,77,79-80
+config/word_dict_config.py
+  s_40681318f5a20b::t_1a9f1eb7b37a3a 257
+  s_40681318f5a20b::t_9d2058ffba4589 463
+  s_40681318f5a20b::t_4c4b68a08ef162 516
+  s_40681318f5a20b::t_c8f7808116d58f 139-142
+  s_40681318f5a20b::t_b47f0ab4c06817 541-557
+tools/clarify_service.py
+  s_40681318f5a20b::t_e8ef09f3b73d82 221-232
+  h_26b9a38f4942dd 20
+  s_40681318f5a20b::t_cc48be41b491ed 157,178-183,186,199-202,209
+  s_40681318f5a20b::t_40c5d185bf6979 111
+test_scripts/unit/test_model_query_sop.py
+  s_40681318f5a20b::t_bd060520764da5 224-231
+tools/dto/request.py
+  s_40681318f5a20b::t_580c72cc4f3867 1-34
+tools/dto/__init__.py
+  s_40681318f5a20b::t_a56887344fb456 22
+  s_40681318f5a20b::t_25ba370a897db0 11
+test_scripts/unit/test_operations.py
+  s_40681318f5a20b::t_08b3172b1f3d64 234
+  s_40681318f5a20b::t_0ca7ea9162873f 101
+  s_40681318f5a20b::t_a99bdd8abe73a2 30
+  s_40681318f5a20b::t_3ebc72cc6a8ac9 250-261
+  s_40681318f5a20b::t_f4698b8e2d15e4 265
+test_scripts/eval/test_behavior_tags.py
+  s_40681318f5a20b::t_65381ca5fc97ca 909
+  s_40681318f5a20b::t_b81b7c17e8a183 326-364
+  s_40681318f5a20b::t_4f259097611df1 877,880
+  s_40681318f5a20b::t_0dbd33c902285b 281-325
+  s_40681318f5a20b::t_0ff430d220d95d 908
+tools/trace_store.py
+  s_40681318f5a20b::t_86922f25540ad6 454-471
+tools/chat_service.py
+  s_40681318f5a20b::t_8b599bc9f3d258 10
+  s_40681318f5a20b::t_af273bd7ea9070 119-121,125,127-131,135-136,142,148,152,158,162,168
+test_scripts/unit/test_webapp_routes.py
+  s_40681318f5a20b::t_32149de6cc683b 96-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "e1f3fccd6b67ebb67cec76ee59c4871dce0d59ee",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_321753db235424": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_vqwohz01c4pd",
+        "model": "auto(free)"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    },
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "auto(free)"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
