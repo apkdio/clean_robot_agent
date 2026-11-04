@@ -12,6 +12,7 @@ from tools import trace_store
 from tools.dto.sop import SopStepResult
 from tools.log_tool import get_logger
 from tools.safety import with_safety_hint
+from tools.state_store import StateStore
 from config.word_dict_config import (
     AFTERSALES_WORDS,BUY_WORDS, CONSULT_WORDS, BRAND_WORDS,
     ENTER_CONFIRM, LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS, PRICIER_WORDS, NEWER_WORDS, OLDER_WORDS,
@@ -82,18 +83,20 @@ def get_last_recommend(session_id: str):
     return get_last_models(session_id)
 
 
-# 当前活跃会话，按 session_id 隔离（Redis 可用时存 Redis，否则本地降级）
+# 当前活跃会话，按 session_id 隔离；Redis + 本地双写由 StateStore 统一处理
 _sessions = {}
 # 状态形如 {"sop_id": xxx, "def_ver": xxx, "step": xxx, "slots": {xxx},
 #           "slot_status": {slot: skipped|dropped|filled}, "retry_count": xxx, "result": {xxx}}
 # slot_status 只在 ask 步出现；dropped 表示重试耗尽，不能当成用户主动跳过。
 # retry_count 只对当前 step 有效；所有推进都走 _advance()，跨 step 自动清零。
-# （无 Redis 的降级态另带 "ts"，读时按 sop_ttl 校验过期；Redis 在时不带，由 Redis 自己过期）
 _finished = {}  # session_id -> 刚收尾的那份状态（形状同 _sessions，供「重新回答」判断 last_sop，取走即清）
+_session_store = StateStore("sop:session:", lambda: _sessions, lambda: _sop_ttl())
+_finished_store = StateStore("sop:finished:", lambda: _finished, lambda: _sop_ttl())
 
 
-def _session_key(session_id: str) -> str:
-    return f"sop:session:{session_id}"
+def _sop_ttl() -> int:
+    from tools.redis_store import sop_ttl
+    return sop_ttl()
 
 
 def make_session(sop_id: str, step: int = 0, slots: dict = None, retry_count: int = 0) -> dict:
@@ -120,19 +123,7 @@ def _load_session(session_id: str):
     状态的 step 是步骤下标、slots 是槽位键名，定义一动就会指向别的步骤，续跑必然串场；
     这类状态一律作废，本轮按「没有活跃 SOP」正常作答，并留一条 WARNING 便于对账。
     """
-    from tools.redis_store import get_redis, json_loads, sop_ttl
-    r = get_redis()
-    if r is not None:
-        raw = r.get(_session_key(session_id))
-        session = json_loads(raw) if raw else None
-    else:
-        # 降级的内存态没有 Redis 的 TTL，得自己算：ts 每轮重盖，与 SET ... EX 一样是滑动窗口
-        session = _sessions.get(session_id)
-        if session and time.time() - float(session.get("ts") or 0) > sop_ttl():
-            logger.warning("[SOP] 本地降级会话已过期，作废：sop=%s（session=%s）",
-                           session.get("sop_id"), session_id)
-            _delete_session(session_id)
-            return None
+    session = _session_store.get(session_id)
     if session and not _same_def(session):
         cur = (SOPS.get(session.get("sop_id") or "") or {}).get("def_ver") or "未注册"
         logger.warning("[SOP] SOP 定义已变，作废旧状态：sop=%s 状态指纹=%s 现定义=%s（session=%s）",
@@ -141,34 +132,25 @@ def _load_session(session_id: str):
         trace_store.node("sop.active", status="skipped", by="stale_def",
                          in_={"sop": session.get("sop_id"),
                               "def": "%s→%s" % (session.get("def_ver") or "无", cur)})
-        _delete_session(session_id)
+        _session_store.delete(session_id)
         return None
     return session
 
 
 def _save_session(session_id: str, session: dict):
-    """写会话状态。Redis 可用写 Redis（带 TTL），否则写本地 _sessions。"""
-    from tools.redis_store import get_redis, json_dumps, sop_ttl
-    r = get_redis()
-    if r is not None:
-        r.set(_session_key(session_id), json_dumps(session), ex=sop_ttl())
-    else:
-        session["ts"] = time.time()      # 降级态自己算过期时间（Redis 路径由 Redis 管）
-        _sessions[session_id] = session
+    """写会话状态；StateStore 负责 Redis + 本地双写和过期。"""
+    session["ts"] = time.time()
+    _session_store.set(session_id, session)
 
 
 def _delete_session(session_id: str):
     """删除会话状态。"""
-    from tools.redis_store import get_redis
-    r = get_redis()
-    if r is not None:
-        r.delete(_session_key(session_id))
-    _sessions.pop(session_id, None)
+    _session_store.delete(session_id)
 
 
 def pop_finished(session_id: str) -> dict:
     """取走「刚收尾」的 SOP 状态（含槽位与 action 结果），给 trace 用；没取过就是空 dict。"""
-    return _finished.pop(session_id, None) or {}
+    return _finished_store.pop(session_id) or {}
 
 
 def has_active_sop(session_id: str) -> bool:
@@ -196,9 +178,9 @@ def _end(session_id: str):
     _delete_session(session_id)
 
 
-def end_sop(session_id: str):
-    """主动结束指定会话的 SOP（用户说「算了/退出」等场景）。"""
-    s = _load_session(session_id)
+def end_sop(session_id: str, state: dict = None):
+    """主动结束指定会话的 SOP（可传入本轮已加载的快照，避免重复读取）。"""
+    s = _load_session(session_id) if state is None else state
     if s:
         logger.info(f"[SOP] SOP End:{s['sop_id']}")
     _end(session_id)
@@ -228,11 +210,13 @@ def start_sop(session_id: str, sop_id: str, query: str, slots: dict = None) -> S
     return result
 
 
-def continue_sop(session_id: str, query: str) -> SopStepResult | None:
-    """继续指定会话的 SOP；无活跃 SOP 时返回 None。"""
-    if not has_active_sop(session_id):
-        return None
-    return _run(session_id, query)
+def continue_sop(session_id: str, query: str, state: dict = None) -> SopStepResult:
+    """继续指定会话的 SOP；无活跃 SOP 时返回 noop，不再返回 None。"""
+    if state is None:
+        state = _load_session(session_id)
+    if state is None:
+        return SopStepResult("noop")
+    return _run(session_id, query, session=state)
 
 
 def match_sop(query: str, sop_id: str = None, log: bool = True):
@@ -325,9 +309,10 @@ def _ask_text(step: dict, key: str, ctx: dict) -> str:
         return text
 
 
-def _run(session_id: str, user_input: str) -> SopStepResult:
-    """执行/推进指定会话的 SOP。"""
-    session = _load_session(session_id)
+def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResult:
+    """执行/推进指定会话的 SOP；session 可传入本轮已加载的快照。"""
+    if session is None:
+        session = _load_session(session_id)
     if session is None:
         return SopStepResult("noop")
     sop = SOPS[session["sop_id"]]
@@ -438,7 +423,7 @@ def _run(session_id: str, user_input: str) -> SopStepResult:
                                    sop["id"], step.get("id"))
                     reply = step.get("fallback") or SOP_EMPTY_REPLY_FALLBACK
                 ended = True
-                _finished[session_id] = session
+                _finished_store.set(session_id, session)
                 _end(session_id)
                 logger.info("[SOP] %s finished", sop["id"])
                 return SopStepResult("reply", reply, done=True)

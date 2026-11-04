@@ -218,18 +218,19 @@ def _stage_pending_clarify(ctx: TurnContext) -> StageOutcome:
 
 def _stage_active_sop(ctx: TurnContext) -> StageOutcome:
     """SOP 会话：有活跃 SOP 时继续该流程，不经过意图路由。"""
-    from sops import continue_sop, end_sop, get_active_sop_id, get_sop_state, has_active_sop
+    from sops import continue_sop, end_sop, get_sop_state
 
-    if not has_active_sop(ctx.session_id):
+    st = get_sop_state(ctx.session_id)
+    if not st:
         return Continue()
-    sop_id = get_active_sop_id(ctx.session_id)
+    sop_id = st.get("sop_id")
     name = _sop_name(sop_id)
     trace_store.node("sop.active", status="hit", in_={"sop": sop_id})
-    _note_sop(ctx.session_id, sop_id)
+    _note_sop(ctx.session_id, sop_id, state=st)
 
     if ctx.q.strip() == "0":
         pending_store.close(ctx.session_id)
-        end_sop(ctx.session_id)
+        end_sop(ctx.session_id, state=st)
         _log_behavior("exit_sop", via="zero")
         return Finish(text=f"好的，已退出「{name}」环节～")
 
@@ -237,12 +238,11 @@ def _stage_active_sop(ctx: TurnContext) -> StageOutcome:
         symbols_only = _is_symbols_only(ctx.q)
         if not symbols_only and _has_residual_request(ctx.q):
             pending_store.close(ctx.session_id)
-            end_sop(ctx.session_id)
+            end_sop(ctx.session_id, state=st)
             # 退出后还要继续理解原句，这是中间动作，不占用本轮行为出口。
             trace_store.node("sop.exit", status="hit",
                              in_={"sop": sop_id, "via": "exit_word_with_request"})
             return Continue(prefix=f"好的，已退出「{name}」环节～")
-        st = get_sop_state(ctx.session_id)
         _open_clarify(ctx.session_id, pending_store.BIZ_SOP_EXIT,
                       state={"sop_id": sop_id, "step": st.get("step"),
                              "slots": st.get("slots") or {}},
@@ -250,10 +250,10 @@ def _stage_active_sop(ctx: TurnContext) -> StageOutcome:
         _log_behavior("ask_clarify",
                       kind="confirm_exit_symbols" if symbols_only else "confirm_exit")
         return Finish(text=_EXIT_CONFIRM.format(sop=name))
-    result = continue_sop(ctx.session_id, ctx.query)
+    result = continue_sop(ctx.session_id, ctx.query, state=st)
     if result is None or result.kind == "noop":
         return Continue()
-    _note_sop(ctx.session_id, sop_id, done=bool(result.done))
+    _note_sop(ctx.session_id, sop_id, state=st, done=bool(result.done))
     if result.reply:
         _log_behavior("sop_step")
     else:

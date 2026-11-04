@@ -161,7 +161,7 @@ def test_start_and_continue():
 
 def test_continue_no_session():
     _cleanup()
-    _assert(sops.base.continue_sop("s1", "随便") is None, "无会话→None")
+    _assert_eq(sops.base.continue_sop("s1", "随便").kind, "noop", "无会话→noop")
 
 
 def test_end_sop():
@@ -320,7 +320,8 @@ def test_unknown_sop_id_dropped():
     sops.base.register(_TEST_SOP)
     sops.base._start("s1", "nonexistent_sop")
     _assert(not sops.base.has_active_sop("s1"), "旧状态被作废")
-    _assert_eq(sops.base.continue_sop("s1", None), None, "continue_sop 返回 None，本轮回落普通作答")
+    _assert_eq(sops.base.continue_sop("s1", None).kind, "noop",
+               "continue_sop 返回 noop，本轮回落普通作答")
     _cleanup()
 
 
@@ -336,7 +337,8 @@ def test_stale_def_state_dropped():
     sops.base.register(changed)
     _assert(not sops.base.has_active_sop("s1"), "定义变了 → 旧状态作废")
     _assert(sops.base._load_session("s1") is None, "Redis 里那份也已被删掉")
-    _assert_eq(sops.base.continue_sop("s1", "1000以内"), None, "不再拿旧下标续跑")
+    _assert_eq(sops.base.continue_sop("s1", "1000以内").kind, "noop",
+               "不再拿旧下标续跑")
     sops.base.register(_TEST_SOP)          # 还原注册表，别影响后面的用例
     _cleanup()
 
@@ -411,7 +413,8 @@ def test_step_exception_ends_sop():
     _assert(node is not None, "trace 里有 sop.step_error 节点（能看出是第几步、哪个步骤炸的）")
     _assert_eq((node or {}).get("status"), "error", "节点状态是 error")
     _assert_eq(((node or {}).get("in") or {}).get("type"), "action", "in 带失败步骤的类型")
-    _assert_eq(sops.base.continue_sop("s1", "再说一遍"), None, "下一轮不再停在同一步重复失败")
+    _assert_eq(sops.base.continue_sop("s1", "再说一遍").kind, "noop",
+               "下一轮不再停在同一步重复失败")
     _cleanup()
 
 

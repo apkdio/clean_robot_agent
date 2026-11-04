@@ -343,6 +343,38 @@ def test_empty_sop_reply_still_has_branch():
         _reset_session(sid)
 
 
+def test_active_sop_reads_state_once():
+    """活跃 SOP 轮次只读一次状态快照，后续 continue/note 复用。"""
+    import sops.base
+    from sops import end_sop, start_sop
+    from tools import trace_store
+    from tools.agent import _stage_active_sop
+    from tools.dto.request import ChatRequest
+    from tools.turn_context import TurnContext
+
+    sid = "t-sop-one-load"
+    end_sop(sid)
+    _reset_session(sid)
+    start_sop(sid, "model_query", "x")
+    saved = sops.base._load_session
+    calls = []
+
+    def wrapped(session_id):
+        calls.append(session_id)
+        return saved(session_id)
+
+    sops.base._load_session = wrapped
+    try:
+        trace_store.begin_turn(sid, "1000以内")
+        outcome = _stage_active_sop(TurnContext.from_request(ChatRequest("1000以内", sid)))
+        trace_store.end_turn(reply=getattr(outcome, "text", "") or "")
+        _assert_eq(len(calls), 1, "一轮活跃 SOP 只加载一次状态")
+    finally:
+        sops.base._load_session = saved
+        end_sop(sid)
+        _reset_session(sid)
+
+
 def test_safety_carry_main_text():
     """主链路硬承接仍是独立出口，文案改为软警示。"""
     from sops import end_sop
@@ -815,6 +847,7 @@ TESTS = [
     test_exit_with_residual_uses_trace_not_behavior,
     test_stopped_before_retrieval_records_node,
     test_empty_sop_reply_still_has_branch,
+    test_active_sop_reads_state_once,
     test_safety_carry_main_text,
     test_ops_clarify_roundtrip,
     test_clarify_open_trace,

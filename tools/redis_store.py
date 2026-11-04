@@ -16,6 +16,24 @@ logger = get_logger(name="redis_store")
 
 _redis = None
 _enabled = None  # None=未探测，True/False=是否可用
+_probe_failed_at = 0.0
+_PROBE_INTERVAL = 5.0
+
+
+def reset_probe() -> None:
+    """丢弃当前客户端并允许下一次重新探测（测试/配置变更用）。"""
+    global _redis, _enabled, _probe_failed_at
+    _redis = None
+    _enabled = None
+    _probe_failed_at = 0.0
+
+
+def mark_unavailable() -> None:
+    """运行中连接异常：丢弃客户端，等退避后重新探测。"""
+    global _redis, _enabled, _probe_failed_at
+    _redis = None
+    _enabled = False
+    _probe_failed_at = time.time()
 
 
 def _load_config() -> dict:
@@ -27,10 +45,12 @@ def _load_config() -> dict:
 
 
 def get_redis():
-    """懒加载 Redis 连接（单例）。包未安装或连接失败都返回 None（降级本地内存）。"""
-    global _redis, _enabled
+    """懒加载 Redis 连接（单例）。探测失败后按退避重试，持续不可用则降级本地。"""
+    global _redis, _enabled, _probe_failed_at
     if _enabled is False:
-        return None
+        if time.time() - _probe_failed_at < _PROBE_INTERVAL:
+            return None
+        _enabled = None
     if _redis is None:
         cfg = _load_config()
         try:
@@ -51,10 +71,12 @@ def get_redis():
         except ImportError as e:
             _redis = None
             _enabled = False
+            _probe_failed_at = time.time()
             logger.warning("[Redis] package not installed, fallback to local: %s", e)
         except Exception as e:
             _redis = None
             _enabled = False
+            _probe_failed_at = time.time()
             logger.warning("[Redis] unavailable, fallback to local: %s", e)
     return _redis
 

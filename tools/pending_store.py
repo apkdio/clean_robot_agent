@@ -13,7 +13,7 @@
 记录形状：{"v": 1, "biz": ..., "ts": ..., "retry": 0, "state": {...}, "data": {...}}
   - `state`：业务方给的当前状态（SOP 的 step / slots、原问题等），本模块原样存取、不做解释；
   - `data`：澄清展示用的载荷（选项、标签等）。
-Redis 存 clarify:{session_id}（TTL 见 redis_store.clarify_ttl）；无 Redis 降级内存并校验时间戳。
+Redis + 本地双写与过期由 StateStore 统一处理。
 """
 
 from __future__ import annotations
@@ -22,7 +22,8 @@ import time
 from typing import Dict, Optional
 
 from tools.log_tool import get_logger
-from tools.redis_store import clarify_ttl, get_redis, json_dumps, json_loads
+from tools.redis_store import clarify_ttl, get_redis, json_dumps
+from tools.state_store import StateStore
 
 logger = get_logger(name="pending_store")
 
@@ -30,39 +31,22 @@ BIZ_SOP_EXIT = "sop.exit"
 BIZ_SOP_ENTER = "sop.enter"
 BIZ_OPS_CLARIFY = "ops.clarify"
 
-# 无 Redis 时的降级存储（带 ts，读时校验是否过期）
+# 无 Redis 时的降级存储（StateStore 负责双写与过期）
 _sessions: Dict[str, dict] = {}
-
-
-def _key(session_id: str) -> str:
-    return "clarify:%s" % session_id
+_state_store = StateStore("clarify:", lambda: _sessions, lambda: clarify_ttl(),
+                          redis_getter=lambda: get_redis())
 
 
 def _write(session_id: str, state: dict) -> dict:
     state["v"] = 1
     state["ts"] = time.time()
-    r = get_redis()
-    if r is not None:
-        r.set(_key(session_id), json_dumps(state), ex=clarify_ttl())
-    else:
-        _sessions[session_id] = state
+    _state_store.set(session_id, state)
     return state
 
 
 def peek(session_id: str) -> dict | None:
     """读当前澄清状态；不存在或已过期返回 None。"""
-    r = get_redis()
-    if r is not None:
-        raw = r.get(_key(session_id))
-        return json_loads(raw) if raw else None
-    item = _sessions.get(session_id)
-    if item is None:
-        return None
-    if time.time() - float(item.get("ts") or 0) > clarify_ttl():
-        _sessions.pop(session_id, None)
-        logger.info("[Clarify] expired (memory fallback) session=%s", session_id)
-        return None
-    return item
+    return _state_store.get(session_id)
 
 
 def ask(session_id: str, biz: str, state: dict = None, **data) -> dict:
@@ -113,10 +97,7 @@ def close(session_id: str, biz: str = None) -> bool:
         if state and state.get("biz") != biz:
             logger.warning("[Clarify] 拒绝关闭别人的澄清：期望 %s，当前 %s", biz, state.get("biz"))
             return False
-    r = get_redis()
-    if r is not None:
-        r.delete(_key(session_id))
-    _sessions.pop(session_id, None)
+    _state_store.delete(session_id)
     return True
 
 

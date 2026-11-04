@@ -104,6 +104,25 @@ def test_stream_turn_error_rolls_back_user():
         delete_session(sid)
 
 
+def test_stream_turn_clears_stop_after_finish():
+    """停止标志只属于当前轮；stream_turn 退出时必须清掉，避免下一轮误停。"""
+    sid = "11111111-2222-3333-4444-555566667781"
+    delete_session(sid)
+    cs.clear_stop(sid)
+    cs.set_stop(sid)
+
+    def fake_ask(*_args, **_kwargs):
+        yield "半截"
+
+    try:
+        events = list(cs.stream_turn("边刷多久换一次", sid, ask_stream_func=fake_ask))
+        _assert_eq([e.kind for e in events], ["stopped"], "停止请求命中当前轮")
+        _assert_false(cs.is_stopped(sid), "轮次结束后停止标志已清理")
+    finally:
+        cs.clear_stop(sid)
+        delete_session(sid)
+
+
 def test_stream_turn_stopped_rolls_back_user():
     """停止轮：先吐 delta，再发 stopped 事件并回滚 user。"""
     sid = "11111111-2222-3333-4444-555566667779"
@@ -136,6 +155,7 @@ TESTS = [
     test_stream_turn_events_and_context,
     test_stream_turn_error_rolls_back_user,
     test_stream_turn_stopped_rolls_back_user,
+    test_stream_turn_clears_stop_after_finish,
 ]
 
 

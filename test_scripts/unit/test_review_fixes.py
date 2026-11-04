@@ -20,7 +20,7 @@ def test_redis_missing_package_degrades():
     import builtins
     from tools import redis_store as rs
 
-    saved = (rs._redis, rs._enabled)
+    saved = (rs._redis, rs._enabled, rs._probe_failed_at)
     rs._redis, rs._enabled = None, None
     real_import = builtins.__import__
 
@@ -32,10 +32,10 @@ def test_redis_missing_package_degrades():
     builtins.__import__ = _no_redis
     try:
         _assert(rs.get_redis() is None, "包缺失 → 返回 None 走本地内存降级")
-        _assert(rs._enabled is False, "探测失败后置 False，后续不再反复重试")
+        _assert(rs._enabled is False, "探测失败后置 False，退避期内不重试")
     finally:
         builtins.__import__ = real_import
-        rs._redis, rs._enabled = saved
+        rs._redis, rs._enabled, rs._probe_failed_at = saved
 
 
 # ──────────────────────────────────────────────────────────────

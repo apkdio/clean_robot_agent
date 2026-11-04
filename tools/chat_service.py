@@ -10,46 +10,32 @@ from typing import Callable, Iterator
 from tools.dto.request import ChatRequest
 from tools.dto.transport import TurnEvent
 from tools.log_tool import get_logger
+from tools.state_store import StateStore
 
 logger = get_logger(name="chat_service")
 
 _STOP_TTL = 120
 _stop_flags = {}
+_stop_store = StateStore("stop:", lambda: _stop_flags, lambda: _STOP_TTL)
 
 
 def set_stop(session_id: str) -> None:
-    """设置停止标志（Redis + 本地降级，均带 TTL）。"""
-    from tools.redis_store import get_redis
-
-    r = get_redis()
-    if r is not None:
-        r.set(f"stop:{session_id}", "1", ex=_STOP_TTL)
-    _stop_flags[session_id] = time.time() + _STOP_TTL
+    """设置停止标志；StateStore 负责 Redis + 本地双写与 TTL。"""
+    _stop_store.set(session_id, True)
 
 
 def is_stopped(session_id: str) -> bool:
     """查询停止标志；过期即清理，不误杀下一轮。"""
-    from tools.redis_store import get_redis
-
-    r = get_redis()
-    if r is not None:
-        return bool(r.exists(f"stop:{session_id}"))
-    expire = _stop_flags.get(session_id)
-    if expire is None:
-        return False
-    if expire <= time.time():
-        _stop_flags.pop(session_id, None)
-        return False
-    return True
+    value = _stop_store.get(session_id)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if value <= time.time():
+            _stop_store.delete(session_id)
+            return False
+    return bool(value)
 
 
 def clear_stop(session_id: str) -> None:
-    from tools.redis_store import get_redis
-
-    r = get_redis()
-    if r is not None:
-        r.delete(f"stop:{session_id}")
-    _stop_flags.pop(session_id, None)
+    _stop_store.delete(session_id)
 
 
 def make_stop_probe(session_id: str, min_interval: float = 0.15) -> Callable[[], bool]:
@@ -98,8 +84,8 @@ def _finish_turn(session_id: str, query: str, answer: str) -> dict:
 
     append_message(session_id, "assistant", answer,
                    models=get_last_recommend(session_id))
-    meta = {"branch": "", "sop_active": bool(has_active_sop(session_id)),
-            "anchor": None}
+    sop_active = bool(has_active_sop(session_id))
+    meta = {"branch": "", "sop_active": sop_active, "anchor": None}
     try:
         if not get_session_title(session_id):
             set_session_title(session_id, generate_session_title(query, answer))
@@ -108,7 +94,7 @@ def _finish_turn(session_id: str, query: str, answer: str) -> dict:
     try:
         turn = trace_store.find_turn(session_id, query) or {}
         meta = {"branch": turn.get("branch") or "",
-                "sop_active": bool(has_active_sop(session_id)),
+                "sop_active": sop_active,
                 "anchor": {"date": turn.get("date"),
                            "turn_index": turn.get("turn_index")}}
     except Exception as e:  # noqa: BLE001
@@ -166,3 +152,5 @@ def stream_turn(request: ChatRequest | str, session_id: str = "default",
     finally:
         if not completed:
             _rollback_user(sid)
+        # 无论正常结束、停止、异常还是断连，都清掉本轮停止标志，避免下一轮误停。
+        clear_stop(sid)

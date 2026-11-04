@@ -31,11 +31,12 @@ def has_residual_request(query: str) -> bool:
     return len(rest) >= 4 and not rest.isdigit()
 
 
-def note_sop(session_id: str, sop_id: str = None, **extra) -> None:
+def note_sop(session_id: str, sop_id: str = None, state: dict = None, **extra) -> None:
     """把 SOP 进度记进 trace：本轮开始时停在哪、槽位填了什么；本轮内收尾的补上结果。"""
     from sops import get_sop_state, pop_finished
 
-    state = get_sop_state(session_id) or pop_finished(session_id)
+    if state is None:
+        state = get_sop_state(session_id) or pop_finished(session_id)
     fields = dict(extra)
     if state:
         slots = state.get("slots") or {}
