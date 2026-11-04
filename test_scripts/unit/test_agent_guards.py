@@ -287,6 +287,62 @@ def test_exit_with_residual_uses_trace_not_behavior():
         _reset_session(sid)
 
 
+def test_stopped_before_retrieval_records_node():
+    """停止发生在检索前：不伪造回答，但 trace 要能看出是 stopped。"""
+    from tools import trace_store
+    from tools.agent import _stage_retrieve
+    from tools.dto.request import ChatRequest
+    from tools.turn_context import TurnContext
+    from test_scripts import trace_reader
+
+    sid = "t-stop-before-retrieve"
+    _reset_session(sid)
+    reset_trace(sid)
+    trace_store.begin_turn(sid, "边刷多久换一次")
+    outcome = _stage_retrieve(TurnContext.from_request(
+        ChatRequest("边刷多久换一次", sid), stop_check=lambda: True))
+    trace_store.end_turn(aborted=True)
+    row = trace_reader.load(trace_store._path(sid))[-1]
+    node = next((n for n in (row.get("path") or []) if n.get("node") == "retrieve"), None)
+    _assert_eq(getattr(outcome, "text", None), "", "停止不生成回答")
+    _assert(node is not None, "停止轮留下 retrieve 节点")
+    _assert_eq(node.get("status"), "skipped", "节点标记 skipped")
+    _assert_eq(node.get("by"), "stopped", "能区分用户停止")
+    _reset_session(sid)
+
+
+def test_empty_sop_reply_still_has_branch():
+    """SOP reply 被清空时，base 要兜底，agent 也要留下行为出口。"""
+    from sops import end_sop
+    from sops.base import _save_session, make_session
+    import sops.repair
+    from tools import trace_store
+    from tools.agent import _stage_active_sop
+    from tools.dto.request import ChatRequest
+    from tools.turn_context import TurnContext
+    from test_scripts import trace_reader
+
+    sid = "t-empty-sop-branch"
+    end_sop(sid)
+    _reset_session(sid)
+    orig = sops.repair.REPAIR_SOP["steps"][1]["action"]
+    fallback = sops.repair.REPAIR_SOP["steps"][2]["fallback"]
+    sops.repair.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"answer": ""}
+    try:
+        _save_session(sid, make_session("repair", step=1, slots={"symptom": "机器人不动"}))
+        trace_store.begin_turn(sid, "继续")
+        outcome = _stage_active_sop(TurnContext.from_request(ChatRequest("继续", sid)))
+        reply = getattr(outcome, "text", "") or ""
+        trace_store.end_turn(reply=reply)
+        row = trace_reader.load(trace_store._path(sid))[-1]
+        _assert_in(fallback, reply, "空 reply 走步骤级兜底，不发送空串")
+        _assert_eq(row.get("branch"), "sop_step", "空 reply 仍留下唯一行为出口")
+    finally:
+        sops.repair.REPAIR_SOP["steps"][1]["action"] = orig
+        end_sop(sid)
+        _reset_session(sid)
+
+
 def test_safety_carry_main_text():
     """主链路硬承接仍是独立出口，文案改为软警示。"""
     from sops import end_sop
@@ -652,11 +708,14 @@ def test_inject_re_negative():
 # ──────────────────────────────────────────────────────────────
 
 def test_danger_intercepted():
+    from config.word_dict_config import AFTERSALES_HOTLINE, SAFETY_STOP_REPLY
+    expected = SAFETY_STOP_REPLY.format(hotline=AFTERSALES_HOTLINE)
     r = _reply("机器人冒烟了怎么办")
-    _assert_in("立即停止使用", r, "冒烟→安全停机")
+    _assert_eq(r, expected, "冒烟→配置化安全停机话术")
+    _assert_in("立即停止使用", r, "保留安全停机前缀")
     _assert_in("400", r, "含售后电话")
     r2 = _reply("电池鼓包了")
-    _assert_in("立即停止使用", r2, "鼓包→安全停机")
+    _assert_eq(r2, expected, "鼓包→配置化安全停机话术")
 
 
 def test_danger_negative():
@@ -754,6 +813,8 @@ TESTS = [
     test_safety_hint_in_active_sop,
     test_model_list_routes_through_find_models,
     test_exit_with_residual_uses_trace_not_behavior,
+    test_stopped_before_retrieval_records_node,
+    test_empty_sop_reply_still_has_branch,
     test_safety_carry_main_text,
     test_ops_clarify_roundtrip,
     test_clarify_open_trace,

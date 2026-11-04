@@ -4,16 +4,21 @@ from __future__ import annotations
 from sops.base import SKIP, is_aftersales, is_brand, is_consulting, register
 from config.word_dict_config import (
     BARE_BUDGET_RE,
+    MODEL_QUERY_CONSTRAINT_RETRY_REPLY,
     MODEL_QUERY_EMPTY_REPLIES,
     MODEL_QUERY_TRIGGER,
     MODEL_QUERY_WEAK_TRIGGER,
     TAG_ORDER,
 )
 from function_tools.model_tool import find_models_by_args
+from tools import trace_store
+from tools.log_tool import get_logger
 from tools.metadata_extractor import extract_price_constraint, extract_series, format_model_line
 from tools.model_query import resolve_date_range
 from tools.selection import is_skip, parse_multi_select
 from tools.model_tags import tag_options
+
+logger = get_logger(name="model_query_sop")
 
 
 def _skip_text(text: str) -> bool:
@@ -58,34 +63,73 @@ def _tag_ask(ctx: dict) -> str:
     return "\n".join(lines)
 
 
+def _pair(value, cast=None):
+    """校验可空二元组；形状/类型不对返回 None，不把字符串切片当约束。"""
+    if not isinstance(value, (tuple, list)) or len(value) != 2:
+        return None
+    try:
+        return tuple(None if v is None else (cast(v) if cast else v) for v in value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _search(slots: dict):
     args = {"limit": 50}
+    status = slots.get("_slot_status") or {}
+    dropped = []
+
     budget = slots.get("budget")
-    if budget:
-        try:
-            low, high = budget[0], budget[1]
-            args["budget_min"] = int(low or 0)
-            args["budget_max"] = int(high or 0)
-        except (TypeError, ValueError, IndexError):
-            pass
+    if budget is not None:
+        pair = _pair(budget, int)
+        if pair is None:
+            dropped.append("budget")
+        else:
+            low, high = pair
+            if low is not None:
+                args["budget_min"] = low
+            if high is not None:
+                args["budget_max"] = high
+    if status.get("budget") == "dropped":
+        dropped.append("budget")
+
     series = slots.get("series")
     if series:
         args["series"] = series
+    if status.get("series") == "dropped":
+        dropped.append("series")
+
     publish = slots.get("publish_range")
-    if publish:
-        try:
-            args["publish_start"], args["publish_end"] = publish[0], publish[1]
-        except (TypeError, ValueError, IndexError):
-            pass
+    if publish is not None:
+        pair = _pair(publish)
+        if pair is None:
+            dropped.append("publish_range")
+        else:
+            args["publish_start"], args["publish_end"] = pair
+    if status.get("publish_range") == "dropped":
+        dropped.append("publish_range")
+
     tags = slots.get("tags") or []
     if tags:
         args["tags"] = list(tags)
+    if status.get("tags") == "dropped":
+        dropped.append("tags")
+
+    if dropped:
+        dropped = list(dict.fromkeys(dropped))
+        trace_store.node("find_models", status="degraded", by="slot_invalid",
+                         in_={"dropped": ",".join(dropped)}, out={"n": 0})
+        logger.warning("[ModelQuery] dropped invalid/abandoned slots: %s", dropped)
+        return {"count": 0, "list": "", "models": [],
+                "error": "invalid_slots", "dropped": dropped}
+
     models = find_models_by_args(args)
     lines = [format_model_line(m) for m in models]
     return {"count": len(models), "list": "\n".join(lines), "models": models}
 
 
 def _reply(ctx: dict) -> str:
+    if ctx.get("error") == "invalid_slots":
+        return MODEL_QUERY_CONSTRAINT_RETRY_REPLY
     n = int(ctx.get("count") or 0)
     if n <= 0:
         return MODEL_QUERY_EMPTY_REPLIES[0]

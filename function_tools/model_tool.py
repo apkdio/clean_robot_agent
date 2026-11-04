@@ -20,6 +20,9 @@ from config.word_dict_config import (
     TAG_CATALOG as _TAG_CATALOG,
 )
 from tools.llm_tool import get_chat_model_name
+from tools.log_tool import get_logger
+
+logger = get_logger(name="model_tool")
 
 # 型号提取跟随主生成模型（string 参数 + 上下文指代理解，3b 不稳定）
 MODEL_TOOL_MODEL = get_chat_model_name()
@@ -280,22 +283,26 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
         models = [by_name.get(m.get("name"), m) for m in (prev_models or [])]
 
     # 预算优先按原话用规则解析：模型见到货币单位会把方向词吃掉，方向/单位/浮动交给规则
-    bmin = bmax = 0
+    bmin = bmax = None
     phrase = str(args.get("budget") or "").strip()
     if phrase:
         from tools.metadata_extractor import extract_price_constraint
         parsed = extract_price_constraint(phrase)
-        if parsed and (parsed[0] or parsed[1]):
-            bmin, bmax = parsed[0] or 0, parsed[1] or 0
-    if not bmin and not bmax:
+        if parsed is not None and (parsed[0] is not None or parsed[1] is not None):
+            bmin, bmax = parsed[0] or None, parsed[1] or None
+    if bmin is None and bmax is None:
         # 规则解析不出（中文数字「预算五千」、口语「八百多」）→ 退回模型填的数值
         try:
-            bmin, bmax = int(args.get("budget_min") or 0), int(args.get("budget_max") or 0)
+            raw_min, raw_max = args.get("budget_min"), args.get("budget_max")
+            bmin = None if raw_min in (None, "", 0) else int(raw_min)
+            bmax = None if raw_max in (None, "", 0) else int(raw_max)
         except (TypeError, ValueError):
-            bmin = bmax = 0
-    if bmin:
+            logger.warning("[ModelTool] invalid budget args dropped: min=%r max=%r",
+                           args.get("budget_min"), args.get("budget_max"))
+            bmin = bmax = None
+    if bmin is not None:
         models = [m for m in models if int(m.get("price") or 0) >= bmin]
-    if bmax:
+    if bmax is not None:
         models = [m for m in models if int(m.get("price") or 0) <= bmax]
 
     rng = (args.get("publish_range") or "").strip()
@@ -306,6 +313,8 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
         hi = int(re.sub(r"\D", "", end) or 99991231)
         if lo >= 10000101:
             models = [m for m in models if lo <= _publish_int(m) <= hi]
+        else:
+            logger.warning("[ModelTool] invalid publish_start dropped: %r", start)
     elif rng:
         from function_tools.date_tool import calc_date_range
 
@@ -328,16 +337,21 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
 
     for cond in args.get("params") or []:
         if not isinstance(cond, dict):
+            logger.warning("[ModelTool] invalid param condition dropped: %r", cond)
             continue
         key, op, val = str(cond.get("key") or "").strip(), str(cond.get("op") or "含").strip(), str(cond.get("value") or "").strip()
         if not key or not val:
+            logger.warning("[ModelTool] empty param condition dropped: %r", cond)
+            continue
+        if op not in ("含", "=", ">=", "<="):
+            logger.warning("[ModelTool] unknown param op dropped: %r", op)
             continue
         if op in (">=", "<="):
             try:
                 threshold = float(val)
             except ValueError:
-                models = []
-                break
+                logger.warning("[ModelTool] non-numeric comparison dropped: %r", cond)
+                continue
             models = [m for m in models
                       if _param_num_of(m, key) is not None
                       and (float(_param_num_of(m, key)) >= threshold if op == ">=" else float(_param_num_of(m, key)) <= threshold)]
@@ -345,6 +359,10 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
             models = [m for m in models if val in _param_of(m, key)]
 
     sort_by = (args.get("sort_by") or "").strip()
+    if sort_by and sort_by not in (_PRICE_KEYS + _PUBLISH_KEYS):
+        if not any(_param_num_of(m, sort_by) is not None for m in models):
+            logger.warning("[ModelTool] unknown sort_by dropped: %r", sort_by)
+            sort_by = ""
     if sort_by:
         order = (args.get("order") or "desc").strip()
         models = sorted(models, key=lambda m: _sort_value_of(m, sort_by), reverse=(order != "asc"))

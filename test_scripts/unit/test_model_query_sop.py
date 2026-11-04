@@ -201,13 +201,45 @@ def test_extract_budget_bare_number():
 
 
 def test_result_reply():
+    from config.word_dict_config import MODEL_QUERY_EMPTY_REPLIES
     from sops.model_query import _reply
     full = _reply({"count": 2, "list": "- A\n- B"})
     _assert("符合您条件" in full and "对比其中两款" in full, "有结果时给出列表并追问对比")
     empty = _reply({"count": 0, "list": "", "models": []})
-    _assert("放宽预算" in empty or "条件" in empty, "0 款时说明条件太窄")
+    _assert_eq(empty, MODEL_QUERY_EMPTY_REPLIES[0], "0 款时使用唯一的空结果话术")
     _assert(not re.search(r"\d", empty), "0 款时不给价格数字（没有依据的推荐）")
     _assert("对比" not in empty, "0 款时不追问对比")
+
+
+def test_search_rejects_malformed_slots():
+    """预算/时间槽形状不对或重试耗尽时，不能静默按无条件筛选。"""
+    import sops.model_query as mq
+    from config.word_dict_config import MODEL_QUERY_CONSTRAINT_RETRY_REPLY
+
+    saved = mq.find_models_by_args
+    calls = []
+    mq.find_models_by_args = lambda args: calls.append(args) or []
+    try:
+        out = mq._search({"budget": "3000以内"})
+        _assert_eq(out.get("error"), "invalid_slots", "字符串预算不能被切片后照常查询")
+        _assert("budget" in out.get("dropped", []), "记录被丢弃的槽位")
+        _assert_eq(calls, [], "非法槽位不调用 find_models")
+
+        out = mq._search({"budget": (None, 3000)})
+        _assert(not out.get("error"), "正常二元组预算照常查询")
+        _assert_eq(calls[-1].get("budget_max"), 3000, "预算上限传入")
+
+        out = mq._search({"budget": None, "_slot_status": {"budget": "dropped"}})
+        _assert_eq(out.get("error"), "invalid_slots", "重试耗尽也走显式失败")
+        _assert_eq(mq._reply(out), MODEL_QUERY_CONSTRAINT_RETRY_REPLY,
+                   "失败回复要求用户重新说明条件")
+
+        out = mq._search({"_slot_status": {"series": "dropped"}})
+        _assert_eq(out.get("error"), "invalid_slots", "系列重试耗尽也不能静默跳过")
+        out = mq._search({"publish_range": "2025"})
+        _assert_eq(out.get("error"), "invalid_slots", "日期形状错误不能静默跳过")
+    finally:
+        mq.find_models_by_args = saved
 
 
 def test_retry_then_abandon():
@@ -224,12 +256,34 @@ def test_retry_then_abandon():
     state = sops.base.get_sop_state("s1")
     _assert_eq(state.get("step"), 1, "已推进到第 2 步")
     _assert_eq(state.get("retry_count"), 0, "跨 step 时 retry_count 清零，不继承上一槽")
+    _assert_eq((state.get("slot_status") or {}).get("budget"), "dropped",
+               "重试耗尽要标记 dropped，不能和用户主动跳过混淆")
     # 第 2 步第一次失败：从 0 重新计数，而不是接着第 1 步的 3
     r = _pair(sops.base.continue_sop("s1", "不知道"))[0]
     _assert_eq(r, "有宠物吗？", "第 2 步首次失败仍用 ask 话术")
     state = sops.base.get_sop_state("s1")
     _assert_eq(state.get("retry_count"), 1, "第 2 步 retry 从 1 开始")
     _cleanup()
+
+
+def test_model_query_dropped_budget_does_not_return_all():
+    """预算重试耗尽后进入 action：不能把预算当没提过，返回全量列表。"""
+    from config.word_dict_config import MODEL_QUERY_CONSTRAINT_RETRY_REPLY
+
+    _cleanup()
+    try:
+        sops.base._save_session("s-dropped", sops.base.make_session(
+            "model_query", step=4, slots={"budget": None},
+            retry_count=0))
+        state = sops.base.get_sop_state("s-dropped")
+        state["slot_status"] = {"budget": "dropped"}
+        sops.base._save_session("s-dropped", state)
+        result = sops.base.continue_sop("s-dropped", "继续")
+        _assert(result.done, "失败约束也结束流程")
+        _assert_eq(result.reply, MODEL_QUERY_CONSTRAINT_RETRY_REPLY,
+                   "重试耗尽后要求用户重新说明条件")
+    finally:
+        _cleanup()
 
 
 def test_template_fallback():
@@ -240,6 +294,24 @@ def test_template_fallback():
     _assert(done, "SOP 结束")
     _assert_eq(reply, "抱歉，出了点小问题。", "缺字段触发 fallback")
     _cleanup()
+
+
+def test_empty_reply_default_fallback():
+    """没有步骤级 fallback 时，空 reply 使用统一兜底话术。"""
+    from config.word_dict_config import SOP_EMPTY_REPLY_FALLBACK
+
+    sop_id = "sop_empty_default"
+    sops.base.register({
+        "id": sop_id,
+        "steps": [{"id": "reply", "type": "reply", "template": lambda ctx: ""}],
+    })
+    try:
+        reply, done = _pair(sops.base.start_sop("s-empty", sop_id, ""))
+        _assert(done, "SOP 结束")
+        _assert_eq(reply, SOP_EMPTY_REPLY_FALLBACK, "无步骤 fallback 时使用统一兜底")
+    finally:
+        sops.base.SOPS.pop(sop_id, None)
+        sops.base.end_sop("s-empty")
 
 
 def test_unknown_sop_id_dropped():
@@ -383,8 +455,11 @@ TESTS = [
     test_full_flow,
     test_extract_budget_bare_number,
     test_result_reply,
+    test_search_rejects_malformed_slots,
     test_retry_then_abandon,
+    test_model_query_dropped_budget_does_not_return_all,
     test_template_fallback,
+    test_empty_reply_default_fallback,
     test_unknown_sop_id_dropped,
     test_stale_def_state_dropped,
     test_injected_state_keeps_fingerprint,

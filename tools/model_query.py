@@ -144,7 +144,7 @@ def resolve_model_query(query: str):
         return None
     args, kind = resolved
     models = find_models_by_args(args)
-    trace_store.node("find_models", status="hit" if models else "ok",
+    trace_store.node("find_models", status="hit" if models else "miss",
                      in_={"kind": kind, "budget_min": args["budget_min"],
                           "budget_max": args["budget_max"],
                           "publish_start": args["publish_start"] or "-",

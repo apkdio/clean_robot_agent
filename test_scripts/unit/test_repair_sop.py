@@ -95,6 +95,22 @@ def test_repair_sop_ask_fallback():
     _cleanup()
 
 
+def test_repair_empty_reply_falls_back():
+    """action 返回空 answer 时，reply 模板不能把空串当正常回答。"""
+    _cleanup()
+    orig = sops.repair.REPAIR_SOP["steps"][1]["action"]
+    fallback = sops.repair.REPAIR_SOP["steps"][2]["fallback"]
+    sops.repair.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"answer": ""}
+    try:
+        reply, done = _pair(sops.base.start_sop("r-empty", "repair", "机器人不动了怎么办"))
+        _assert(done, "空回复仍应结束")
+        _assert_in(fallback, reply, "空回复走步骤级兜底")
+        _assert(not sops.base.has_active_sop("r-empty"), "会话已结束")
+    finally:
+        sops.repair.REPAIR_SOP["steps"][1]["action"] = orig
+    _cleanup()
+
+
 def test_symptom_maps_in_sync():
     """两张症状表 + 工具 description 必须同步（v2.4 加「水痕/水印」时漏过一次）。"""
     from config.word_dict_config import SYMPTOM_MAP, SYMPTOM_QUERY_MAP
@@ -144,6 +160,7 @@ TESTS = [
     test_repair_trigger,
     test_repair_sop_flow,
     test_repair_sop_ask_fallback,
+    test_repair_empty_reply_falls_back,
     test_symptom_maps_in_sync,
     test_symptom_mapping_leaves_trace,
 ]

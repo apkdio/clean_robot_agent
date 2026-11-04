@@ -17,6 +17,7 @@ from config.word_dict_config import (
     ENTER_CONFIRM, LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS, PRICIER_WORDS, NEWER_WORDS, OLDER_WORDS,
     REL_LABEL as _REL_LABEL, REL_SUPER as _REL_SUPER,
     SOP_NAMES, SOP_REENTER_HINT, SOP_REENTER_HINT_DEFAULT,
+    SOP_EMPTY_REPLY_FALLBACK,
 )
 
 logger = get_logger(name="sops_base")
@@ -24,8 +25,13 @@ SOPS = {}  # sop_id → sop 定义
 # 可选槽位的显式“跳过”返回值；与 None（提取失败）区分
 SKIP = object()
 # 定义形如 {"id": xxx, "trigger": [xxx], "guards": [xxx], "intro": xxx, "max_retry": xxx, "steps": [xxx]}
-# 步骤形如 {"id": xxx, "type": ask|action|reply, "slot": xxx, "ask": xxx, "retry": xxx, "extract": xxx}
-#          （action 步换成 "action"，reply 步换成 "template"（字符串或接收 ctx 的函数）；可选 "when" 条件跳过）
+# ask 步：{"id": xxx, "type": "ask", "slot": xxx, "ask": str|fn, "retry": str|fn, "extract": fn}
+# action 步：{"id": xxx, "type": "action", "action": fn}；fn 唯一入参是 slots 副本：
+#            原件仍是 session["slots"]，fn 对副本的修改不回写；
+#            副本带内部 "_slot_status": {slot: filled|skipped|dropped}，仅供 fn 读取，
+#            slot_status 本身留在 session；两者都不进入模板上下文。
+# reply 步：{"id": xxx, "type": "reply", "template": str|fn, "fallback": str}
+# 三种步骤都可带 "when": fn 条件跳过；reply 的 fallback 用于空串或模板异常。
 
 
 def is_consulting(query: str) -> bool:
@@ -78,7 +84,9 @@ def get_last_recommend(session_id: str):
 
 # 当前活跃会话，按 session_id 隔离（Redis 可用时存 Redis，否则本地降级）
 _sessions = {}
-# 状态形如 {"sop_id": xxx, "def_ver": xxx, "step": xxx, "slots": {xxx}, "retry_count": xxx, "result": {xxx}}
+# 状态形如 {"sop_id": xxx, "def_ver": xxx, "step": xxx, "slots": {xxx},
+#           "slot_status": {slot: skipped|dropped|filled}, "retry_count": xxx, "result": {xxx}}
+# slot_status 只在 ask 步出现；dropped 表示重试耗尽，不能当成用户主动跳过。
 # retry_count 只对当前 step 有效；所有推进都走 _advance()，跨 step 自动清零。
 # （无 Redis 的降级态另带 "ts"，读时按 sop_ttl 校验过期；Redis 在时不带，由 Redis 自己过期）
 _finished = {}  # session_id -> 刚收尾的那份状态（形状同 _sessions，供「重新回答」判断 last_sop，取走即清）
@@ -356,6 +364,7 @@ def _run(session_id: str, user_input: str) -> SopStepResult:
                 if value is SKIP:
                     # 显式留空：不重试，直接跳过该槽
                     session["slots"][slot] = None
+                    session.setdefault("slot_status", {})[slot] = "skipped"
                     _advance(session)
                     user_input = None
                     flow.append({"i": session["step"] - 1, "type": "ask",
@@ -366,6 +375,7 @@ def _run(session_id: str, user_input: str) -> SopStepResult:
                     session["retry_count"] = session.get("retry_count", 0) + 1
                     if session["retry_count"] > sop.get("max_retry", 2):
                         session["slots"][step["slot"]] = None
+                        session.setdefault("slot_status", {})[step["slot"]] = "dropped"
                         _advance(session)
                         user_input = None
                         logger.warning("[SOP] %s slot %s abandoned after retries", sop["id"], step["slot"])
@@ -386,6 +396,7 @@ def _run(session_id: str, user_input: str) -> SopStepResult:
                         _ask_text(step, "retry", ctx), session_id, by="sop", sop=sop["id"]))
                 # 提取成功，重置重试计数
                 session["slots"][step["slot"]] = value
+                session.setdefault("slot_status", {})[step["slot"]] = "filled"
                 _advance(session)
                 user_input = None
                 logger.info("[SOP] %s slot %s = %s", sop["id"], step["slot"], value)
@@ -396,7 +407,9 @@ def _run(session_id: str, user_input: str) -> SopStepResult:
 
             elif step["type"] == "action":
                 # 执行 skill，结果存入 result；若含结构化型号列表则保存供追问
-                result = step["action"](session["slots"])
+                action_slots = dict(session["slots"])
+                action_slots["_slot_status"] = dict(session.get("slot_status") or {})
+                result = step["action"](action_slots)
                 session["result"] = result
                 n_models = len(result.get("models") or []) if isinstance(result, dict) else 0
                 flow.append({"i": session["step"], "type": "action", "outcome": "ok",
@@ -418,7 +431,12 @@ def _run(session_id: str, user_input: str) -> SopStepResult:
                     reply = tpl(ctx) if callable(tpl) else tpl.format(**ctx)
                 except Exception as e:  # noqa: BLE001
                     logger.warning("[SOP] reply template failed: %s", e)
-                    reply = step.get("fallback", "抱歉，出了一点小问题，请重新提问～")
+                    reply = step.get("fallback", SOP_EMPTY_REPLY_FALLBACK)
+                reply = reply if isinstance(reply, str) else ""
+                if not reply.strip():
+                    logger.warning("[SOP] %s step %s empty reply, fallback",
+                                   sop["id"], step.get("id"))
+                    reply = step.get("fallback") or SOP_EMPTY_REPLY_FALLBACK
                 ended = True
                 _finished[session_id] = session
                 _end(session_id)
@@ -429,7 +447,7 @@ def _run(session_id: str, user_input: str) -> SopStepResult:
         ended = True
         _end(session_id)
         logger.warning("[SOP] %s ended without reply", sop["id"])
-        return SopStepResult("done", "", done=True)
+        return SopStepResult("done", SOP_EMPTY_REPLY_FALLBACK, done=True)
     except Exception as e:  # noqa: BLE001
         # 步骤函数（when / extract / action）炸了：结束会话，别让下一轮还停在这一步重复失败；
         # 异常照常向上抛——外层 ask_stream 出兜底话术、trace 记 error

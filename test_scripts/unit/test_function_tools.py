@@ -134,6 +134,31 @@ def test_model_name_in_query():
         mt._model_names_cache = orig
 
 
+def test_find_models_invalid_args_do_not_clear_results():
+    """非法参数只能丢弃该条件，不能把已筛结果清零或把 0 当真实预算。"""
+    import function_tools.model_tool as mt
+    import tools.metadata_extractor as me
+
+    fake = [
+        {"name": "A", "price": 1000, "series": "净白 S", "param_吸力_num": 6000},
+        {"name": "B", "price": 2000, "series": "净白 S", "param_吸力_num": 9000},
+    ]
+    orig = me.get_all_model_records
+    me.get_all_model_records = lambda: fake
+    try:
+        cases = [
+            {"params": [{"key": "吸力", "op": ">=", "value": "强"}]},
+            {"params": [{"key": "吸力", "op": ">", "value": "6000"}]},
+            {"budget_min": 0, "budget_max": 0},
+            {"publish_start": "2025"},
+        ]
+        for args in cases:
+            _assert_eq(len(mt.find_models_by_args(args)), 2,
+                       "非法条件 %r 不应清空结果" % args)
+    finally:
+        me.get_all_model_records = orig
+
+
 # ──────────────────────────────────────────────────────────────
 # 4. 症状工具
 # ──────────────────────────────────────────────────────────────
@@ -215,6 +240,7 @@ TESTS = [
     test_budget_args_to_filter,
     test_search_models_by_names,
     test_model_name_in_query,
+    test_find_models_invalid_args_do_not_clear_results,
     test_symptom_id_to_query,
     test_haversine,
     test_pick_cn_name,

@@ -53,11 +53,13 @@ from tools.op_executors import OP_EXECUTORS as _OP_EXEC, PIPELINE_OPS as _PIPELI
 from tools.generation import casual_stream, rag_stream
 
 from config.word_dict_config import (
+    AFTERSALES_HOTLINE,
     EMOTION_MILD,
     EMOTION_STRONG,
     EXIT_WORDS,
     NO_ANSWER_REPLIES,
     REFUSE_OFFTOPIC_REPLY as _REFUSE_OFFTOPIC_REPLY,
+    SAFETY_STOP_REPLY,
     SOP_ENTER_FAILED_REPLY as _SOP_ENTER_FAILED_REPLY,
 )
 from config.word_dict_config import BLOCK_INJECT_REPLY as _BLOCK_INJECT_REPLY
@@ -164,9 +166,7 @@ def _stage_danger_guard(ctx: TurnContext) -> StageOutcome:
     end_sop(ctx.session_id)
     pending_store.close(ctx.session_id)
     _log_behavior("stop_use_safety", word=danger_hit)
-    return Finish(text=(
-        "请立即停止使用机器人并断开电源！涉及冒烟/烧焦/进水等安全风险，"
-        "不要自行拆机或继续充电，请马上联系官方售后（400-860-1314）处理。"))
+    return Finish(text=SAFETY_STOP_REPLY.format(hotline=AFTERSALES_HOTLINE))
 
 
 def _stage_record_user(ctx: TurnContext) -> StageOutcome:
@@ -247,6 +247,9 @@ def _stage_active_sop(ctx: TurnContext) -> StageOutcome:
     _note_sop(ctx.session_id, sop_id, done=bool(result.done))
     if result.reply:
         _log_behavior("sop_step")
+    else:
+        # 空回复也必须留下行为出口，避免 branch 为空；正文由 sops.base 兜底。
+        _log_behavior("sop_step", empty=True)
     return Finish(text=result.reply or "")
 
 
@@ -419,6 +422,7 @@ def _stage_retrieve(ctx: TurnContext) -> StageOutcome:
 
     if ctx.stop_check is not None and ctx.stop_check():
         logger.info("[Agent] stopped before retrieval")
+        trace_store.node("retrieve", status="skipped", by="stopped")
         return Finish(text="")
     hr = _get_retriever()
     turn_recorder.shadow_probe(ctx.q, ctx.session_id, "kb_search", "RAG 检索")
