@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from tools.config_tool import load_config
+from tools.config_tool import get_config
 from tools.log_tool import get_logger
 
 logger = get_logger(name="domain_router")
@@ -13,19 +13,14 @@ logger = get_logger(name="domain_router")
 # 品牌优先于选购——「为什么买」的"买"会被误判选购；售后优先于故障——"报修"含"修"会被误判维修。
 _DOMAIN_ORDER = ["brand", "aftersales", "consulting", "repair", "maintain", "operation"]
 
-_rag_cfg_cache = None
-
 
 def _rag_cfg() -> dict:
     """rag.yaml（读失败返回空 dict，走内置默认）。"""
-    global _rag_cfg_cache
-    if _rag_cfg_cache is None:
-        try:
-            _rag_cfg_cache = load_config("rag") or {}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[Domain] load rag config failed: %s", e)
-            _rag_cfg_cache = {}
-    return _rag_cfg_cache
+    try:
+        return get_config("rag") or {}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[Domain] load rag config failed: %s", e)
+        return {}
 
 
 def domain_margin() -> float:

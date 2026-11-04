@@ -13,16 +13,27 @@ from typing import List, Tuple
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
 
-from tools.config_tool import load_config
+from tools.config_tool import get_config
 from tools.log_tool import get_logger
 from tools.path_tool import get_abs_path
 
 logger = get_logger(name="sparse_retriever")
 
-_rag_cfg = load_config("rag")
-_chroma_cfg = load_config("chroma")
-_retrieval_cfg = _rag_cfg.get("retrieval", {})
-_sparse_cfg = _rag_cfg.get("sparse", {})
+
+def _rag_cfg() -> dict:
+    return get_config("rag") or {}
+
+
+def _chroma_cfg() -> dict:
+    return get_config("chroma") or {}
+
+
+def _retrieval_cfg() -> dict:
+    return _rag_cfg().get("retrieval", {}) or {}
+
+
+def _sparse_cfg() -> dict:
+    return _rag_cfg().get("sparse", {}) or {}
 
 _DEFAULT_K1: float = 1.5
 _DEFAULT_B: float = 0.75
@@ -100,8 +111,8 @@ class SparseRetriever:
         self.corpus_tokens = [self._tokenize(doc.page_content) for doc in documents]
         self.bm25_model = BM25Okapi(
             self.corpus_tokens,
-            k1=_sparse_cfg.get("bm25_k1", _DEFAULT_K1),
-            b=_sparse_cfg.get("bm25_b", _DEFAULT_B),
+            k1=_sparse_cfg().get("bm25_k1", _DEFAULT_K1),
+            b=_sparse_cfg().get("bm25_b", _DEFAULT_B),
         )
         logger.info("[Sparse] BM25 index built: %d chunks", len(self.chunks))
 
@@ -121,7 +132,7 @@ class SparseRetriever:
             logger.error("[Sparse] Index not built yet.")
             return []
 
-        k = top_k if top_k is not None else _retrieval_cfg.get("sparse_top_k", 10)
+        k = top_k if top_k is not None else _retrieval_cfg().get("sparse_top_k", 10)
         tokenized = self._tokenize(query)
         scores = self.bm25_model.get_scores(tokenized)
 
@@ -158,7 +169,7 @@ class SparseRetriever:
         store = get_vector_store()
         return {
             "chunk_count": store._collection.count(),
-            "collection_name": _chroma_cfg.get("collection_name", "clean_robot_kb"),
+            "collection_name": _chroma_cfg().get("collection_name", "clean_robot_kb"),
             "store": store_fingerprint(),   # 内容摘要：条数不变但正文改了（价格/参数/错字）也要重建
         }
 

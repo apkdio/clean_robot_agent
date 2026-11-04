@@ -106,8 +106,8 @@ def _phrases(op: str) -> list:
 def _ops_cfg() -> dict:
     """operations 段配置（缺失返回空 dict，走内置默认）。"""
     try:
-        from tools.config_tool import load_config
-        return (load_config("agent").get("operations") or {})
+        from tools.config_tool import get_config
+        return (get_config("agent").get("operations") or {})
     except Exception as e:  # noqa: BLE001
         logger.warning("[Ops] load config failed: %s", e)
         return {}

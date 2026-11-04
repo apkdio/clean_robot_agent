@@ -14,7 +14,8 @@ from typing import Dict, List, Optional, Tuple
 from tools.llm_tool import get_chat_model_name
 
 # 提取城市/地点跟随主生成模型（string 参数 + 口语地点，3b 不稳定，同 model_tool）
-SERVICE_POINT_TOOL_MODEL = get_chat_model_name()
+def service_point_tool_model() -> str:
+    return get_chat_model_name()
 
 _SERVICE_POINTS_FILE = "data/service_point/service_points.json"
 

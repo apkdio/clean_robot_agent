@@ -1,4 +1,5 @@
 import os
+import threading
 
 import yaml
 from tools.path_tool import get_abs_path
@@ -13,25 +14,55 @@ _CONFIG_PATHS = {
     "context": "config/context.yaml",
 }
 
+_CACHE = {}
+_LOCK = threading.RLock()
+_OPTIONAL = ("redis", "context")
+
+
+def _config_path(name: str) -> str:
+    return get_abs_path(_CONFIG_PATHS.get(name, name))
+
+
+def get_config(name: str, *, encoding: str = "utf-8", required: bool | None = None,
+               default=None):
+    """读取并缓存 YAML 配置；同一路径只读一次，热更新时用 reload_configs()。
+
+    redis / context 默认可选（缺失返回 default）；其它配置默认必需。
+    缓存对象按只读使用，调用方不要原地修改。
+    """
+    abs_path = _config_path(name)
+    key = (abs_path, encoding)
+    if not os.path.isfile(abs_path):
+        if required is None:
+            required = name not in _OPTIONAL
+        if required:
+            stem = os.path.splitext(os.path.basename(abs_path))[0]
+            hint = (f"配置缺失：{abs_path}。首次使用请复制模板："
+                    f"copy config/{stem}_template.yaml {name}")
+            raise FileNotFoundError(hint)
+        return default
+
+    with _LOCK:
+        if key in _CACHE:
+            return _CACHE[key]
+
+    with open(abs_path, "r", encoding=encoding) as f:
+        value = yaml.load(f, Loader=yaml.FullLoader)
+
+    with _LOCK:
+        _CACHE[key] = value
+    return value
+
+
+def reload_configs() -> None:
+    """清空配置缓存；下一次读取重新落盘。"""
+    with _LOCK:
+        _CACHE.clear()
+
 
 def load_config(name: str, encoding: str = "utf-8"):
-    """读取 YAML 配置。
-
-    name 可以是 rag / chroma / prompts / agent 之一，或直接传配置文件路径。
-    redis / context 缺失属正常（可选依赖），直接返回 None；
-    其余配置缺失时给出可操作的提示（复制哪个模板），而不是裸 FileNotFoundError。
-    """
-    path = _CONFIG_PATHS.get(name, name)
-    abs_path = get_abs_path(path)
-    if not os.path.isfile(abs_path):
-        if name in ("redis", "context"):
-            return None
-        stem = os.path.splitext(os.path.basename(abs_path))[0]
-        hint = (f"配置缺失：{abs_path}。首次使用请复制模板："
-                f"copy config/{stem}_template.yaml {path}")
-        raise FileNotFoundError(hint)
-    with open(abs_path, "r", encoding=encoding) as f:
-        return yaml.load(f, Loader=yaml.FullLoader)
+    """兼容旧调用：读取 YAML 配置（结果由 get_config 统一缓存）。"""
+    return get_config(name, encoding=encoding, required=name not in _OPTIONAL)
 
 
 def get_data_dir() -> str:
@@ -39,4 +70,4 @@ def get_data_dir() -> str:
 
     热更新、批量入库、数据集构建统一走这里，避免各自硬编码目录。
     """
-    return get_abs_path(load_config("rag").get("data_dir") or "data/knowledge")
+    return get_abs_path(get_config("rag").get("data_dir") or "data/knowledge")

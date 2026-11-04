@@ -10,7 +10,7 @@ import threading
 
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
-from tools.config_tool import load_config
+from tools.config_tool import get_config
 from tools.log_tool import get_logger
 
 logger = get_logger(name="llm_tool")
@@ -22,35 +22,26 @@ _DEFAULT_CHAT_MODEL = os.environ.get("LLM_CHAT_MODEL", "qwen2.5:7b")
 _DEFAULT_SMALL_MODEL = os.environ.get("LLM_SMALL_MODEL", "qwen2.5:3b")
 _DEFAULT_EMBED_MODEL = os.environ.get("LLM_EMBED_MODEL", "bge-m3")
 
-_chat_cfg_cache = None
-_embedding_cfg_cache = None
-
 _emb_cache = {}                 # 解析后的 (model, base_url, api_key, kwargs) → 客户端
 _emb_lock = threading.Lock()
 
 
 def _embedding_cfg() -> dict:
     """chroma.yaml 的 embedding 段（读盘失败回退空 dict，走内置默认）。"""
-    global _embedding_cfg_cache
-    if _embedding_cfg_cache is None:
-        try:
-            _embedding_cfg_cache = (load_config("chroma") or {}).get("embedding") or {}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[LLM] chroma.yaml embedding 段读取失败，用内置默认：%s", e)
-            _embedding_cfg_cache = {}
-    return _embedding_cfg_cache
+    try:
+        return (get_config("chroma") or {}).get("embedding") or {}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[LLM] chroma.yaml embedding 段读取失败，用内置默认：%s", e)
+        return {}
 
 
 def _chat_cfg() -> dict:
-    """延迟读取 agent.yaml 的 llm 段（读盘失败则回退到环境变量/内置默认）。"""
-    global _chat_cfg_cache
-    if _chat_cfg_cache is None:
-        try:
-            _chat_cfg_cache = load_config("agent").get("llm", {}) or {}
-        except Exception as e:
-            logger.warning(f"[Config] load agent llm config failed: {e}")
-            _chat_cfg_cache = {}
-    return _chat_cfg_cache
+    """agent.yaml 的 llm 段（读盘失败则回退到环境变量/内置默认）。"""
+    try:
+        return get_config("agent").get("llm", {}) or {}
+    except Exception as e:
+        logger.warning(f"[Config] load agent llm config failed: {e}")
+        return {}
 
 
 def get_chat_model_name() -> str:

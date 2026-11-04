@@ -12,7 +12,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from tools import trace_store
-from tools.config_tool import load_config
+from tools.config_tool import get_config
 from tools.file_tools import extract_file, get_file_sha256_hex
 from tools.llm_tool import get_embedding_model
 from tools.log_tool import get_logger
@@ -20,13 +20,18 @@ from tools.path_tool import get_abs_path
 
 logger = get_logger(name="vector_store")
 
-_chroma_cfg = load_config("chroma")
-_rag_cfg = load_config("rag")
+
+def _rag_cfg() -> dict:
+    return get_config("rag") or {}
+
+
+def _chroma_cfg() -> dict:
+    return get_config("chroma") or {}
 
 
 def _get_splitter() -> RecursiveCharacterTextSplitter:
     """根据 rag.yaml 的分块配置构建文本切分器。"""
-    chunk_cfg = _rag_cfg.get("chunk", {})
+    chunk_cfg = _rag_cfg().get("chunk", {})
     return RecursiveCharacterTextSplitter(
         chunk_size=chunk_cfg.get("chunk_size", 500),
         chunk_overlap=chunk_cfg.get("chunk_overlap", 50),
@@ -36,13 +41,13 @@ def _get_splitter() -> RecursiveCharacterTextSplitter:
 
 
 def _get_persist_dir() -> str:
-    path = get_abs_path(_chroma_cfg.get("persist_dir", "data\\vector_store"))
+    path = get_abs_path(_chroma_cfg().get("persist_dir", "data\\vector_store"))
     os.makedirs(path, exist_ok=True)
     return path
 
 
 def _get_collection_name() -> str:
-    return _chroma_cfg.get("collection_name", "clean_robot_kb")
+    return _chroma_cfg().get("collection_name", "clean_robot_kb")
 
 
 def get_vector_store() -> Chroma:
@@ -172,7 +177,7 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
 
 def ingest_directory(dir_path: str) -> list[dict]:
     """入库目录下所有支持的文件（非递归）。"""
-    exts = tuple(_rag_cfg.get("supported_exts", [".txt", ".pdf"]))
+    exts = tuple(_rag_cfg().get("supported_exts", [".txt", ".pdf"]))
     results = []
     for entry in sorted(os.listdir(dir_path)):
         fp = os.path.join(dir_path, entry)
@@ -203,7 +208,7 @@ class DenseRetriever:
     def search(
         self, query: str, top_k: int | None = None, filter: dict | None = None
     ) -> list[tuple[Document, float]]:
-        k = top_k if top_k is not None else _rag_cfg.get("retrieval", {}).get("dense_top_k", 10)
+        k = top_k if top_k is not None else _rag_cfg().get("retrieval", {}).get("dense_top_k", 10)
         store = get_vector_store()
         embedding_fn = getattr(store, "_embedding_function", None)
         if embedding_fn is not None:
@@ -225,7 +230,7 @@ class DenseRetriever:
 
         # 相关性阈值过滤（0 或未配置 = 不过滤）。bge-m3 + cosine 实测：领域内 query 通常
         # 0.36+，领域外（天气/闲聊/乱码）落在 0.16~0.24，0.25 压在噪声底噪之上。
-        threshold = _rag_cfg.get("retrieval", {}).get("score_threshold", 0) or 0
+        threshold = _rag_cfg().get("retrieval", {}).get("score_threshold", 0) or 0
         kept = results
         if threshold > 0:
             kept = [(doc, score) for doc, score in results if score >= threshold]

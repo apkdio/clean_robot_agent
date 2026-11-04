@@ -32,8 +32,7 @@ logger = get_logger(name="metadata_extractor")
 # 或"数字 + 语气词收尾"（「两千吧」这类口语，交给 LLM 兜底）
 _BUDGET_HINT_RE = BUDGET_HINT_RE
 
-# 预算提取兜底用的小模型（默认 3b 更快；精度不够可在 agent.yaml 调 llm.small_model）
-_BUDGET_TOOL_MODEL = get_small_model_name()
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # chunk → metadata（入库时）
@@ -490,7 +489,7 @@ def resolve_budget_filter(query: str) -> Optional[Dict]:
         resp = chat_with_tools(
             [HumanMessage(content=query)],
             [BUDGET_TOOL_SCHEMA],
-            model=_BUDGET_TOOL_MODEL,
+            model=get_small_model_name(),
         )
         tool_calls = getattr(resp, "tool_calls", None) or []
         if tool_calls:

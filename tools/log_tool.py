@@ -81,9 +81,6 @@ def _resolve_file_level() -> int:
     return logging.DEBUG if verbose else logging.INFO
 
 
-_DEFAULT_FILE_LEVEL = _resolve_file_level()
-
-# 单个日志文件上限（字节）与滚动备份数：防止同一天内文件无限增长
 _LOG_MAX_BYTES = 5 * 1024 * 1024   # 5MB
 _LOG_BACKUP_COUNT = 2              # 保留 2 份滚动备份
 
@@ -120,7 +117,7 @@ def get_logger(name: str = "agent",
 
     # 文件：按大小滚动（超过上限切到 .1/.2），避免单文件无限增长
     if file_level is None:
-        file_level = _DEFAULT_FILE_LEVEL
+        file_level = _resolve_file_level()
     if not log_file:
         # 按 /模块/日期/ 分目录：logs/<name>/<YYYY-MM-DD>/<name>.log
         date_dir = os.path.join(log_path, name, datetime.now().strftime('%Y-%m-%d'))

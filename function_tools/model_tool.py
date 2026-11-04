@@ -25,7 +25,8 @@ from tools.log_tool import get_logger
 logger = get_logger(name="model_tool")
 
 # 型号提取跟随主生成模型（string 参数 + 上下文指代理解，3b 不稳定）
-MODEL_TOOL_MODEL = get_chat_model_name()
+def model_tool_model() -> str:
+    return get_chat_model_name()
 
 
 MODEL_TOOL_SCHEMA = {

@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from tools.config_tool import load_config
+from tools.config_tool import get_config
 from tools.log_tool import get_logger
 from tools import trace_store
 from config.word_dict_config import (
@@ -17,18 +17,13 @@ from config.word_dict_config import (
 
 logger = get_logger(name="safety")
 
-_cfg_cache = None
-
 
 def _cfg() -> dict:
-    global _cfg_cache
-    if _cfg_cache is None:
-        try:
-            _cfg_cache = load_config("context") or {}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[Safety] load context config failed: %s", e)
-            _cfg_cache = {}
-    return _cfg_cache
+    try:
+        return get_config("context") or {}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[Safety] load context config failed: %s", e)
+        return {}
 
 
 def _enabled() -> bool:

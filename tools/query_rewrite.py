@@ -7,24 +7,19 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from tools.config_tool import load_config
+from tools.config_tool import get_config
 from tools.log_tool import get_logger
 
 logger = get_logger(name="query_rewrite")
 
-_cfg_cache = None
-
 
 def cfg() -> dict:
     """context.yaml（读失败返回空 dict，走内置默认）。"""
-    global _cfg_cache
-    if _cfg_cache is None:
-        try:
-            _cfg_cache = load_config("context") or {}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[Context] load config failed: %s", e)
-            _cfg_cache = {}
-    return _cfg_cache
+    try:
+        return get_config("context") or {}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[Context] load config failed: %s", e)
+        return {}
 
 
 def enabled() -> bool:
@@ -37,9 +32,7 @@ def rewrite_cfg() -> dict:
 
 def normalize_enabled() -> bool:
     """query 入口归一化总开关（agent.yaml behavior.query_normalize）。"""
-    from tools.config_tool import load_config
-
-    behavior = (load_config("agent").get("behavior") or {})
+    behavior = (get_config("agent").get("behavior") or {})
     return bool(behavior.get("query_normalize", True))
 
 

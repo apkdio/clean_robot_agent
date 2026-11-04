@@ -15,7 +15,7 @@ from typing import Dict, List, Tuple
 from langchain_core.documents import Document
 
 from tools import trace_store
-from tools.config_tool import load_config
+from tools.config_tool import get_config
 from tools.log_tool import get_logger
 from tools.reranker import rerank
 from tools.rrf_fusion import reciprocal_rank_fusion
@@ -24,7 +24,9 @@ from tools.vector_store import DenseRetriever, build_hybrid_index
 
 logger = get_logger(name="hybrid_retriever")
 
-_rag_cfg = load_config("rag")
+
+def _rag_cfg() -> dict:
+    return get_config("rag") or {}
 
 
 class HybridRetriever:
@@ -55,8 +57,9 @@ class HybridRetriever:
         返回 [(doc, score, meta), ...]（分数降序），交给 search() 决定怎么用；
         传入 facts 时把这一遍的各路条数与精排进出写进去（trace 用，不改行为）。
         """
-        retrieval_cfg = _rag_cfg.get("retrieval", {})
-        rerank_cfg = _rag_cfg.get("rerank", {})
+        cfg = _rag_cfg()
+        retrieval_cfg = cfg.get("retrieval", {})
+        rerank_cfg = cfg.get("rerank", {})
         final_top_k = retrieval_cfg.get("final_top_k", 5)
         rerank_on = bool(rerank_cfg.get("enabled", False))
         # 候选数与最终数解耦：精排开启时放宽 RRF 保留宽度，交给精排收窄
@@ -113,8 +116,9 @@ class HybridRetriever:
         if not self.sparse.is_ready:
             self.ensure_sparse_index()
 
-        retrieval_cfg = _rag_cfg.get("retrieval", {})
-        rerank_cfg = _rag_cfg.get("rerank", {})
+        cfg = _rag_cfg()
+        retrieval_cfg = cfg.get("retrieval", {})
+        rerank_cfg = cfg.get("rerank", {})
         final_top_k = retrieval_cfg.get("final_top_k", 5)
         rerank_on = bool(rerank_cfg.get("enabled", False))
         threshold = rerank_cfg.get("score_threshold", 0) or 0

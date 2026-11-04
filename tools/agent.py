@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from tools import pending_store, trace_store
-from tools.config_tool import load_config
+from tools.config_tool import get_config
 from tools.log_tool import clear_log_session, get_logger, set_log_session
 from tools.query_rewrite import (
     history_block as _history_block,
@@ -69,9 +69,18 @@ from tools.llm_tool import stream_chat
 
 logger = get_logger(name="agent")
 
-_agent_cfg = load_config("agent")
-_llm_cfg = _agent_cfg.get("llm", {})
-_behavior = _agent_cfg.get("behavior", {})
+
+def _agent_cfg() -> dict:
+    return get_config("agent") or {}
+
+
+def _llm_cfg() -> dict:
+    return _agent_cfg().get("llm", {}) or {}
+
+
+def _behavior_cfg() -> dict:
+    return _agent_cfg().get("behavior", {}) or {}
+
 
 _hybrid_retriever = None
 
@@ -411,7 +420,7 @@ def _stage_intent_exit(ctx: TurnContext) -> StageOutcome:
     if ctx.intent == "casual":
         _log_behavior("chitchat")
         return Finish(stream=casual_stream(
-            ctx.query, temperature=_llm_cfg.get("temperature", 0.3),
+            ctx.query, temperature=_llm_cfg().get("temperature", 0.3),
             stop_check=ctx.stop_check, stream_chat_func=stream_chat))
     return Continue()
 
@@ -475,7 +484,7 @@ def _stage_retrieve(ctx: TurnContext) -> StageOutcome:
                     ctx.query[:40])
         _log_behavior("no_answer_fallback", hits=0)
         return Finish(text=random.choice(NO_ANSWER_REPLIES))
-    if _behavior.get("retrieval_only", False):
+    if _behavior_cfg().get("retrieval_only", False):
         _log_behavior("retrieve_answer", mode="retrieval_only")
         src = chunks[0].metadata.get("file_name", "")
         return Finish(text=f"来源：{src}\n\n{chunks[0].page_content}")
@@ -490,7 +499,7 @@ def _stage_generate(ctx: TurnContext) -> StageOutcome:
         ctx.query,
         history_block=_history_block(ctx.session_id),
         chunk_texts=[c.page_content for c in ctx.chunks],
-        temperature=_llm_cfg.get("temperature", 0.3),
+        temperature=_llm_cfg().get("temperature", 0.3),
         stop_check=ctx.stop_check,
         stream_chat_func=stream_chat,
     ))

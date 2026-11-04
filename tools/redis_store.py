@@ -19,9 +19,9 @@ _enabled = None  # None=未探测，True/False=是否可用
 
 
 def _load_config() -> dict:
-    from tools.config_tool import load_config
+    from tools.config_tool import get_config
     try:
-        return load_config("redis")
+        return get_config("redis") or {}
     except Exception:
         return {}
 

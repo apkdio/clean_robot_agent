@@ -21,7 +21,7 @@ from tools.chat_service import (
     acquire_turn_lock, clear_stop, release_turn_lock, set_stop, stream_turn,
 )
 from tools.dto.request import ChatRequest
-from tools.config_tool import load_config
+from tools.config_tool import get_config
 from tools.context_store import ensure_session_id, list_sessions
 from tools.log_tool import get_logger
 from tools.vector_store import (
@@ -43,11 +43,12 @@ app = Flask(
 # 上传体积上限（超出由 Flask 返回 413），防任意大文件打满磁盘
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024
 
-_rag_cfg = load_config("rag")
 _upload_dir = os.path.join(str(_PROJECT_ROOT), "temp", "uploads")
 os.makedirs(_upload_dir, exist_ok=True)
 
-_supported_exts = tuple(_rag_cfg.get("supported_exts", [".txt", ".pdf"]))
+
+def _supported_exts() -> tuple:
+    return tuple((get_config("rag") or {}).get("supported_exts", [".txt", ".pdf"]))
 
 
 def _safe_upload_name(raw: str) -> str:
@@ -137,8 +138,8 @@ def ingest():
     # 文件名净化后再校验扩展名；realpath 双保险确保落在 upload 目录内
     base = _safe_upload_name(upload.filename)
     ext = os.path.splitext(base)[1].lower()
-    if not base or not ext.endswith(_supported_exts):
-        msg = f"Unsupported or unsafe file name. Supported: {', '.join(_supported_exts)}"
+    if not base or not ext.endswith(_supported_exts()):
+        msg = f"Unsupported or unsafe file name. Supported: {', '.join(_supported_exts())}"
         logger.warning(f"[Ingest] {msg}: {upload.filename!r}")
         return jsonify({"status": "error", "message": msg}), 400
 
@@ -316,7 +317,7 @@ def remove_session(sid):
 def agent_config():
     """返回当前的 agent 与检索配置，用于前端标识。"""
     try:
-        agent_cfg = load_config("agent")
+        agent_cfg = get_config("agent")
         behavior = agent_cfg.get("behavior", {})
         return jsonify({
             "status": "ok",

@@ -8,8 +8,6 @@ from tools.log_tool import get_logger
 from tools import trace_store
 
 # 故障现象兜底用的小模型（默认 3b 更快；精度不够可在 agent.yaml 调 llm.small_model）
-_SYMPTOM_TOOL_MODEL = get_small_model_name()
-
 logger = get_logger(name="repair_sop")
 
 def _extract_symptom(text: str, slots: dict):
@@ -34,7 +32,7 @@ def _extract_symptom(text: str, slots: dict):
         resp = chat_with_tools(
             [HumanMessage(content=text)],
             [SYMPTOM_TOOL_SCHEMA],
-            model=_SYMPTOM_TOOL_MODEL,
+            model=get_small_model_name(),
         )
         tool_calls = getattr(resp, "tool_calls", None) or []
         if tool_calls:

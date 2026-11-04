@@ -29,7 +29,7 @@ def _resolve_model_query(session_id: str, query: str):
             return None
     try:
         from function_tools.model_tool import (
-            MODEL_TOOL_MODEL, MODEL_TOOL_SCHEMA, search_models_by_names,
+            MODEL_TOOL_SCHEMA, model_tool_model, search_models_by_names,
         )
         from tools.llm_tool import chat_with_tools
         from tools.metadata_extractor import extract_model_aspect, format_models
@@ -38,7 +38,7 @@ def _resolve_model_query(session_id: str, query: str):
         resp = chat_with_tools(
             [HumanMessage(content=f"对话历史：\n{history}\n\n用户当前问题：{query}")],
             [MODEL_TOOL_SCHEMA],
-            model=MODEL_TOOL_MODEL,
+            model=model_tool_model(),
         )
         tool_calls = getattr(resp, "tool_calls", None) or []
         if tool_calls:

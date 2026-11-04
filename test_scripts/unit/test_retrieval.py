@@ -393,7 +393,7 @@ def test_dense_search_embedding_path_and_fallback():
     store, legacy = _Store(), _LegacyStore()
     trace_store.add_ms = lambda *args, **kwargs: None
     try:
-        vs._rag_cfg = {"retrieval": {"dense_top_k": 5, "score_threshold": 0}}
+        vs._rag_cfg = lambda: {"retrieval": {"dense_top_k": 5, "score_threshold": 0}}
         vs.get_vector_store = lambda: store
         out = vs.DenseRetriever().search("问题")
         _assert_eq(out[0][1], 0.75, "向量查询的分值仍按相关性函数换算")

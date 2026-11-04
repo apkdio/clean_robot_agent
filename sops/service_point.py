@@ -34,13 +34,13 @@ def _extract_city_by_llm(text: str) -> list:
     from langchain_core.messages import HumanMessage
     from tools.llm_tool import chat_with_tools
     from function_tools.service_point_tool import (
-        geocode_city, SERVICE_POINT_TOOL_SCHEMA, SERVICE_POINT_TOOL_MODEL,
+        geocode_city, SERVICE_POINT_TOOL_SCHEMA, service_point_tool_model,
     )
     try:
         resp = chat_with_tools(
             [HumanMessage(content=text)],
             [SERVICE_POINT_TOOL_SCHEMA],
-            model=SERVICE_POINT_TOOL_MODEL,
+            model=service_point_tool_model(),
         )
         tool_calls = getattr(resp, "tool_calls", None) or []
         if tool_calls:
