@@ -1,0 +1,129 @@
+prompts/rewrite_system.md
+  s_40681318f5a20b::t_ac776e07445316 1-2
+tools/context_store.py
+  s_40681318f5a20b::t_405247a46e58df 183,186-188
+config/word_dict_config.py
+  s_40681318f5a20b::t_ca257e84fe9d64 283-284
+README.md
+  s_40681318f5a20b::t_384233e8125ff1 161
+  s_40681318f5a20b::t_349a654368401f 46
+  s_40681318f5a20b::t_2904bccff9ed4b 63
+prompts/orchestrator_system.md
+  s_40681318f5a20b::t_c22e9967e89cb7 2-8
+  s_40681318f5a20b::t_434c0e919d9fc7 1,9
+prompts/session_title.md
+  s_40681318f5a20b::t_657d3eb2bdb6bc 1-2
+  s_40681318f5a20b::t_52f78d93f5dd51 3-7
+prompts/casual_guard.md
+  s_40681318f5a20b::t_4d24672d172e84 1-2
+  s_40681318f5a20b::t_357486a47053db 3
+tools/query_rewrite.py
+  s_40681318f5a20b::t_621580afa53239 140,143-146
+test_scripts/unit/test_model_query_sop.py
+  s_40681318f5a20b::t_8edac6502dac34 205
+  s_40681318f5a20b::t_87fab1a377698e 329
+  s_40681318f5a20b::t_1ae15fa81339a7 206-207,209
+  s_40681318f5a20b::t_6e821ad61af2d1 308
+  s_40681318f5a20b::t_b0a81e77213155 508-509
+  s_40681318f5a20b::t_56c12b0802a2ae 302
+  s_40681318f5a20b::t_0c984720a7aa3a 95
+  s_40681318f5a20b::t_f3036acd676fde 301,303-307,309-328,330-341
+  s_40681318f5a20b::t_fde64e1039737b 235-236
+sops/repair.py
+  s_40681318f5a20b::t_2b702ad3b655d5 122
+  s_40681318f5a20b::t_497e738c88bf63 84,86-88
+sops/service_point.py
+  s_40681318f5a20b::t_cdfa9fae088d28 116
+  s_40681318f5a20b::t_18fcf9437169c6 121
+  s_40681318f5a20b::t_bb658c16b8f6d1 122
+config/prompts_template.yaml
+  s_40681318f5a20b::t_13cfa09a2d90bd 3,5-10
+  s_40681318f5a20b::t_786b1ae2497a8c 1
+  s_40681318f5a20b::t_99a55c1ecab0b5 4
+tools/generation.py
+  s_40681318f5a20b::t_06b114d4716cba 81-83,86
+  s_40681318f5a20b::t_d74f8b9ecf59c0 11
+tools/version_store.py
+  s_40681318f5a20b::t_f0e31404624e7a 134-135,137,144-148,151-152
+  s_40681318f5a20b::t_65625e6bae0568 132-133,136,138,140-143
+tools/prompts_tool.py
+  s_40681318f5a20b::t_58650310eba231 92
+  s_40681318f5a20b::t_209d3c64966ff0 108-111,114
+  s_40681318f5a20b::t_13f5267a0cc570 45-47,51
+  s_40681318f5a20b::t_c192b79dc741b1 85-87,93,103-104,113,115-116
+  s_40681318f5a20b::t_17f316e4cee9ed 1-2,5-13,19-38,44,48-50,52-63,65-66,68-84,88-91,96,98-102,106-107,121
+  s_40681318f5a20b::t_03b45c2f17aeac 3-4
+  s_40681318f5a20b::t_8a6ce636875f86 120
+  s_40681318f5a20b::t_73925c1177caa1 94-95,97,105
+  s_40681318f5a20b::t_eb024c791f151c 112
+test_scripts/unit/test_prompts_tool.py
+  s_40681318f5a20b::t_270faa0faab1a6 144
+  s_40681318f5a20b::t_d06d2ebd8a4e3a 170,175-179
+  s_40681318f5a20b::t_96ecab7b9df30d 189
+  s_40681318f5a20b::t_3fce8e7a98bb3f 78-80,84
+  s_40681318f5a20b::t_76175a52d006e1 186,188
+  s_40681318f5a20b::t_70dee069f0c37c 21
+  s_40681318f5a20b::t_31e6383085a8aa 121-143
+  s_40681318f5a20b::t_dcecfacf81a0df 27-35,37-38,41
+  s_40681318f5a20b::t_589bbdea429cc0 39-40
+  s_40681318f5a20b::t_191b7f5ded5d7a 36
+  s_40681318f5a20b::t_d3a9c75d9515a8 187
+  s_40681318f5a20b::t_a377dd79066d96 81-83,85
+  s_40681318f5a20b::t_0a2360db79bcd6 1-20,22-26,42-77,86-104,171-174,180-185,190-199
+  s_40681318f5a20b::t_e5c241f982aa9d 106-120,145-169
+test_scripts/unit/test_service_point_sop.py
+  s_40681318f5a20b::t_49373cf1124728 158
+  s_40681318f5a20b::t_48c119d5d0694c 160
+prompts/rag_answer_rules.md
+  s_40681318f5a20b::t_579175516209d2 11-13
+  s_40681318f5a20b::t_a95efc8d2f4748 1-10
+prompts/repair_steps.md
+  s_40681318f5a20b::t_f5282bf0658962 7
+  s_40681318f5a20b::t_297b0e1d5ea943 1-6
+tools/orchestrator.py
+  s_40681318f5a20b::t_9f38f17255ae81 125-129
+  s_40681318f5a20b::t_b8b2ad2aeeea31 132
+  s_40681318f5a20b::t_d5e5f640846300 112
+prompts/main_prompts.md
+  s_40681318f5a20b::t_51921c26144ea6 1-55
+sops/base.py
+  s_40681318f5a20b::t_a8500f0e0c565b 398-399
+  s_40681318f5a20b::t_1567ba85879877 309-310,313-315,317-322,329
+  s_40681318f5a20b::t_ba6cb3412c68b1 302-308,311-312,316,324-328
+  s_40681318f5a20b::t_45e162d07808aa 323
+  s_40681318f5a20b::t_b754f4f4e7527c 438-446
+  s_40681318f5a20b::t_3412b9f9072f14 14,22
+  s_40681318f5a20b::t_133090d0bed554 367-368
+  s_40681318f5a20b::t_51a3d21cbed903 403-404
+tools/hot_ingest.py
+  s_40681318f5a20b::t_95f7c989dde74a 310,313
+sops/model_query.py
+  s_40681318f5a20b::t_85a466d286c26f 18
+  s_40681318f5a20b::t_7f599b01a39cdf 29
+  s_40681318f5a20b::t_14fc087bffecde 39
+  s_40681318f5a20b::t_e98eb76b2379c1 201-203
+  s_40681318f5a20b::t_a51732a90a03b9 45
+  s_40681318f5a20b::t_67c740310012e3 200,204
+  s_40681318f5a20b::t_e148e4fe752cab 131-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "c2910098bcef8510ac21a75c157952f9ea6480df",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
