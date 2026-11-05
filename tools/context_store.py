@@ -180,16 +180,13 @@ def generate_session_title(query: str, answer: str) -> str:
     fallback_title = (query.strip()[:20] or "新会话")
     try:
         from tools.llm_tool import get_chat_model, get_small_model_name
+        from tools.prompts_tool import render
         from langchain_core.messages import HumanMessage
 
+        prompt = render("session_title", query=query, answer=answer[:120])
+        if prompt is None:
+            return fallback_title
         llm = get_chat_model(model=get_small_model_name(), temperature=0.3)
-        prompt = (
-            "请根据以下第一轮用户与客服的对话，生成一个简短的中文标题（6~10个字）。\n"
-            "要求：直接返回标题文字本身，不要包含引号、书名号、序号或标点符号，不要任何解释说明。\n\n"
-            f"用户：{query}\n"
-            f"客服：{answer[:120]}\n\n"
-            "标题："
-        )
         resp = llm.invoke([HumanMessage(content=prompt)])
         raw_title = getattr(resp, "content", "") or ""
         cleaned = re.sub(r'["\'《》“”‘’\n\r\t。，！？,.!?]', '', raw_title).strip()

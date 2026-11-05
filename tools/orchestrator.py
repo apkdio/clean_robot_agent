@@ -95,19 +95,6 @@ class Decision:
         }
 
 
-_SYSTEM = (
-    "你是扫地机器人客服系统的调度器。今天日期：{today}。\n"
-    "你的任务只有一个：判断用户这一句该用哪个工具，并把参数填好。\n"
-    "规则：\n"
-    "1. 只在给定工具里选；拿不准该不该用工具时**不要调用任何工具**。\n"
-    "2. `query` 参数填用户的**原话**，不要加任何前缀、标签或改写。\n"
-    "3. 金额、时间这类把原话搬过去（如「5000元以上」「最近半年」），不要自己换算。\n"
-    "4. 安全告警（冒烟、焦味、漏电）、情绪抱怨、闲聊、与扫地机器人无关的请求，都不要调工具。\n"
-    "5. 用户同时提了多件事时可以调多个工具，按依赖顺序给出。\n"
-    "6. 不要输出任何解释性文字。{extra}"
-)
-
-
 def decide(query: str, effective_query: str = "", history_block: str = "",
            domain_hint: Optional[str] = None, model: str = "") -> Decision:
     """让模型做一次决策（不执行任何工具）。
@@ -122,6 +109,7 @@ def decide(query: str, effective_query: str = "", history_block: str = "",
     from function_tools.model_tool import validate_find_models_args
     from function_tools.registry import build_tool_schemas, tool_names
     from tools.llm_tool import chat_with_tools, get_chat_model_name
+    from tools.prompts_tool import render
 
     extra = ""
     if history_block:
@@ -134,10 +122,14 @@ def decide(query: str, effective_query: str = "", history_block: str = "",
     tools = build_tool_schemas()
     allowed = set(tool_names())
     started = time.perf_counter()
+    system_prompt = render("orchestrator_system",
+                           today=date.today().isoformat(), extra=extra)
+    if system_prompt is None:
+        return Decision(error="prompt_render_failed",
+                        ms=(time.perf_counter() - started) * 1000)
     try:
         resp = chat_with_tools(
-            [SystemMessage(content=_SYSTEM.format(today=date.today().isoformat(), extra=extra)),
-             HumanMessage(content=query)],
+            [SystemMessage(content=system_prompt), HumanMessage(content=query)],
             tools, model=model or get_chat_model_name(), temperature=0.0,
         )
     except Exception as e:  # noqa: BLE001

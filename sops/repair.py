@@ -81,13 +81,11 @@ def _search_and_generate(slots: dict):
 
     from langchain_core.messages import HumanMessage, SystemMessage
     from tools.llm_tool import get_chat_model
-    from tools.prompts_tool import load_main_prompts
+    from tools.prompts_tool import load_main_prompts, render
 
-    user_msg = (
-        f"参考资料：\n{context}\n\n"
-        f"用户故障现象：{query}\n\n"
-        f"请基于参考资料，用简洁的分步格式给出故障排查步骤（先检测后修复，给出具体操作）。"
-    )
+    user_msg = render("repair_steps", context=context, query=query)
+    if user_msg is None:
+        return {"answer": ""}
     llm = get_chat_model(temperature=0.3)
     resp = llm.invoke([SystemMessage(content=load_main_prompts()), HumanMessage(content=user_msg)])
     return {"answer": (resp.content or "").strip()}
@@ -121,7 +119,7 @@ REPAIR_SOP = {
         {
             "id": "reply",
             "type": "reply",
-            "template": "{answer}",
+            "template": "$answer",
             "fallback": "抱歉，出了一点小问题，请重新提问～",
         },
     ],

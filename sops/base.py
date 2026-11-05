@@ -11,6 +11,7 @@ import time
 from tools import trace_store
 from tools.dto.sop import SopStepResult
 from tools.log_tool import get_logger
+from tools.prompts_tool import render
 from tools.safety import with_safety_hint
 from tools.state_store import StateStore
 from config.word_dict_config import (
@@ -18,7 +19,7 @@ from config.word_dict_config import (
     ENTER_CONFIRM, LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS, PRICIER_WORDS, NEWER_WORDS, OLDER_WORDS,
     REL_LABEL as _REL_LABEL, REL_SUPER as _REL_SUPER,
     SOP_NAMES, SOP_REENTER_HINT, SOP_REENTER_HINT_DEFAULT,
-    SOP_EMPTY_REPLY_FALLBACK,
+    SOP_ASK_FALLBACK, SOP_EMPTY_REPLY_FALLBACK,
 )
 
 logger = get_logger(name="sops_base")
@@ -298,15 +299,34 @@ def enter_decline_hint(sop_id: str) -> str:
     return SOP_REENTER_HINT.get(sop_id, SOP_REENTER_HINT_DEFAULT)
 
 
-def _ask_text(step: dict, key: str, ctx: dict) -> str:
-    """取问话文案；文案可以是字符串模板或 (ctx) -> str 的函数。"""
-    text = step.get(key, step["ask"]) or ""
-    if callable(text):
-        text = text(ctx) or ""
-    try:
-        return text.format(**ctx)
-    except (KeyError, IndexError):
-        return text
+def _step_text(value, ctx: dict) -> str:
+    """步骤文案可以是字符串或 (ctx) -> str 的函数。"""
+    if callable(value):
+        value = value(ctx)
+    return value or ""
+
+
+def _ask_text(step: dict, key: str, ctx: dict,
+              sop_id: str = "", step_id: str = "") -> str:
+    """渲染 ask/retry 文案；ask 缺参时先用 retry 重问，再不行用统一兜底。"""
+    text = _step_text(step.get(key, step["ask"]), ctx)
+    label = "sop:%s:%s:%s" % (sop_id or "?", step_id or "?", key)
+    if not text:
+        return SOP_ASK_FALLBACK
+
+    rendered = render(label, template=text, **ctx)
+    if rendered is not None:
+        return rendered
+
+    logger.warning("[SOP] %s step %s 的 %s 模板不可用，使用兜底话术",
+                   sop_id or "?", step_id or "?", key)
+    if key == "ask":
+        retry = _step_text(step.get("retry"), ctx)
+        if retry:
+            rendered = render(label + ":retry", template=retry, **ctx)
+            if rendered is not None:
+                return rendered
+    return SOP_ASK_FALLBACK
 
 
 def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResult:
@@ -344,7 +364,8 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
                     logger.info("[SOP] %s ask slot=%s", sop["id"], step.get("slot"))
                     flow.append({"i": session["step"], "type": "ask",
                                  "slot": step.get("slot"), "outcome": "asked"})
-                    return SopStepResult("ask", _ask_text(step, "ask", ctx))
+                    return SopStepResult("ask", _ask_text(
+                        step, "ask", ctx, sop["id"], step.get("id")))
                 value = step["extract"](user_input, session["slots"])
                 if value is SKIP:
                     # 显式留空：不重试，直接跳过该槽
@@ -374,11 +395,13 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
                         flow.append({"i": session["step"], "type": "ask",
                                      "slot": step.get("slot"), "outcome": "asked"})
                         return SopStepResult("ask", with_safety_hint(
-                            _ask_text(step, "ask", ctx), session_id, by="sop", sop=sop["id"]))
+                            _ask_text(step, "ask", ctx, sop["id"], step.get("id")),
+                            session_id, by="sop", sop=sop["id"]))
                     flow.append({"i": session["step"], "type": "ask",
                                  "slot": step.get("slot"), "outcome": "retry"})
                     return SopStepResult("ask", with_safety_hint(
-                        _ask_text(step, "retry", ctx), session_id, by="sop", sop=sop["id"]))
+                        _ask_text(step, "retry", ctx, sop["id"], step.get("id")),
+                        session_id, by="sop", sop=sop["id"]))
                 # 提取成功，重置重试计数
                 session["slots"][step["slot"]] = value
                 session.setdefault("slot_status", {})[step["slot"]] = "filled"
@@ -412,11 +435,15 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
                 ctx = {**session["slots"], **session.get("result", {})}
                 flow.append({"i": session["step"], "type": "reply", "outcome": "done"})
                 tpl = step["template"]
-                try:
-                    reply = tpl(ctx) if callable(tpl) else tpl.format(**ctx)
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("[SOP] reply template failed: %s", e)
-                    reply = step.get("fallback", SOP_EMPTY_REPLY_FALLBACK)
+                if callable(tpl):
+                    reply = tpl(ctx)
+                else:
+                    label = "sop:%s:%s:reply" % (sop["id"], step.get("id") or "?")
+                    reply = render(label, template=tpl, **ctx)
+                    if reply is None:
+                        logger.warning("[SOP] %s step %s 的 reply 模板不可用，使用 fallback",
+                                       sop["id"], step.get("id") or "?")
+                        reply = step.get("fallback", SOP_EMPTY_REPLY_FALLBACK)
                 reply = reply if isinstance(reply, str) else ""
                 if not reply.strip():
                     logger.warning("[SOP] %s step %s empty reply, fallback",

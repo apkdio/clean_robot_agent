@@ -137,17 +137,13 @@ def _llm_rewrite(query: str, history: str) -> str | None:
     """用小模型把追问改写成自足 query（输出受约束，校验不过即放弃）。"""
     from langchain_core.messages import HumanMessage
     from tools.llm_tool import get_small_model_name, stream_chat
+    from tools.prompts_tool import render
 
     max_chars = int(rewrite_cfg().get("max_chars", 80) or 80)
-    prompt = (
-        "下面是一段客服对话历史，以及用户当前这一句。\n"
-        "请把当前这一句改写成一个不依赖上文、单独也看得懂的问题："
-        "把「这个 / 那个 / 它」这类指代替换成历史里明确提到的对象，补全省略的信息。\n"
-        f"要求：只输出改写后的问题本身（不要解释、不要引号、不要加粗），不超过 {max_chars} 字；"
-        "如果当前这一句本身已经完整，就原样输出。\n\n"
-        f"对话历史：\n{history or '（无）'}\n\n"
-        f"用户当前这一句：{query}"
-    )
+    prompt = render("rewrite_system", max_chars=max_chars,
+                    history=history or "（无）", query=query)
+    if prompt is None:
+        return None
     try:
         out = "".join(stream_chat([HumanMessage(content=prompt)],
                                   model=get_small_model_name(), temperature=0.0))

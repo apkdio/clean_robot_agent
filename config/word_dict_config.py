@@ -280,6 +280,8 @@ NO_ANSWER_REPLIES = [
 
 # SOP 的 reply/收尾步骤产出空字符串时的保底话术；不能把空串当正常回答。
 SOP_EMPTY_REPLY_FALLBACK = "抱歉，我这边没有生成出有效回答，请再问一次～"
+# ask/retry 模板占位符失效时的保底问话；不能把未替换的 {xxx} 直接发给用户。
+SOP_ASK_FALLBACK = "抱歉，我没太听清，能再说一次吗？"
 # 用户给过预算/时间但槽位解析失败或重试耗尽时，不能静默按无条件筛选。
 MODEL_QUERY_CONSTRAINT_RETRY_REPLY = (
     "我没太理解您的预算或时间条件，能再具体说一次吗？比如「3000以内」「2025年发布的」。"

@@ -307,8 +307,10 @@ def invalidate_runtime_caches() -> None:
     """清掉进程内业务缓存；配置缓存统一由 config_tool.reload_configs() 处理。"""
     from tools import agent as _agent
     from tools.config_tool import reload_configs
+    from tools.prompts_tool import reset as reset_prompts
 
     reload_configs()
+    reset_prompts()
     _agent._hybrid_retriever = None
     try:
         from function_tools import model_tool as _mt, service_point_tool as _spt

@@ -129,16 +129,27 @@ def _dirty_digest(paths: list) -> str:
 
 
 def _prompts_meta() -> dict:
+    """prompt 目录里的实际文件与配置声明取并集，二者变化都进版本指纹。"""
+    rels = []
+    try:
+        from tools.prompts_tool import prompt_paths
+        rels.extend(prompt_paths())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[Version] 读取 prompt 配置失败，仍扫描目录：%s", e)
     base = _abs(_PROMPT_DIR)
-    if not os.path.isdir(base):
-        return {"files": [], "per_file": {}, "fingerprint": "missing"}
-    pairs = [("%s/%s" % (_PROMPT_DIR, name), _sha256(os.path.join(base, name)))
-             for name in sorted(os.listdir(base))
-             if os.path.isfile(os.path.join(base, name))]
+    if os.path.isdir(base):
+        for root, _dirs, names in os.walk(base):
+            rels.extend(_rel(os.path.join(root, name)) for name in names
+                        if os.path.isfile(os.path.join(root, name)))
+    pairs = [(rel, _sha256(_abs(rel))) for rel in sorted(set(rels))
+             if os.path.isfile(_abs(rel))]
+    if not pairs:
+        return {"files": [], "per_file": {}, "fingerprint": "missing",
+                "algo": "sha1-pairs-v2"}
     return {"files": [rel for rel, _ in pairs],
             "per_file": {rel: sha[:8] for rel, sha in pairs},
-            "fingerprint": _pairs_digest(pairs) if pairs else "empty",
-            "algo": "sha1-pairs-v1"}
+            "fingerprint": _pairs_digest(pairs),
+            "algo": "sha1-pairs-v2"}
 
 
 def _config_meta() -> dict:

@@ -15,6 +15,7 @@ from tools import trace_store
 from tools.log_tool import get_logger
 from tools.metadata_extractor import extract_price_constraint, extract_series, format_model_line
 from tools.model_query import resolve_date_range
+from tools.prompts_tool import render
 from tools.selection import is_skip, parse_multi_select
 from tools.model_tags import tag_options
 
@@ -25,7 +26,7 @@ def _skip_text(text: str) -> bool:
     return is_skip(text)
 
 
-def _extract_budget(text: str, slots: dict):
+def _extract_budget(text: str, _slots: dict):
     if _skip_text(text):
         return SKIP
     parsed = extract_price_constraint(text)
@@ -35,19 +36,19 @@ def _extract_budget(text: str, slots: dict):
     return (None, int(m.group(1))) if m else None
 
 
-def _extract_series(text: str, slots: dict):
+def _extract_series(text: str, _slots: dict):
     if _skip_text(text):
         return SKIP
     return extract_series(text) or None
 
 
-def _extract_publish(text: str, slots: dict):
+def _extract_publish(text: str, _slots: dict):
     if _skip_text(text):
         return SKIP
     return resolve_date_range(text)
 
 
-def _extract_tags(text: str, slots: dict):
+def _extract_tags(text: str, _slots: dict):
     kind, nums = parse_multi_select(text, len(TAG_ORDER))
     if kind == "skip":
         return SKIP
@@ -56,7 +57,7 @@ def _extract_tags(text: str, slots: dict):
     return [TAG_ORDER[i - 1] for i in nums]
 
 
-def _tag_ask(ctx: dict) -> str:
+def _tag_ask(_ctx: dict) -> str:
     lines = ["还需要哪些特点？回复序号，多个用逗号；不需要就回复「跳过」。"]
     for i, (tag_id, label) in enumerate(tag_options(), 1):
         lines.append(f"{i} {label}")
@@ -127,14 +128,20 @@ def _search(slots: dict):
     return {"count": len(models), "list": "\n".join(lines), "models": models}
 
 
-def _reply(ctx: dict) -> str:
-    if ctx.get("error") == "invalid_slots":
-        return MODEL_QUERY_CONSTRAINT_RETRY_REPLY
-    n = int(ctx.get("count") or 0)
-    if n <= 0:
-        return MODEL_QUERY_EMPTY_REPLIES[0]
-    head = "符合您条件的机器人有 %d 款：" % n
-    return head + "\n\n" + (ctx.get("list") or "") + "\n\n需要我帮您对比其中两款吗？"
+def _make_reply(templates: dict):
+    """按结果分支选择 reply 文案；模板由 SOP 的 reply 步骤传入。"""
+    def reply(ctx: dict) -> str:
+        if ctx.get("error") == "invalid_slots":
+            return templates.get("invalid") or MODEL_QUERY_CONSTRAINT_RETRY_REPLY
+        n = int(ctx.get("count") or 0)
+        if n <= 0:
+            return templates.get("empty") or MODEL_QUERY_EMPTY_REPLIES[0]
+        return render(
+            "sop:model_query:reply",
+            template=templates.get("ok") or "",
+            count=n, models=ctx.get("list") or "",
+        ) or ""
+    return reply
 
 
 MODEL_QUERY_SOP = {
@@ -190,7 +197,11 @@ MODEL_QUERY_SOP = {
         {
             "id": "reply",
             "type": "reply",
-            "template": _reply,
+            "template": _make_reply({
+                "invalid": MODEL_QUERY_CONSTRAINT_RETRY_REPLY,
+                "empty": MODEL_QUERY_EMPTY_REPLIES[0],
+                "ok": "符合您条件的机器人有 $count 款：\n\n$models\n\n需要我帮您对比其中两款吗？",
+            }),
         },
     ],
 }

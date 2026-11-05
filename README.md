@@ -43,7 +43,7 @@ clean_robot_agent/
 │   ├── agent.yaml               # Agent/LLM 配置（含模型名、温度）
 │   ├── rag.yaml                 # RAG 配置（分块、检索、RRF 参数）
 │   ├── chroma.yaml              # Chroma/embedding 配置
-│   ├── prompts.yaml             # Prompt 文件路径
+│   ├── prompts.yaml             # Prompt 模板路径映射
 │   ├── context.yaml             # 上下文承接与查询改写（低置信阈值、改写开关）
 │   ├── redis.yaml               # Redis 连接与各 TTL（可选，缺失即走本地内存降级）
 │   ├── word_dict_config.py      # 词表配置中心（情绪/退出/域/触发/症状/型号系列/词表型正则/固定话术等集中管理）
@@ -60,7 +60,7 @@ clean_robot_agent/
 │   ├── versions/                # 版本中台账本 / run manifest / 评测集快照（gitignore，随数据备份）
 │   ├── vector_store/            # Chroma 持久化向量库
 │   └── eval/                    # 评测集与基线：retrieval/ 单轮检索 · context/ 多轮行为 · intent/ 意图分类（本地数据，已 gitignore）
-├── prompts/                     # Prompt 模板（system/摘要/报告）
+├── prompts/                     # Prompt 完整模板（主系统提示 + 各链路模板）
 ├── tools/                       # 核心工具模块（详见下节）
 ├── function_tools/              # LLM 工具调用（function calling）工具
 │   ├── date_tool.py             # 日期计算工具（绝对/相对日期 → 日期范围）
@@ -158,7 +158,7 @@ clean_robot_agent/
 | `file_tools.py` | 文档多策略解析（txt/pdf/csv/docx） |
 | `llm_tool.py` | LLM / embedding 工厂（含 function calling） |
 | `log_tool.py` | 日志（控制台彩色 + 文件，按 `logs/<模块>/<日期>/` 分目录；行上带会话标记，可按会话 grep） |
-| `config_tool.py` / `path_tool.py` / `prompts_tool.py` | 配置 / 路径 / Prompt 加载 |
+| `config_tool.py` / `path_tool.py` / `prompts_tool.py` | 配置 / 路径 / Prompt 加载与占位符渲染 |
 | `context_store.py` | 会话上下文：按 session_id 持久化对话（jsonl 保留**全量**，内存与读取窗口为最近 6 轮）+ meta 元数据（LLM 标题）+ 会话增删查改 |
 | `redis_store.py` | Redis 连接封装 + 互斥锁（SET NX）+ 降级回退：无 Redis 时自动回退本地内存 |
 | `pending_store.py` | 统一澄清状态（SOP 进入/退出确认、操作澄清共用）：Redis `clarify:{sid}` + `clarify_ttl`（≥ `sop_ttl`），记录 `{biz, retry, state, data}`（`state` = 业务快照，如 SOP 的 step/slots），业务 id 隔离（`sop.enter` / `sop.exit` / `ops.clarify`），无 Redis 降级内存并校验时间戳；只存状态，不解析回答 |

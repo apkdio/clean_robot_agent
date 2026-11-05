@@ -113,12 +113,13 @@ SERVICE_POINT_SOP = {
             "type": "ask",
             "slot": "pick",
             "when": lambda ctx: len(ctx.get("candidates") or []) > 1,
-            "ask": "{choice_prompt}",
+            "ask": "$choice_prompt",
             "retry": "请回复序号（如 1）选择您要查询的地点～",
             "extract": _extract_pick,
         },
         {"id": "do_search", "type": "action", "action": _search_points},
-        {"id": "reply", "type": "reply", "template": "{points}"},
+        {"id": "reply", "type": "reply", "template": "$points",
+         "fallback": "抱歉，没能识别到城市～如果还有查询需求，可以回复「查询离我最近的网点」再次进入哦~"},
     ],
 }
 

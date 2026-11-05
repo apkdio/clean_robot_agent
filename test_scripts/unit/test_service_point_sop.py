@@ -155,9 +155,9 @@ def test_when_skips_step_and_formats_ask():
             {"id": "ask_n", "type": "ask", "slot": "n", "ask": "给个数字",
              "extract": lambda text, slots: int(re.search(r"\d", text).group()) if re.search(r"\d", text) else None},
             {"id": "ask_pick", "type": "ask", "slot": "pick", "when": lambda ctx: ctx.get("n", 0) > 1,
-             "ask": "{n} 大于 1，请再给个序号",
+             "ask": "$n 大于 1，请再给个序号",
              "extract": lambda text, slots: int(re.search(r"\d", text).group()) if re.search(r"\d", text) else None},
-            {"id": "reply", "type": "reply", "template": "{n}"},
+            {"id": "reply", "type": "reply", "template": "$n"},
         ],
     })
     sid = "when_probe_big"

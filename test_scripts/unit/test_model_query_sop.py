@@ -92,7 +92,7 @@ _TEST_SOP = {
          "ask": "有宠物吗？", "retry": "有或没有？", "extract": _extract_has_pet},
         {"id": "do_search", "type": "action", "action": _mock_search},
         {"id": "reply", "type": "reply",
-         "template": "共 {count} 款：{list}", "fallback": "抱歉，出了点小问题。"},
+         "template": "共 $count 款：$list", "fallback": "抱歉，出了点小问题。"},
     ],
 }
 
@@ -103,7 +103,7 @@ _BAD_SOP = {
         {"id": "ask_name", "type": "ask", "slot": "name",
          "ask": "叫什么？", "retry": "说名字。", "extract": lambda text, slots: text.strip() or None},
         {"id": "reply", "type": "reply",
-         "template": "你好{name}{missing_field}", "fallback": "抱歉，出了点小问题。"},
+         "template": "你好$name$missing_field", "fallback": "抱歉，出了点小问题。"},
     ],
 }
 
@@ -202,10 +202,11 @@ def test_extract_budget_bare_number():
 
 def test_result_reply():
     from config.word_dict_config import MODEL_QUERY_EMPTY_REPLIES
-    from sops.model_query import _reply
-    full = _reply({"count": 2, "list": "- A\n- B"})
+    from sops.model_query import MODEL_QUERY_SOP
+    reply = MODEL_QUERY_SOP["steps"][-1]["template"]
+    full = reply({"count": 2, "list": "- A\n- B"})
     _assert("符合您条件" in full and "对比其中两款" in full, "有结果时给出列表并追问对比")
-    empty = _reply({"count": 0, "list": "", "models": []})
+    empty = reply({"count": 0, "list": "", "models": []})
     _assert_eq(empty, MODEL_QUERY_EMPTY_REPLIES[0], "0 款时使用唯一的空结果话术")
     _assert(not re.search(r"\d", empty), "0 款时不给价格数字（没有依据的推荐）")
     _assert("对比" not in empty, "0 款时不追问对比")
@@ -231,7 +232,8 @@ def test_search_rejects_malformed_slots():
 
         out = mq._search({"budget": None, "_slot_status": {"budget": "dropped"}})
         _assert_eq(out.get("error"), "invalid_slots", "重试耗尽也走显式失败")
-        _assert_eq(mq._reply(out), MODEL_QUERY_CONSTRAINT_RETRY_REPLY,
+        _assert_eq(mq.MODEL_QUERY_SOP["steps"][-1]["template"](out),
+                   MODEL_QUERY_CONSTRAINT_RETRY_REPLY,
                    "失败回复要求用户重新说明条件")
 
         out = mq._search({"_slot_status": {"series": "dropped"}})
@@ -294,6 +296,47 @@ def test_template_fallback():
     _assert(done, "SOP 结束")
     _assert_eq(reply, "抱歉，出了点小问题。", "缺字段触发 fallback")
     _cleanup()
+
+
+def test_missing_ask_placeholder_uses_retry():
+    """ask 模板占位符缺失：生产模式回退 retry，不把 $missing 发给用户。"""
+    sop_id = "sop_missing_ask"
+    sops.base.register({
+        "id": sop_id,
+        "steps": [{
+            "id": "ask_name", "type": "ask", "slot": "name",
+            "ask": "$missing", "retry": "请再说一次名字～",
+            "extract": lambda text, slots: None,
+        }],
+    })
+    try:
+        result = sops.base.start_sop("s-missing-ask", sop_id, "x")
+        _assert_eq(result.reply, "请再说一次名字～", "ask 缺参回退 retry")
+        _assert_not_in("{", result.reply, "不回显未替换占位符")
+        _assert_eq(result.kind, "ask", "仍在 ask 状态")
+    finally:
+        sops.base.end_sop("s-missing-ask")
+        sops.base.SOPS.pop(sop_id, None)
+
+
+def test_missing_reply_placeholder_uses_fallback():
+    """reply 模板占位符缺失：生产模式走步骤 fallback，不抛异常。"""
+    sop_id = "sop_missing_reply"
+    sops.base.register({
+        "id": sop_id,
+        "steps": [{
+            "id": "reply", "type": "reply",
+            "template": "$missing", "fallback": "兜底回复",
+        }],
+    })
+    try:
+        result = sops.base.start_sop("s-missing-reply", sop_id, "x")
+        _assert_eq(result.reply, "兜底回复", "reply 缺参走 fallback")
+        _assert_not_in("{", result.reply, "不回显未替换占位符")
+        _assert(result.done, "reply 仍结束 SOP")
+    finally:
+        sops.base.end_sop("s-missing-reply")
+        sops.base.SOPS.pop(sop_id, None)
 
 
 def test_empty_reply_default_fallback():
@@ -462,6 +505,8 @@ TESTS = [
     test_retry_then_abandon,
     test_model_query_dropped_budget_does_not_return_all,
     test_template_fallback,
+    test_missing_ask_placeholder_uses_retry,
+    test_missing_reply_placeholder_uses_fallback,
     test_empty_reply_default_fallback,
     test_unknown_sop_id_dropped,
     test_stale_def_state_dropped,
