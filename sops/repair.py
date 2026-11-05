@@ -69,10 +69,10 @@ def _search_and_generate(slots: dict):
     ranked = hr.search_with_scores(query, filter={"file_name": domain_filter("repair")},
                                    trace_out=facts)
     chunks = [doc for doc, _score, _meta in ranked]
-    # 与主链路同口径留痕：否则 SOP 轮次的 retrieve 节点会被标成"没检索"，召回片段也进不了旁路文件
+    # SOP 内部检索单独标记，不再伪装成主链 retrieve
     trace_store.retrieval(**facts)
-    trace_store.step("retrieve", via="sop", n_chunks=len(chunks),
-                     chunks=trace_store.chunk_brief(ranked))
+    trace_store.node("sop.retrieve", status="ok", out={"via": "sop", "n": len(chunks)},
+                     in_={"chunks": len(ranked)})
     trace_store.chunks(ranked)
     if not chunks:
         return {"answer": "知识库暂时没有收录这个故障的排查方案，建议联系官方售后进一步咨询～"}

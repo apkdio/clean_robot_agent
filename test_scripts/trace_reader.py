@@ -20,15 +20,12 @@ def root_dir(arg_dir: str = "") -> str:
 
 
 def session_dir(root: str, session_id: str) -> str:
-    """解析会话目录（认日期层与旧布局）：会话名本身或 <会话名>_*；找不到返回按会话名的路径。"""
-    exact = os.path.join(root, session_id)
-    if os.path.isdir(exact):
-        return exact
+    """解析日期层下的会话目录（<会话名>_*）；找不到返回空。"""
     for full in trace_store.session_dirs(root):
         name = os.path.basename(full)
         if name == session_id or name.startswith(session_id + "_"):
             return full
-    return exact
+    return ""
 
 
 def session_files(root: str, session_id: str, kind: str = "", date: str = "") -> list:

@@ -54,8 +54,9 @@ _SLOW_MS = 30000   # 单轮超过这个耗时就在摘要里标「慢」
 
 def _flags(rec: dict) -> list:
     """值得多看一眼的标记（启发式，不是判定）。"""
-    steps = rec.get("steps") or {}
-    retrieve = steps.get("retrieve") or {}
+    path = rec.get("path") or []
+    retrieve = next((n for n in path if n.get("node") == "retrieve"), {})
+    n_chunks = (retrieve.get("out") or {}).get("n")
     ms = rec.get("ms") or {}
     out = []
     if rec.get("aborted"):
@@ -64,7 +65,7 @@ def _flags(rec: dict) -> list:
         out.append("error")
     if rec.get("retry"):
         out.append("retry 重答")
-    if retrieve.get("n_chunks") == 0 or rec.get("tag") == "no_answer_fallback":
+    if n_chunks == 0 or rec.get("tag") == "no_answer_fallback":
         out.append("0 召回/兜底")
     ret = rec.get("retrieval") or {}
     if (ret.get("twice_retrieval") or {}).get("active"):
@@ -77,19 +78,20 @@ def _flags(rec: dict) -> list:
 
 
 def _turn_lines(rec: dict) -> list:
-    steps = rec.get("steps") or {}
     bits = ["tag=%s" % (rec.get("tag") or "-")]
-    intent = steps.get("intent") or {}
+    intent = (rec.get("route") or {}).get("intent") or {}
     if intent:
         margin = intent.get("margin")
-        bits.append("意图=%s%s" % (intent.get("intent"),
+        bits.append("意图=%s%s" % (intent.get("label"),
                                  "(%.3f)" % float(margin) if isinstance(margin, (int, float)) else ""))
-    rewrite = steps.get("rewrite") or {}
+    rewrite = (rec.get("retrieval") or {}).get("rewrite") or {}
     if rewrite and rewrite.get("via") not in (None, "none"):
         bits.append("改写=%s→「%s」" % (rewrite.get("via"), rewrite.get("effective_query")))
-    retrieve = steps.get("retrieve") or {}
+    path = rec.get("path") or []
+    retrieve = next((n for n in path if n.get("node") == "retrieve"), {})
     if retrieve:
-        bits.append("检索=%s/%s条" % (retrieve.get("domain") or "全库", retrieve.get("n_chunks")))
+        out = retrieve.get("out") or {}
+        bits.append("检索=%s/%s条" % (out.get("domain") or "全库", out.get("n")))
     ms = rec.get("ms") or {}
     if ms:
         bits.append("耗时=" + "/".join("%s:%s" % (k, v) for k, v in sorted(ms.items())) + "ms")
@@ -470,13 +472,6 @@ def latest_date(root: str) -> str:
                 days.append(d)
     except OSError:
         pass
-    if days:
-        return max(days)
-    # 旧布局（会话目录直接挂根下）：从目录名里取日期
-    for name in os.listdir(root):
-        m = re.search(r"_(\d{8})_\d{4}$", name)
-        if m:
-            days.append(m.group(1))
     return max(days) if days else datetime.now().strftime("%Y%m%d")
 
 

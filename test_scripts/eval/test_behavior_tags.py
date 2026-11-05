@@ -6,7 +6,7 @@
   - _check_case 的硬行为四态：branch 命中 / 不一致 / 未记（分「无观测」与「tag 未登记」）/ 闭集外
   - 本轨只判行为：must_contain_any / must_not_contain 不参与判定
   - 评测集里每条期望行为都在闭集内（或属两个无专属 branch 的软行为期望）
-  - 主链路 trace（tools/trace_store.py）：一轮一条记录、分层块 + 兼容投影、落在隔离目录、best-effort
+  - 主链路 trace（tools/trace_store.py / repo/trace）：一轮一条记录、事实块 + span path、落在隔离目录、best-effort
 """
 import json
 import os
@@ -142,13 +142,13 @@ def test_trace_record_schema():
 
     _assert_true(rec, "一轮跑完落盘了一条记录")
     for field in ("v", "ts", "session_id", "turn_index", "query", "retry", "tag", "tags",
-                  "detail", "steps", "ms", "aborted", "error"):
+                  "detail", "path", "ms", "aborted", "error"):
         _assert_in(field, rec, f"稳定核字段 {field} 在")
     _assert_eq(rec.get("tag"), "retrieve_answer", "tag 记最后一次行为")
-    _assert_eq(((rec.get("steps") or {}).get("intent") or {}).get("intent"), "robot",
-               "环节信息进 steps（加环节 = 加 key，不改结构）")
-    _assert_true(isinstance(rec.get("steps"), dict) and isinstance(rec.get("detail"), dict),
-                 "开放层（steps / detail）是 dict")
+    _assert_eq((((rec.get("route") or {}).get("intent") or {}).get("label")), "robot",
+               "环节信息直接进事实块，不再有 steps 投影")
+    _assert_true(isinstance(rec.get("path"), list) and isinstance(rec.get("detail"), dict),
+                 "开放层（path / detail）是 list/dict")
     _assert_true(isinstance((rec.get("ms") or {}).get("total"), int), "带本轮总耗时 ms.total")
 
     path = trace_store._path(sid).replace("\\", "/")
@@ -220,12 +220,12 @@ def test_trace_report_flags():
     from test_scripts import trace_report
 
     _assert_in("aborted 未跑完", trace_report._flags({"aborted": True}), "未跑完的轮会被标出")
-    _assert_in("0 召回/兜底", trace_report._flags({"tag": "no_answer_fallback", "steps": {}}),
+    _assert_in("0 召回/兜底", trace_report._flags({"tag": "no_answer_fallback", "path": []}),
                "兜底轮会被标出")
     _assert_in("慢 45s", trace_report._flags({"ms": {"total": 45000}}), "超时阈值会标「慢」")
     _assert_eq(trace_report._flags({}), [], "平轮不给标记")
     line = trace_report._turn_lines({"turn_index": 2, "query": "那这个多少钱", "tag": "chitchat",
-                                     "steps": {"intent": {"intent": "casual", "margin": 0.9}},
+                                     "route": {"intent": {"label": "casual", "margin": 0.9}},
                                      "ms": {"total": 1200}})[0]
     _assert_in("tag=chitchat", line, "每轮行里带 tag")
     _assert_in("意图=casual(0.900)", line, "带意图与 margin")
@@ -311,16 +311,20 @@ def test_stage_spans_and_stream_close():
         reset_trace(sid)
 
     nodes = [n.get("node") for n in rec.get("path") or []]
-    _assert_eq(nodes, ["stage.normalize", "answer.verify", "stage.generate"],
-               "阶段顺序固定，流式阶段在子节点之后关闭")
+    _assert_eq(nodes, ["stage.normalize", "stage.generate", "answer.verify"],
+               "阶段 span 先 begin；流式阶段在子节点之后关闭")
     normalize = next(n for n in rec["path"] if n["node"] == "stage.normalize")
     generate = next(n for n in rec["path"] if n["node"] == "stage.generate")
+    verify = next(n for n in rec["path"] if n["node"] == "answer.verify")
     _assert_eq(normalize.get("out"), {"result": "continue", "prefix_chars": 2,
                                      "acted": True}, "Continue 记录 prefix 与 acted")
     _assert_eq(generate.get("out"), {"result": "finish", "prefix_chars": 0,
                                     "text_chars": 0, "stream": True,
                                     "acted": True, "stream_completed": True},
                "流式 Finish 完整消费后才落 span")
+    _assert_eq(verify.get("parent"), generate.get("id"),
+               "流式阶段的子节点挂在 stage.generate 下")
+    _assert_eq(generate.get("status"), "hit", "Finish 阶段状态是 hit")
 
 
 def test_stage_branch_alignment():
@@ -404,8 +408,9 @@ def test_trace_nesting():
     retrieve_node = next(n for n in rec["path"] if n["node"] == "retrieve")
     _assert_true(retrieve_node.get("ms", 0) >= 10, "add_ms 的耗时落到对应节点自己身上")
     _assert_eq((rec["route"].get("intent") or {}).get("label"), "robot", "route.intent 记分类结果")
-    _assert_eq((rec["steps"]["intent"] or {}).get("intent"), "robot", "投影 steps.intent 与分层块等价")
-    _assert_eq((rec["steps"]["retrieve"] or {}).get("n_chunks"), 2, "投影 steps.retrieve 仍在")
+    _assert_eq((rec["route"].get("intent") or {}).get("label"), "robot", "route.intent 与事实块一致")
+    _assert_eq((rec["retrieval"].get("domain") or {}).get("value"), "售后服务.txt",
+               "retrieval.domain 直接可取")
     rw = (rec["retrieval"] or {}).get("rewrite") or {}
     _assert_eq((rw.get("normalize") or {}).get("changed"), True,
                "归一化与上下文改写共用一个 rewrite 块（先记 normalize）")
@@ -458,8 +463,12 @@ def test_trace_nesting():
 
     rec3 = run("tracetest-layer-c", lambda: trace_store.note_behavior("chitchat"),
                query="你是谁", reply="我是无尘")
-    _assert_eq(rec3["path"][-1], {"node": "retrieve", "status": "skipped", "by": "chitchat"},
+    skipped = rec3["path"][-1]
+    _assert_eq((skipped.get("node"), skipped.get("status"), skipped.get("by")),
+               ("retrieve", "skipped", "chitchat"),
                "没检索的轮补一条 skipped 节点（谁让它跳过的）")
+    _assert_true("id" in skipped and "parent" in skipped,
+                 "补写的 skipped 节点也有 id/parent")
     for sid in ("tracetest-layer-a", "tracetest-layer-b", "tracetest-layer-c"):
         reset_trace(sid)
 
@@ -564,14 +573,11 @@ def test_emitted_tags_and_nodes_are_registered():
 
 
 def test_step_keys_registered():
-    """每个 step("xxx") 都必须在 trace_store._MIRRORED_STEPS 里登记。
-
-    没登记时只有 v2 投影（steps）有值，path 与 v3 分层块会静默缺失——扫调用点兜住。
-    """
+    """每个 step("xxx") 都必须有事实块处理分支；不再有 steps/mirror 投影。"""
     import ast
     import pathlib
 
-    from tools.trace_store import _MIRRORED_STEPS
+    from tools.trace_store import _STEP_NAMES
 
     root = pathlib.Path(__file__).resolve().parents[2]
     found = {}
@@ -589,17 +595,16 @@ def test_step_keys_registered():
                 arg = node.args[0]
                 if name == "step" and isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     found.setdefault(arg.value, str(py.relative_to(root)))
-    missing = {k: v for k, v in found.items() if k not in _MIRRORED_STEPS}
-    _assert_eq(missing, {}, "step 调用点全部已登记 mirror 分支")
-    _assert(_MIRRORED_STEPS <= set(found) | {"sop_gate"},
-            "登记表里没有僵尸键（sop_gate 只在 agent 侧条件调用）")
+    missing = {k: v for k, v in found.items() if k not in _STEP_NAMES}
+    _assert_eq(missing, {}, "step 调用点全部有事实块分支")
+    _assert(_STEP_NAMES <= set(found), "登记表里没有僵尸键")
 
 
 def test_route_nodes_written_once():
     """V10 契约：`route()` 自动落节点后，同一轮里每个 `route.*` 节点只能出现一次。
 
-    inject/danger/emotion 由 `route()` 落，intent/ops 由 `_mirror_step` 落（`_ROUTE_MIRRORED` 例外）——
-    任何一边重复写，路径读起来就像"判了两次"。以前靠人守，这里做机器检查。
+    inject/danger/emotion 由 `route()` 落，intent/ops 由 `step()` / `route()` 的事实写入路径落——
+    任何一边重复写，路径读起来就像"判了两次"。这里做机器检查。
     """
     from config.word_dict_config import TRACE_NODE_STATUSES
     from tools import trace_store

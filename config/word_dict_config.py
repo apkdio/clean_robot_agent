@@ -527,6 +527,8 @@ TRACE_NODE_LABELS = {
     "sop.pending": "待确认状态（旧）",
     "sop.step_error": "SOP 步骤异常",
     "sop.symptom": "症状映射",
+    "sop.step": "SOP 步骤",
+    "sop.retrieve": "SOP 检索",
     "sop.enter_gate": "进入门入口",
     "sop.reenter": "重答重开 SOP",
     "ops.clarify": "操作澄清",

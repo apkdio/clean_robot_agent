@@ -417,27 +417,24 @@ def _reason_text(key) -> str:
 def _trace_brief(record: dict) -> str:
     """把一条 trace 记录压成一行人读摘要（失败归因用）；没有 trace 返回空串。
 
-    主读 v3 分层块（route / retrieval / path），缺失时回落到 v2 投影 steps——
-    存量 v2 记录也看得懂。
+    V4 只读事实块（route / retrieval / path），不再兼容 v3 的 steps 投影。
     """
     if not record:
         return ""
-    steps = record.get("steps") or {}
     retrieval = record.get("retrieval") or {}
     bits = []
-    old_intent = steps.get("intent") or {}
-    intent = record.get("route", {}).get("intent") or {
-        "label": old_intent.get("intent"), "margin": old_intent.get("margin")}
+    intent = record.get("route", {}).get("intent") or {}
     if intent.get("label"):
         margin = intent.get("margin")
         bits.append("意图=%s%s" % (intent["label"],
                                   "(%.3f)" % float(margin) if isinstance(margin, (int, float)) else ""))
-    rewrite = retrieval.get("rewrite") or steps.get("rewrite") or {}
+    rewrite = retrieval.get("rewrite") or {}
     if rewrite and rewrite.get("via") not in (None, "none"):
         bits.append("改写=%s→「%s」" % (rewrite.get("via"), rewrite.get("effective_query")))
     domain = retrieval.get("domain")
-    domain = domain.get("value") if isinstance(domain, dict) else (steps.get("retrieve") or {}).get("domain")
-    n_chunks = (steps.get("retrieve") or {}).get("n_chunks")
+    domain = domain.get("value") if isinstance(domain, dict) else None
+    retrieve = next((n for n in (record.get("path") or []) if n.get("node") == "retrieve"), {})
+    n_chunks = (retrieve.get("out") or {}).get("n")
     if domain or n_chunks is not None:
         bits.append("检索=%s/%s条" % (domain or "全库", n_chunks if n_chunks is not None else "?"))
     if len(retrieval.get("passes") or []) > 1:

@@ -24,7 +24,7 @@ DATE = "2026-10-15"
 
 
 def _turn(turn_index, query, branch, **extra):
-    rec = {"v": 3, "ts": "2026-10-15T15:%02d:00" % turn_index, "session_id": SID,
+    rec = {"v": 4, "ts": "2026-10-15T15:%02d:00" % turn_index, "session_id": SID,
            "turn_index": turn_index, "query": query, "branch": branch, "tag": branch,
            "detail": {"hits": 2},
            "route": {"intent": {"label": "robot", "margin": 0.9}},
@@ -43,7 +43,7 @@ def _turn(turn_index, query, branch, **extra):
                     {"node": "route.intent", "status": "ok", "out": {"label": "robot", "margin": 0.9}},
                     {"node": "retrieve", "status": "ok", "ms": 12, "out": {"domain": "全库", "n": 2}}],
            "answer": {"kind": "answer", "model": "qwen2.5:7b", "chars": 40},
-           "ms": {"retrieve": 900, "total": 5000}, "steps": {}}
+           "ms": {"retrieve": 900, "total": 5000}}
     rec.update(extra)
     return rec
 

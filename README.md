@@ -61,6 +61,7 @@ clean_robot_agent/
 │   ├── vector_store/            # Chroma 持久化向量库
 │   └── eval/                    # 评测集与基线：retrieval/ 单轮检索 · context/ 多轮行为 · intent/ 意图分类（本地数据，已 gitignore）
 ├── prompts/                     # Prompt 完整模板（主系统提示 + 各链路模板）
+├── repo/trace/                  # trace 存储实现（paths / write / read / sidecar）
 ├── tools/                       # 核心工具模块（详见下节）
 ├── function_tools/              # LLM 工具调用（function calling）工具
 │   ├── date_tool.py             # 日期计算工具（绝对/相对日期 → 日期范围）
@@ -163,7 +164,7 @@ clean_robot_agent/
 | `redis_store.py` | Redis 连接封装 + 互斥锁（SET NX）+ 降级回退：无 Redis 时自动回退本地内存 |
 | `pending_store.py` | 统一澄清状态（SOP 进入/退出确认、操作澄清共用）：Redis `clarify:{sid}` + `clarify_ttl`（≥ `sop_ttl`），记录 `{biz, retry, state, data}`（`state` = 业务快照，如 SOP 的 step/slots），业务 id 隔离（`sop.enter` / `sop.exit` / `ops.clarify`），无 Redis 降级内存并校验时间戳；只存状态，不解析回答 |
 | `test_hooks.py` | **仅供测试/评测**的状态注入助手（danger 窗口 / 连续承接计数 / 活跃 SOP / 澄清状态）|
-| `trace_store.py` | 会话级 trace：每轮落一条结构化记录（`logs/trace/<日期>/<会话ID>_<日期>_<时间>/<同名>.jsonl`，先按日期分目录再按会话，best-effort 不影响对话，`TRACE_DIR` 可改落点）；记录与执行同构：进门判断、本轮唯一出口、有序节点（`stage.*` 阶段 span + 业务节点，含状态/耗时/进出事实）、两遍召回与各遍计数、最终候选的来源分布、SOP 动作链，另保留旧字段作兼容；同一会话目录下另有四份旁路文件：召回片段全文、影子决策、用户评价、执行事件流（`events.jsonl`，逐条追加用于崩溃复原） |
+| `trace_store.py` | 会话级 trace 的公共薄壳（实现拆在 `repo/trace/`）：每轮落一条结构化记录（`logs/trace/<日期>/<会话ID>_<日期>_<时间>/<同名>.jsonl`，先按日期分目录再按会话，best-effort 不影响对话，`TRACE_DIR` 可改落点）；记录与执行同构：进门判断、本轮唯一出口、有序节点（`stage.*` 阶段 span + 业务节点，含状态/耗时/进出事实）、两遍召回与各遍计数、最终候选的来源分布、SOP 动作链；同一会话目录下另有四份旁路文件：召回片段全文、影子决策、用户评价、执行事件流（`events.jsonl`，逐条追加用于崩溃复原） |
 | `version_store.py` | 评测版本中台：代码/环境指纹、评测集账本（登记/升版/归档/快照）、`run_id`、run manifest 与 `diff-eval`；正式基线要求干净工作区 |
 
 > trace 读侧是一个脚本 `test_scripts/trace_report.py`：文本视图按会话列出每轮走向（`--chunks/--shadow/--feedback` 看旁路证据）；

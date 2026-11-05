@@ -566,13 +566,16 @@ def _stage_out(outcome: StageOutcome | None, acted: bool, stream_completed=None,
     return out
 
 
-def _record_stage(spec: StageSpec, outcome: StageOutcome | None, started: float,
+def _record_stage(span_id, spec: StageSpec, outcome: StageOutcome | None, started: float,
                   acted: bool, stream_completed=None, error: BaseException = None) -> None:
     status = "error" if error is not None else (
-        "hit" if isinstance(outcome, Finish) else "ok")
-    trace_store.stage(spec.node, status=status,
-                      ms=int((time.perf_counter() - started) * 1000),
-                      out=_stage_out(outcome, acted, stream_completed, error))
+        "hit" if isinstance(outcome, Finish) else ("ok" if acted else "skipped"))
+    out = _stage_out(outcome, acted, stream_completed, error)
+    if status == "skipped":
+        out["by"] = "not_acted"
+    trace_store.end_span(span_id, status=status,
+                         ms=int((time.perf_counter() - started) * 1000),
+                         out=out)
 
 
 def _run_stages(ctx: TurnContext) -> Iterator[str]:
@@ -582,14 +585,15 @@ def _run_stages(ctx: TurnContext) -> Iterator[str]:
     """
     for spec in _STAGES:
         started = time.perf_counter()
+        span_id = trace_store.begin_span(spec.node, kind="stage")
         before = _ctx_mark(ctx)
         try:
             outcome = spec.fn(ctx)
         except Exception as exc:  # noqa: BLE001
-            _record_stage(spec, None, started, True, error=exc)
+            _record_stage(span_id, spec, None, started, True, error=exc)
             raise
         if isinstance(outcome, Continue):
-            _record_stage(spec, outcome, started,
+            _record_stage(span_id, spec, outcome, started,
                           _stage_acted(outcome, _ctx_mark(ctx) != before))
             if outcome.prefix:
                 yield outcome.prefix
@@ -597,7 +601,7 @@ def _run_stages(ctx: TurnContext) -> Iterator[str]:
         if isinstance(outcome, Finish):
             acted = _stage_acted(outcome, _ctx_mark(ctx) != before)
             if outcome.stream is None:
-                _record_stage(spec, outcome, started, acted)
+                _record_stage(span_id, spec, outcome, started, acted)
                 if outcome.prefix:
                     yield outcome.prefix
                 if outcome.text:
@@ -614,15 +618,15 @@ def _run_stages(ctx: TurnContext) -> Iterator[str]:
                 completed = True
             except Exception as exc:  # noqa: BLE001
                 failed = True
-                _record_stage(spec, outcome, started, acted, error=exc)
+                _record_stage(span_id, spec, outcome, started, acted, error=exc)
                 raise
             finally:
                 if not failed:
-                    _record_stage(spec, outcome, started, acted,
+                    _record_stage(span_id, spec, outcome, started, acted,
                                   stream_completed=completed)
             return
         error = TypeError("阶段返回了未知 outcome：%r" % (outcome,))
-        _record_stage(spec, None, started, True, error=error)
+        _record_stage(span_id, spec, None, started, True, error=error)
         raise error
 
 

@@ -44,14 +44,14 @@ def _models_ready():
 
 
 def _turn(sid, fn, query):
-    """跑一轮并返回 (reply, flow)；flow 取自 trace 的 steps.sop.flow。"""
+    """跑一轮并返回 (reply, flow)；flow 取自 trace 的 sop.flow。"""
     trace_store.begin_turn(sid, query)
     try:
         reply = fn()
     finally:
         trace_store.end_turn()
     row = trace_reader.load(trace_store._path(sid))[-1]
-    flow = ((row.get("steps") or {}).get("sop") or {}).get("flow") or []
+    flow = (row.get("sop") or {}).get("flow") or []
     return reply, flow
 
 

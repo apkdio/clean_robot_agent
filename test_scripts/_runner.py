@@ -197,11 +197,10 @@ def disable_shadow():
 
 
 def reset_trace(session_id: str) -> None:
-    """清掉某个会话的 trace：删当天落盘文件 + 清 trace_store 的进程内计数。
+    """清掉某个会话的 trace：删当天落盘文件 + 清共享/本地轮次号。
 
-    评测会跨行复用同一个 sid，不清就会：① 文件跨次运行累积；② turn_index 接着上次的行数数
-    （_seq 只在首次种入）。trace 不是判定依据，这里全 best-effort；若将来内部结构改名，
-    这里只会静默失效——真要长期依赖，应让 trace_store 提供一个公开的 reset。
+    评测会跨行复用同一个 sid，不清就会文件累积、turn_index 接着上次数；
+    trace_store.reset_sequence() 同时清 Redis `trace:seq` 与本地 fallback。
     """
     try:
         from tools import trace_store
@@ -214,8 +213,7 @@ def reset_trace(session_id: str) -> None:
         session_dir = trace_store._session_dir(session_id)
         if session_dir and os.path.isdir(session_dir) and not os.listdir(session_dir):
             os.rmdir(session_dir)          # 文件删空就连目录收掉：别留空壳（读数器会按目录名解析日期）
-        for key in [k for k in list(trace_store._seq) if k[0] == session_id]:
-            trace_store._seq.pop(key, None)
+        trace_store.reset_sequence(session_id)
         trace_store._last.pop(session_id, None)
     except Exception:  # noqa: BLE001
         pass

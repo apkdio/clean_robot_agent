@@ -34,6 +34,7 @@ SKIP = object()
 #            slot_status 本身留在 session；两者都不进入模板上下文。
 # reply 步：{"id": xxx, "type": "reply", "template": str|fn, "fallback": str}
 # 三种步骤都可带 "when": fn 条件跳过；reply 的 fallback 用于空串或模板异常。
+# 执行器每个循环迭代开一条 sop.step span；out 与 sop.flow 的条目同源。
 
 
 def is_consulting(query: str) -> bool:
@@ -329,6 +330,12 @@ def _ask_text(step: dict, key: str, ctx: dict,
     return SOP_ASK_FALLBACK
 
 
+def _close_step(span_id, status: str, out: dict) -> None:
+    """关闭当前 sop.step span；span_id 为空时 no-op。"""
+    if span_id is not None:
+        trace_store.end_span(span_id, status=status, out=out)
+
+
 def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResult:
     """执行/推进指定会话的 SOP；session 可传入本轮已加载的快照。"""
     if session is None:
@@ -339,31 +346,48 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
     steps = sop["steps"]
     ended = False  # 是否已结束（reply/异常防御里 _end 置 True）
     flow = []      # 本轮走到的动作链（进 trace）
+    step_span = None
 
     try:
         while session["step"] < len(steps):
             step = steps[session["step"]]
             ctx = {**session["slots"], **session.get("result", {})}
+            step_in = {"i": session["step"], "type": step["type"],
+                       "slot": step.get("slot"), "retry": session.get("retry_count", 0)}
+            step_out = {}
+            step_span = trace_store.begin_span("sop.step", kind="step", in_=step_in)
+            step_status = "ok"
+
+            def _record(entry):
+                flow.append(entry)
+                step_out.update(entry)
+
             # 针对网点的结果，如果结果只有一个，跳过反问澄清环节
             if step.get("when") and not step["when"](ctx):
-                flow.append({"i": session["step"], "type": step["type"], "outcome": "skipped"})
+                _record({"i": session["step"], "type": step["type"], "outcome": "skipped"})
                 _advance(session)
+                _close_step(step_span, "skipped", step_out)
+                step_span = None
                 continue
 
             if step["type"] == "ask":
                 slot = step.get("slot")
                 # 预填槽：不重复问；进入下一槽/动作
                 if slot and session["slots"].get(slot) is not None:
-                    flow.append({"i": session["step"], "type": "ask", "slot": slot,
-                                 "outcome": "skipped", "by": "prefill"})
+                    _record({"i": session["step"], "type": "ask", "slot": slot,
+                             "outcome": "skipped", "by": "prefill"})
                     _advance(session)
                     user_input = None
+                    _close_step(step_span, "skipped", step_out)
+                    step_span = None
                     continue
                 # 有用户输入 → 尝试提取槽位；否则 → 问问题
                 if user_input is None:
                     logger.info("[SOP] %s ask slot=%s", sop["id"], step.get("slot"))
-                    flow.append({"i": session["step"], "type": "ask",
-                                 "slot": step.get("slot"), "outcome": "asked"})
+                    _record({"i": session["step"], "type": "ask",
+                             "slot": step.get("slot"), "outcome": "asked"})
+                    _close_step(step_span, "ok", step_out)
+                    step_span = None
                     return SopStepResult("ask", _ask_text(
                         step, "ask", ctx, sop["id"], step.get("id")))
                 value = step["extract"](user_input, session["slots"])
@@ -373,8 +397,10 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
                     session.setdefault("slot_status", {})[slot] = "skipped"
                     _advance(session)
                     user_input = None
-                    flow.append({"i": session["step"] - 1, "type": "ask",
-                                 "slot": slot, "outcome": "skipped"})
+                    _record({"i": session["step"] - 1, "type": "ask",
+                             "slot": slot, "outcome": "skipped"})
+                    _close_step(step_span, "skipped", step_out)
+                    step_span = None
                     continue
                 if value is None:
                     # 提取失败：累加重试次数，超过上限则放弃该槽位（记 None 跳过）
@@ -385,20 +411,26 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
                         _advance(session)
                         user_input = None
                         logger.warning("[SOP] %s slot %s abandoned after retries", sop["id"], step["slot"])
-                        flow.append({"i": session["step"] - 1, "type": "ask",
-                                     "slot": step.get("slot"), "outcome": "abandoned"})
+                        _record({"i": session["step"] - 1, "type": "ask",
+                                 "slot": step.get("slot"), "outcome": "abandoned"})
+                        _close_step(step_span, "skipped", step_out)
+                        step_span = None
                         continue
                     # 首轮提取失败（retry_count==1）→ 用 ask 话术（还没问过用户）
                     # 后续提取失败（retry_count≥2）→ 用 retry 话术（重问）
                     logger.info("[SOP] %s slot %s extract failed (retry=%d)", sop["id"], step["slot"], session["retry_count"])
                     if session["retry_count"] == 1:
-                        flow.append({"i": session["step"], "type": "ask",
-                                     "slot": step.get("slot"), "outcome": "asked"})
+                        _record({"i": session["step"], "type": "ask",
+                                 "slot": step.get("slot"), "outcome": "asked"})
+                        _close_step(step_span, "ok", step_out)
+                        step_span = None
                         return SopStepResult("ask", with_safety_hint(
                             _ask_text(step, "ask", ctx, sop["id"], step.get("id")),
                             session_id, by="sop", sop=sop["id"]))
-                    flow.append({"i": session["step"], "type": "ask",
-                                 "slot": step.get("slot"), "outcome": "retry"})
+                    _record({"i": session["step"], "type": "ask",
+                             "slot": step.get("slot"), "outcome": "retry"})
+                    _close_step(step_span, "ok", step_out)
+                    step_span = None
                     return SopStepResult("ask", with_safety_hint(
                         _ask_text(step, "retry", ctx, sop["id"], step.get("id")),
                         session_id, by="sop", sop=sop["id"]))
@@ -408,9 +440,11 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
                 _advance(session)
                 user_input = None
                 logger.info("[SOP] %s slot %s = %s", sop["id"], step["slot"], value)
-                flow.append({"i": session["step"] - 1, "type": "ask", "slot": step.get("slot"),
-                             "outcome": "filled",
-                             "value": value if len(str(value)) <= 40 else str(value)[:40] + "…"})
+                _record({"i": session["step"] - 1, "type": "ask", "slot": step.get("slot"),
+                         "outcome": "filled",
+                         "value": value if len(str(value)) <= 40 else str(value)[:40] + "…"})
+                _close_step(step_span, "ok", step_out)
+                step_span = None
                 continue
 
             elif step["type"] == "action":
@@ -420,20 +454,22 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
                 result = step["action"](action_slots)
                 session["result"] = result
                 n_models = len(result.get("models") or []) if isinstance(result, dict) else 0
-                flow.append({"i": session["step"], "type": "action", "outcome": "ok",
-                             "n_models": n_models})
+                _record({"i": session["step"], "type": "action", "outcome": "ok",
+                         "n_models": n_models})
                 if isinstance(result, dict) and "models" in result:
                     save_recommend(session_id, result["models"])
                     logger.info("[SOP] %s action executed (%d models)", sop["id"], n_models)
                 else:
                     logger.info("[SOP] %s action executed",sop["id"])
                 _advance(session)
+                _close_step(step_span, "ok", step_out)
+                step_span = None
                 continue
 
             elif step["type"] == "reply":
                 # 输出结果并结束；template 可以是字符串（.format 取槽位/结果）或函数（按结果分支，如 0 款换话术）
                 ctx = {**session["slots"], **session.get("result", {})}
-                flow.append({"i": session["step"], "type": "reply", "outcome": "done"})
+                _record({"i": session["step"], "type": "reply", "outcome": "done"})
                 tpl = step["template"]
                 if callable(tpl):
                     reply = tpl(ctx)
@@ -452,6 +488,8 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
                 ended = True
                 _finished_store.set(session_id, session)
                 _end(session_id)
+                _close_step(step_span, "hit", step_out)
+                step_span = None
                 logger.info("[SOP] %s finished", sop["id"])
                 return SopStepResult("reply", reply, done=True)
 
@@ -465,6 +503,8 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
         # 异常照常向上抛——外层 ask_stream 出兜底话术、trace 记 error
         logger.warning("[SOP] %s 第 %s 步执行失败（%s）：%s",
                        sop["id"], session["step"], type(e).__name__, e)
+        _close_step(step_span, "error", step_out if "step_out" in locals() else {})
+        step_span = None
         cur = steps[session["step"]] if session["step"] < len(steps) else {}
         trace_store.node("sop.step_error", status="error",
                          in_={"step": session["step"], "type": cur.get("type"), "slot": cur.get("slot")})
@@ -472,6 +512,7 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
         _end(session_id)
         raise
     finally:
+        _close_step(step_span, "ok", step_out if "step_out" in locals() else {})
         trace_store.step("sop", flow=flow)
         # 会话未结束（停在 ask 等下一轮）→ 保存最新状态
         if not ended:
