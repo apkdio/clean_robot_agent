@@ -1,0 +1,21 @@
+config/word_dict_config.py
+  s_321753db235424::t_c7d929a7d16be4 142-143
+test_scripts/unit/test_operations.py
+  s_321753db235424::t_64823915983c19 31-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.52-trip",
+  "base_commit_sha": "5565dc0be7a908b131ceaec56bd9a36dd1006594",
+  "prompts": {},
+  "sessions": {
+    "s_321753db235424": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_vqwohz01c4pd",
+        "model": "auto(free)"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
