@@ -159,12 +159,12 @@ def ingest():
         try:
             result = ingest_file(save_path)
             if result.get("status") == "ok":
-                # 手动入库也要让索引侧跟上：重建 BM25、失效 models.pkl、重置检索器单例；
-                # 快照一并作废——上传按 basename 替换会盖掉同名知识文件的 chunk，
-                # 而磁盘上的原文件哈希没变，快照与索引从此对不上，作废让下轮热更新全量对齐
-                from tools.hot_ingest import invalidate_snapshot, rebuild_sparse_index
+                # 手动入库也要让索引侧跟上：统一失效 BM25 / 型号记录 / 检索器单例，
+                # 下一次检索懒重建；快照一并作废——上传按 basename 替换会盖掉同名知识文件的
+                # chunk，而磁盘上的原文件哈希没变，快照与索引从此对不上，作废让下轮热更新全量对齐
+                from tools.hot_ingest import invalidate_runtime_caches, invalidate_snapshot
                 invalidate_snapshot()
-                rebuild_sparse_index()
+                invalidate_runtime_caches()
         finally:
             # 摄入完成后清理临时文件（只删自己刚命名的这个）
             try:
@@ -188,10 +188,10 @@ def reset():
         from tools.hot_ingest import invalidate_snapshot
         invalidate_snapshot()
         deleted = reset_collection()
-        # 清库后立即失效全部索引缓存（BM25/pkl/检索器单例/型号名单）：
-        # 否则进程内还留着旧知识，最长 30 分钟继续用已删内容作答
-        from tools.hot_ingest import rebuild_sparse_index
-        rebuild_sparse_index()
+        # 清库后立即失效全部索引缓存（BM25/型号记录/检索器单例）：
+        # 否则进程内还留着旧知识，最长 30 分钟继续用已删内容作答；下一次检索懒重建
+        from tools.hot_ingest import invalidate_runtime_caches
+        invalidate_runtime_caches()
         return jsonify({"status": "ok", "deleted": deleted})
     except Exception as e:
         logger.error(f"[Reset] {e}")

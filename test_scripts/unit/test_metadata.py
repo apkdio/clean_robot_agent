@@ -2,7 +2,7 @@
 
 覆盖：
   - extract_price_constraint（区间/上限/下限/浮动/中文数字）
-  - build_filter（预算 → Chroma where）
+  - resolve_budget_filter（预算 → Chroma where，兼容检索侧）
   - extract_price_metadata / extract_publish_date（chunk → metadata）
   - extract_model_info（型号名/系列/参数）
   - format_model_line（全字段 + aspect 维度）
@@ -77,8 +77,8 @@ def test_extract_price_constraint():
     _assert(f("") is None, "空串→None")
 
 
-def test_build_filter():
-    from tools.metadata_extractor import build_filter as f
+def test_budget_filter_adapter():
+    from tools.metadata_extractor import resolve_budget_filter as f
     _assert_eq(f("1000以内"), {"min_price": {"$lte": 1000}}, "上限→min_price lte")
     _assert_eq(
         f("1000-2000元"),
@@ -265,44 +265,88 @@ def test_store_fingerprint_content_sensitive():
         vector_store.get_vector_store = real
 
 
+def test_budget_range_filter_parity():
+    """规则 DTO 与旧 Chroma filter 在同一 fixture 下筛出的型号集合一致。"""
+    if not _models_ready():
+        _skip("无型号数据（Chroma/pkl 缓存缺失）")
+    from tools.metadata_extractor import enumerate_models, resolve_budget_filter, resolve_budget_range
+    for query in ("1000以内", "1000-2000元", "1000以上"):
+        rng = resolve_budget_range(query, allow_llm=False)
+        f = resolve_budget_filter(query, allow_llm=False)
+        _assert(rng is not None and f is not None, query + " 两种解析都应有结果")
+        low, high = rng
+        old = {m["name"] for m in enumerate_models(f)}
+        new = {m["name"] for m in enumerate_models({"file_name": {"$ne": "__never__"}})
+               if (low is None or int(m.get("price") or 0) >= low)
+               and (high is None or int(m.get("price") or 0) <= high)}
+        _assert_eq(old, new, query + " 的旧 filter / DTO 集合一致")
+
+
+def test_extract_tag_metadata():
+    from tools.metadata_extractor import extract_spec_metadata, extract_tag_metadata
+    text = ("1. **不染一尘天工 T1 Pro**\n"
+            "   - 特点：零缠绕浮动主刷 + 宠物模式\n"
+            "   - 标签：养宠友好, 防毛发缠绕\n"
+            "   - 参考价：3699")
+    tags = extract_tag_metadata(text)
+    _assert_eq(tags.get("tag_pet_friendly"), True, "中文标签 → tag_pet_friendly")
+    _assert_eq(tags.get("tag_anti_tangle"), True, "多个标签都解析")
+    _assert_eq(tags.get("tag_quiet"), False, "未命中的受控标签为 False")
+    _assert_eq(extract_tag_metadata("1. **X**\n   - 标签：无").get("tag_pet_friendly"), False,
+               "「无」表示明确不打标签")
+    _assert_eq(extract_tag_metadata("1. **X**\n   - 标签：不存在").get("tag_pet_friendly"), False,
+               "未知标签忽略且不抛异常")
+    _assert("param_标签" not in extract_spec_metadata(text), "标签不进通用 param_*")
+
+
 def test_models_cache_rebuilt_on_content_change():
     """models.pkl 由旧内容生成、正文已改（指纹变）→ 必须重建，不能继续给旧价格。"""
     import pickle
     from tools import metadata_extractor as me
+    from tools import models_repo as mr
     from tools import vector_store
-    real_store, real_path, real_enum = (vector_store.get_vector_store, me._MODELS_CACHE_FILE,
-                                        me._enumerate_models_from_store)
+    real_store, real_path, real_build = (vector_store.get_vector_store, mr._CACHE_FILE,
+                                         mr._build_records)
     rel = "temp/models_cache_test.pkl"
     abs_path = os.path.join(os.path.dirname(os.path.dirname(_SCRIPT_DIR)), rel)
     try:
         class _S:
             _collection = _FakeCollection([("型号.txt", "sha-new")])
         vector_store.get_vector_store = lambda: _S()
-        me._MODELS_CACHE_FILE = rel
-        me._enumerate_models_from_store = lambda f, require_field=None: [{"name": "新数据"}]
+        mr._CACHE_FILE = rel
+        mr._cache["fingerprint"] = None
+        mr._cache["records"] = None
+        mr._build_records = lambda: [{"name": "新数据", "price": 1}]
         os.makedirs(os.path.dirname(abs_path), exist_ok=True)
         with open(abs_path, "wb") as f:        # 旧缓存：旧指纹 + 旧价格
-            pickle.dump({"fingerprint": "old-fp", "models": [{"name": "旧数据"}]}, f)
+            pickle.dump({"schema": 1, "fingerprint": "old-fp",
+                         "records": [{"name": "旧数据", "price": 1}]}, f)
         _assert_eq([m["name"] for m in me.get_all_models()], ["新数据"], "指纹不符 → 重建，不返回旧缓存")
         with open(abs_path, "rb") as f:
-            _assert_eq(pickle.load(f)["fingerprint"], vector_store.store_fingerprint(), "新缓存写入当前指纹")
+            payload = pickle.load(f)
+        _assert_eq(payload.get("fingerprint"), vector_store.store_fingerprint(), "新缓存写入当前指纹")
+        _assert_eq(payload.get("schema"), 1, "缓存带 schema，旧格式不会误读")
     finally:
         vector_store.get_vector_store = real_store
-        me._MODELS_CACHE_FILE = real_path
-        me._enumerate_models_from_store = real_enum
+        mr._CACHE_FILE = real_path
+        mr._build_records = real_build
+        mr._cache["fingerprint"] = None
+        mr._cache["records"] = None
         if os.path.isfile(abs_path):
             os.remove(abs_path)
 
 
 TESTS = [
     test_extract_price_constraint,
-    test_build_filter,
+    test_budget_filter_adapter,
     test_extract_price_metadata,
     test_extract_publish_date,
     test_extract_model_info,
     test_format_model_line,
     test_extract_model_aspect,
     test_extract_series,
+    test_budget_range_filter_parity,
+    test_extract_tag_metadata,
     test_cn_to_int,
     test_match_model_filter,
     test_enumerate_models_by_series,

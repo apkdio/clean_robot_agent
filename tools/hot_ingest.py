@@ -304,36 +304,28 @@ def apply_changes(data_dir: str, added: dict, changed: dict, removed: list) -> d
 
 
 def invalidate_runtime_caches() -> None:
-    """清掉进程内业务缓存；配置缓存统一由 config_tool.reload_configs() 处理。"""
+    """知识库变更后统一失效：BM25 / 型号记录 / 检索器单例 / 业务缓存。
+
+    BM25 与型号记录都走懒加载，下一次检索或型号查询再重建；这里不阻塞摄入请求。
+    """
     from tools import agent as _agent
     from tools.config_tool import reload_configs
+    from tools.path_tool import get_abs_path
     from tools.prompts_tool import reset as reset_prompts
 
+    cache = get_abs_path("data/pkl/bm25_index.pkl")
+    if os.path.isfile(cache):
+        os.remove(cache)
     reload_configs()
     reset_prompts()
     _agent._hybrid_retriever = None
     try:
-        from function_tools import model_tool as _mt, service_point_tool as _spt
-        _mt._model_names_cache = None
+        from tools import models_repo
+        from function_tools import service_point_tool as _spt
+        models_repo.invalidate()
         _spt._points_cache = None
     except Exception:  # noqa: BLE001
         pass
-
-
-def rebuild_sparse_index() -> None:
-    """强制重建 BM25 索引并失效相关缓存（丢弃缓存，避免复用陈旧的 pickle）。
-
-    热更新与手动入库都走这里：知识库变更后 BM25 与 models.pkl 都过期了。
-    """
-    from tools.path_tool import get_abs_path
-    # 同步失效型号元数据缓存（models.pkl）——知识库变更后型号数据已过期
-    for cache_name in ("data/pkl/bm25_index.pkl", "data/pkl/models.pkl"):
-        cache = get_abs_path(cache_name)
-        if os.path.isfile(cache):
-            os.remove(cache)
-    from tools.vector_store import build_hybrid_index
-    build_hybrid_index()
-    invalidate_runtime_caches()
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -368,8 +360,8 @@ def run_once(data_dir: str = None) -> bool:
             # 快照刚被作废而目录为空（清库场景）：索引缓存还留着旧内容，强制重建一次，
             # 否则空目录永远走不到下方的 rebuild，旧知识永久陈旧
             if not new and not os.path.isfile(_snapshot_path()):
-                logger.warning("[HotIngest] snapshot invalidated with empty dir, force rebuild indexes")
-                rebuild_sparse_index()
+                logger.warning("[HotIngest] snapshot invalidated with empty dir, invalidate indexes")
+                invalidate_runtime_caches()
                 save_snapshot(new)
             logger.info("[HotIngest] No changes detected")
             return False
@@ -387,7 +379,7 @@ def run_once(data_dir: str = None) -> bool:
                     logger.info("[HotIngest] 变更明细：%s %s | %s", kind, rel,
                                 change_detail(os.path.join(data_dir, rel)))
         results = apply_changes(data_dir, added, changed, removed)
-        rebuild_sparse_index()
+        invalidate_runtime_caches()
         # 快照只为成功的文件推进，失败的下轮还会被 diff 抓到
         failed = set(results.get("failed") or [])
         if failed:

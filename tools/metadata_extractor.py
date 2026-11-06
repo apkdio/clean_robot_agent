@@ -22,7 +22,9 @@ from config.word_dict_config import (
     SERIES_LIST,
     SERIES_MAP_DICT,
     SPEC_SKIP_KEYS as _SPEC_SKIP_KEYS,
+    TAG_CATALOG as _TAG_CATALOG,
 )
+from function_tools.date_tool import publish_int
 from tools.llm_tool import get_small_model_name
 from tools.log_tool import get_logger
 
@@ -104,6 +106,36 @@ def extract_spec_metadata(text: str) -> Dict:
             num = _spec_number(value)
             if num is not None:
                 out.setdefault(f"param_{key}_num", num)
+    return out
+
+
+_TAG_LABEL_TO_ID = {meta["label"]: tag_id for tag_id, meta in _TAG_CATALOG.items()}
+_TAG_LINE_RE = re.compile(r"^\s*-\s*标签\s*[:：]\s*(.*)$")
+
+
+def extract_tag_metadata(text: str) -> Dict:
+    """从型号条目的「- 标签：…」行提取受控标签，输出全部 `tag_<id>: True/False`。
+
+    标签只认 TAG_CATALOG 的 id 或中文 label；未知标签告警并忽略。
+    「无 / 跳过」表示明确不打标签；整条没有标签行时同样全部为 False。
+    """
+    out = {f"tag_{tag_id}": False for tag_id in _TAG_CATALOG}
+    for line in text.splitlines():
+        m = _TAG_LINE_RE.match(line)
+        if not m:
+            continue
+        raw = m.group(1).strip()
+        if raw in ("", "无", "无标签", "跳过"):
+            continue
+        for item in re.split(r"[，,、|/]+", raw):
+            item = item.strip()
+            if not item:
+                continue
+            tag_id = item if item in _TAG_CATALOG else _TAG_LABEL_TO_ID.get(item)
+            if tag_id is None:
+                logger.warning("[Tag] 未登记标签 %r，已忽略", item)
+                continue
+            out[f"tag_{tag_id}"] = True
     return out
 
 
@@ -225,10 +257,6 @@ def extract_model_aspect(query: str) -> str:
     return ""
 
 
-# 全量型号元数据 pickle 缓存（避免每次型号枚举读 Chroma 全量 + 正则提取）
-_MODELS_CACHE_FILE = "data/pkl/models.pkl"
-
-
 def _match_model_filter(info: Dict, f: dict) -> bool:
     """判断型号 info 是否满足 Chroma 风格的 where 过滤（内存过滤）。
     """
@@ -242,8 +270,7 @@ def _match_model_filter(info: Dict, f: dict) -> bool:
         if key in ("min_price", "max_price", "price"):
             val = info.get("price")
         elif key == "publish_date":
-            pd = info.get("publish_date") or ""
-            val = int(pd.replace("-", "")) if pd else None
+            val = publish_int(info.get("publish_date")) or None
         else:
             val = info.get(key)
         if val is None:
@@ -261,74 +288,28 @@ def _match_model_filter(info: Dict, f: dict) -> bool:
     return True
 
 
-def _enumerate_models_from_store(filter: dict, require_field: str) -> list[Dict]:
-    """底层：从 Chroma 读全量 + 提取 + 去重（不带缓存，重建用）。"""
-    from tools.vector_store import search_by_filter
-    docs = search_by_filter(filter)
-    models, seen = [], set()
-    for c in docs:
-        info = extract_model_info(c)
-        if info.get(require_field) and info.get("name") and info["name"] not in seen:
-            seen.add(info["name"])
-            models.append(info)
-    return models
-
-
 def get_all_model_records() -> list[Dict]:
-    """全量型号记录：extract_model_info 的字段 + 该 chunk 的全部 param_*（通用规格）。
-    """
-    from tools.vector_store import search_by_filter
+    """全量型号记录（基础字段 + `param_*` + `tag_*`），由 models_repo 统一缓存。"""
+    from tools.models_repo import all_records
 
-    out, seen = [], set()
-    for c in search_by_filter({"file_name": {"$ne": "__never__"}}):
-        info = extract_model_info(c)
-        if not info.get("name") or not info.get("price"):
-            continue
-        if info["name"] in seen:
-            continue
-        seen.add(info["name"])
-        info.update({k: v for k, v in (c.metadata or {}).items() if k.startswith("param_")})
-        out.append(info)
-    return out
+    return all_records()
 
 
 def get_all_models() -> list[Dict]:
-    """全量型号 info 列表，走 data/pkl/models.pkl 缓存（fingerprint = vector_store.store_fingerprint()）。
-    """
-    import os
-    import pickle
-    from tools.path_tool import get_abs_path
-    from tools.vector_store import store_fingerprint
-
-    path = get_abs_path(_MODELS_CACHE_FILE)
-    fingerprint = store_fingerprint()
-
-    if os.path.isfile(path):
-        try:
-            with open(path, "rb") as f:
-                payload = pickle.load(f)
-            if payload.get("fingerprint") == fingerprint:
-                return payload["models"]
-        except Exception:
-            pass
-
-    models = _enumerate_models_from_store({"file_name": {"$ne": "__never__"}}, require_field="price")
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "wb") as f:
-            pickle.dump({"fingerprint": fingerprint, "models": models}, f, protocol=pickle.HIGHEST_PROTOCOL)
-    except Exception:
-        pass
-    return models
+    """全量型号基础视图（去掉 `param_*` / `tag_*`），供展示和型号名判断。"""
+    return [{k: v for k, v in record.items()
+             if not k.startswith(("param_", "tag_"))}
+            for record in get_all_model_records()]
 
 
 def enumerate_models(filter: dict, require_field: str = "price") -> list[Dict]:
-    """按 filter 枚举匹配型号（基于 pickle 缓存 + 内存过滤，不读 Chroma）。
-
-    """
-    models = get_all_models()
-    if require_field and require_field != "price":
-        models = [m for m in models if m.get(require_field)]
+    """按 filter 枚举匹配型号（全部走 models_repo 缓存，不读 Chroma）。"""
+    models = get_all_model_records()
+    if require_field:
+        if require_field == "price":
+            models = [m for m in models if m.get("price") is not None]
+        else:
+            models = [m for m in models if m.get(require_field)]
     if filter:
         models = [m for m in models if _match_model_filter(m, filter)]
     return models
@@ -450,40 +431,28 @@ def extract_price_constraint(query: str) -> Optional[tuple]:
     return None
 
 
-def build_filter(query: str) -> Optional[Dict]:
-    """从用户 query 构建 Chroma where 过滤条件。
-
-    未检测到结构化约束（普通 RAG 查询）时返回 None。
-    """
-    c = extract_price_constraint(query)
-    if c is None:
-        return None
-    min_price, max_price = c
+def _range_to_filter(low: Optional[int], high: Optional[int]) -> Optional[Dict]:
+    """预算上下限 → 兼容 Chroma 的 where；空约束返回 None。"""
     conditions = []
-    if max_price is not None:
-        conditions.append({"min_price": {"$lte": max_price}})
-    if min_price is not None:
-        conditions.append({"max_price": {"$gte": min_price}})
-    if len(conditions) == 1:
-        return conditions[0]
-    return {"$and": conditions}
+    if high is not None:
+        conditions.append({"min_price": {"$lte": high}})
+    if low is not None:
+        conditions.append({"max_price": {"$gte": low}})
+    if not conditions:
+        return None
+    return conditions[0] if len(conditions) == 1 else {"$and": conditions}
 
 
-def resolve_budget_filter(query: str) -> Optional[Dict]:
-    """把问题里的预算表达解析成 Chroma 过滤条件（规则优先 + LLM 兜底）。
-    """
-    # 1. 确定性规则（显式区间 / 单一上限）
-    f = build_filter(query)
-    if f is not None:
-        return f
-
-    # 2. 无预算提示特征 → 直接返回，不调 LLM
-    if not _BUDGET_HINT_RE.search(query):
+def resolve_budget_range(query: str, allow_llm: bool = True) -> Optional[tuple]:
+    """预算表达 → (min, max)；规则优先，必要时 LLM 兜底。"""
+    c = extract_price_constraint(query)
+    if c is not None and (c[0] is not None or c[1] is not None):
+        return c
+    if not allow_llm or not _BUDGET_HINT_RE.search(query):
         return None
 
-    # 3. LLM function calling 兜底
     try:
-        from function_tools.budget_tool import BUDGET_TOOL_SCHEMA, budget_args_to_filter
+        from function_tools.budget_tool import BUDGET_TOOL_SCHEMA, budget_args_to_range
         from tools.llm_tool import chat_with_tools
         from langchain_core.messages import HumanMessage
         resp = chat_with_tools(
@@ -495,10 +464,18 @@ def resolve_budget_filter(query: str) -> Optional[Dict]:
         if tool_calls:
             tc = tool_calls[0]
             args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
-            f = budget_args_to_filter(args)
-            if f is not None:
+            rng = budget_args_to_range(args)
+            if rng is not None:
                 logger.info("[Budget] resolved via LLM tool: %s", args)
-                return f
+                return rng
     except Exception as e:
         logger.warning("[Budget] tool calling failed: %s", e)
     return None
+
+
+def resolve_budget_filter(query: str, allow_llm: bool = True) -> Optional[Dict]:
+    """预算表达 → Chroma 过滤条件（旧适配；新代码用 resolve_budget_range）。"""
+    rng = resolve_budget_range(query, allow_llm=allow_llm)
+    if rng is None:
+        return None
+    return _range_to_filter(rng[0], rng[1])

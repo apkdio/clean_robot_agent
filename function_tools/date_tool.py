@@ -211,9 +211,23 @@ DATE_TOOL_SCHEMA = {
 }
 
 
+def publish_int(value) -> int:
+    """任意日期表达 → int YYYYMMDD；无法解析返回 0。
+
+    兼容 ISO 文本、int 记录与带中文的发布时间文本，作为模型/日期比较的唯一入口。
+    """
+    if isinstance(value, bool) or value is None:
+        return 0
+    digits = str(value) if isinstance(value, int) else re.sub(r"\D", "", str(value))
+    return int(digits) if len(digits) >= 8 else 0
+
+
 def _iso_to_int(iso: str) -> int:
     """ISO 日期 → int YYYYMMDD（Chroma 的 $gte/$lte 只接受数值操作数）。"""
-    return int(iso.replace("-", ""))
+    value = publish_int(iso)
+    if not value:
+        raise ValueError("invalid ISO date: %r" % (iso,))
+    return value
 
 
 def build_date_filter(start_date: str, end_date: str | None = None) -> dict:

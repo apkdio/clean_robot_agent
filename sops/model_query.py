@@ -8,16 +8,16 @@ from config.word_dict_config import (
     MODEL_QUERY_EMPTY_REPLIES,
     MODEL_QUERY_TRIGGER,
     MODEL_QUERY_WEAK_TRIGGER,
+    TAG_CATALOG,
     TAG_ORDER,
 )
 from function_tools.model_tool import find_models_by_args
 from tools import trace_store
 from tools.log_tool import get_logger
 from tools.metadata_extractor import extract_price_constraint, extract_series, format_model_line
-from tools.model_query import resolve_date_range
+from tools.model_query import parse_publish
 from tools.prompts_tool import render
 from tools.selection import is_skip, parse_multi_select
-from tools.model_tags import tag_options
 
 logger = get_logger(name="model_query_sop")
 
@@ -45,7 +45,8 @@ def _extract_series(text: str, _slots: dict):
 def _extract_publish(text: str, _slots: dict):
     if _skip_text(text):
         return SKIP
-    return resolve_date_range(text)
+    rng = parse_publish(text)
+    return (rng.start, rng.end) if rng else None
 
 
 def _extract_tags(text: str, _slots: dict):
@@ -59,8 +60,8 @@ def _extract_tags(text: str, _slots: dict):
 
 def _tag_ask(_ctx: dict) -> str:
     lines = ["还需要哪些特点？回复序号，多个用逗号；不需要就回复「跳过」。"]
-    for i, (tag_id, label) in enumerate(tag_options(), 1):
-        lines.append(f"{i} {label}")
+    for i, tag_id in enumerate(TAG_ORDER, 1):
+        lines.append(f"{i} {TAG_CATALOG[tag_id]['label']}")
     return "\n".join(lines)
 
 

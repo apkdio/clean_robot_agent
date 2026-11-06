@@ -5,15 +5,10 @@
 from __future__ import annotations
 
 from tools import trace_store
-from tools.dto.model_query import ModelQueryResult
+from tools.dto.model_query import ModelQueryResult, PriceRange, PublishRange
 from tools.log_tool import get_logger
-from tools.metadata_extractor import (
-    build_filter,
-    extract_series,
-    format_model_line,
-    resolve_budget_filter,
-)
-from function_tools.date_tool import DATE_TOOL_SCHEMA, calc_date_range, parse_date
+from tools.metadata_extractor import extract_series, format_model_line, resolve_budget_range
+from function_tools.date_tool import DATE_TOOL_SCHEMA, calc_date_range, parse_date, publish_int
 from function_tools.model_tool import find_models_by_args
 from config.word_dict_config import (
     BRAND_EVENT_WORDS,
@@ -26,30 +21,12 @@ from config.word_dict_config import (
 logger = get_logger(name="model_query")
 
 
-def _budget_bounds(query: str, allow_llm: bool = True) -> tuple[int, int]:
-    """预算上下限；allow_llm=False 时只走规则（供操作判别/打分）。"""
-    f = resolve_budget_filter(query) if allow_llm else build_filter(query)
-    if not f:
-        return 0, 0
-    low = high = 0
-
-    def walk(node):
-        nonlocal low, high
-        if not isinstance(node, dict):
-            return
-        if "$and" in node:
-            for sub in node["$and"]:
-                walk(sub)
-            return
-        cond = node.get("min_price")
-        if isinstance(cond, dict) and "$lte" in cond:
-            high = max(high, int(cond["$lte"]))
-        cond = node.get("max_price")
-        if isinstance(cond, dict) and "$gte" in cond:
-            low = max(low, int(cond["$gte"]))
-
-    walk(f)
-    return low, high
+def parse_budget(query: str, allow_llm: bool = True) -> PriceRange | None:
+    """预算表达 → PriceRange；规则优先，必要时 LLM 兜底。"""
+    rng = resolve_budget_range(query, allow_llm=allow_llm)
+    if rng is None:
+        return None
+    return PriceRange(rng[0], rng[1])
 
 
 def resolve_date_range(query: str, allow_llm: bool = True):
@@ -83,6 +60,17 @@ def resolve_date_range(query: str, allow_llm: bool = True):
     return None
 
 
+def parse_publish(query: str, allow_llm: bool = True) -> PublishRange | None:
+    """发布时间表达 → PublishRange（内部统一 YYYYMMDD）。"""
+    r = resolve_date_range(query, allow_llm=allow_llm)
+    if not r:
+        return None
+    start, end = publish_int(r[0]), publish_int(r[1])
+    if not start:
+        return None
+    return PublishRange(start, end or None)
+
+
 def is_model_query_intent(query: str) -> bool:
     """明确在问型号/产品/系列，而不是普通叙述里碰巧出现「有什么」。"""
     words = ("型号", "机型", "产品", "系列", "推荐", "清单", "列表", "款式")
@@ -91,30 +79,30 @@ def is_model_query_intent(query: str) -> bool:
 
 def resolve_model_constraints(query: str, allow_llm: bool = True):
     """把 query 收敛成 (find_models 参数, kind)；allow_llm=False 只走规则。"""
-    low, high = _budget_bounds(query, allow_llm=allow_llm)
-    date = None
+    budget = parse_budget(query, allow_llm=allow_llm)
+    publish = None
     if not any(w in query for w in BRAND_EVENT_WORDS):
-        date = resolve_date_range(query, allow_llm=allow_llm)
+        publish = parse_publish(query, allow_llm=allow_llm)
     # 日期常是陪衬：没有预算、也没有发布/选型信号时不独立直出
-    if date and not (low or high) and not DATE_SELECT_HINT_RE.search(query):
+    if publish and not budget and not DATE_SELECT_HINT_RE.search(query):
         logger.info("[ModelQuery] date without selection hint, skip: %s", query[:40])
-        date = None
+        publish = None
     series = extract_series(query) if is_model_query_intent(query) else ""
-    if not (low or high or date or series):
+    if not (budget or publish or series):
         return None
-    if series and not (low or high or date):
+    if series and not (budget or publish):
         kind = "series"
-    elif low or high:
-        kind = "budget+date" if date else "budget"
-    elif date:
+    elif budget:
+        kind = "budget+date" if publish else "budget"
+    elif publish:
         kind = "date"
     else:
         kind = "series"
     args = {
-        "budget_min": low,
-        "budget_max": high,
-        "publish_start": date[0] if date else "",
-        "publish_end": date[1] if date else "",
+        "budget_min": (budget.min or 0) if budget else 0,
+        "budget_max": (budget.max or 0) if budget else 0,
+        "publish_start": publish.start if publish else "",
+        "publish_end": publish.end if publish else "",
         "series": series or "",
         "limit": 50,
     }

@@ -38,11 +38,8 @@ BUDGET_TOOL_SCHEMA = {
 }
 
 
-def budget_args_to_filter(args: Dict) -> Optional[Dict]:
-    """把 LLM 返回的 {budget_max} 转成 Chroma where 过滤条件。
-
-    budget_max 为空 / 0 / 非数字 → None（视为无预算，走全库兜底）。
-    """
+def budget_args_to_range(args: Dict) -> Optional[tuple]:
+    """把 LLM 返回的 {budget_max} 转成 (None, max)；无效预算返回 None。"""
     if not args:
         return None
 
@@ -57,4 +54,12 @@ def budget_args_to_filter(args: Dict) -> Optional[Dict]:
 
     if max_val <= 0:
         return None
-    return {"min_price": {"$lte": max_val}}
+    return None, max_val
+
+
+def budget_args_to_filter(args: Dict) -> Optional[Dict]:
+    """兼容 Chroma 的旧适配：把 LLM 的预算上限转成 where 条件。"""
+    rng = budget_args_to_range(args)
+    if rng is None:
+        return None
+    return {"min_price": {"$lte": rng[1]}}

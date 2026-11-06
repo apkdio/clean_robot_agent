@@ -145,7 +145,8 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
         return {"status": "error", "file": file_path, "message": "Splitting returned no chunks."}
 
     # 给每个 chunk 打上结构化 metadata（价格、发布时间、通用规格参数）
-    from tools.metadata_extractor import extract_price_metadata, extract_publish_date, extract_spec_metadata
+    from tools.metadata_extractor import (extract_price_metadata, extract_publish_date,
+                                          extract_spec_metadata, extract_tag_metadata)
     for chunk in chunks:
         chunk.metadata.setdefault("source", tag)
         chunk.metadata.setdefault("file_name", file_name)
@@ -154,6 +155,8 @@ def ingest_file(file_path: str, source_tag: str = "") -> dict:
         chunk.metadata.update(extract_publish_date(chunk.page_content))
         # 规格行 → param_<键> / param_<键>_num（通用，不预设参数名）
         chunk.metadata.update(extract_spec_metadata(chunk.page_content))
+        # 「标签：」行 → tag_<id>: True/False（受控词表，见 TAG_CATALOG）
+        chunk.metadata.update(extract_tag_metadata(chunk.page_content))
 
     # 持久化到 Chroma
     logger.info(f"[Ingest] Embedding {len(chunks)} chunk(s) from {file_name}")

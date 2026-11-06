@@ -7,12 +7,13 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools.model_query import (ModelQueryResult, format_model_query, resolve_model_constraints,
-                               resolve_model_query)
+from tools.model_query import (ModelQueryResult, format_model_query, parse_budget, parse_publish,
+                               resolve_model_constraints, resolve_model_query)
+from function_tools.date_tool import publish_int
 
 
 def _publish_int(model):
-    return int(str(model.get("publish_date") or "").replace("-", "")[:8] or 0)
+    return publish_int(model.get("publish_date"))
 
 
 def test_budget_only():
@@ -37,7 +38,7 @@ def test_date_only():
     q = "2025年发布的扫地机器人有哪些"
     c, kind = resolve_model_constraints(q)
     _assert_eq(kind, "date", "只命中日期")
-    _assert_eq((c["publish_start"], c["publish_end"]), ("2025-01-01", "2025-12-31"), "日期区间")
+    _assert_eq((c["publish_start"], c["publish_end"]), (20250101, 20251231), "日期区间统一 int YYYYMMDD")
     r = resolve_model_query(q)
     _assert(r is not None and r.models, "日期能筛出型号")
     _assert(all(20250101 <= _publish_int(m) <= 20251231 for m in r.models), "结果都在区间内")
@@ -82,6 +83,16 @@ def test_internal_publish_range():
                "limit 生效")
 
 
+def test_parse_constraint_dtos():
+    b = parse_budget("预算2000以内的扫地机器人", allow_llm=False)
+    _assert(b is not None and b.min is None and b.max == 2000, "预算 DTO")
+    p = parse_publish("2025年发布的扫地机器人", allow_llm=False)
+    _assert(p is not None and (p.start, p.end) == (20250101, 20251231),
+            "日期 DTO 内部统一 YYYYMMDD")
+    _assert(parse_budget("随便聊聊", allow_llm=False) is None, "无预算 → None")
+    _assert(parse_publish("边刷多久换一次", allow_llm=False) is None, "无日期 → None")
+
+
 def test_format_empty_result():
     r = ModelQueryResult(models=[{"name": "X"}], kind="budget", constraints={})
     _assert_in("在您预算内", format_model_query(r), "格式化不依赖 agent")
@@ -95,6 +106,7 @@ TESTS = [
     test_date_gate_and_guards,
     test_no_match_falls_back,
     test_internal_publish_range,
+    test_parse_constraint_dtos,
     test_format_empty_result,
 ]
 

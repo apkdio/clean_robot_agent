@@ -348,7 +348,7 @@ ASPECT_KEYWORDS = [
 ]
 
 # 已有专用抽取器的规格键（min_price/max_price/publish_date），通用规格解析要跳过
-SPEC_SKIP_KEYS = {"参考价", "发布时间"}
+SPEC_SKIP_KEYS = {"参考价", "发布时间", "标签"}
 # 价格类条件的键名
 PRICE_KEYS = ("参考价", "价格", "价钱", "价位")
 # 发布时间类条件的键名（同上）

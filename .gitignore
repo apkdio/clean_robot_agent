@@ -33,15 +33,13 @@ temp/
 # Independent demo modules
 Multi_Route_Retrieval/
 
-# Local notes（本地笔记，不随仓库发布）
+# Local notes
 notes/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# trace HTML 报告（含真实用户话术，不外发）
+# trace HTML 报告
 reports/
 
-# Agent 开发准则（本地约定，不进仓库）
-AGENTS.md

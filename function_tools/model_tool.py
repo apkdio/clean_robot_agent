@@ -13,14 +13,15 @@ from typing import Dict, List
 from config.word_dict_config import (
     ABOVE_RE as _ABOVE_RE,
     BELOW_RE as _BELOW_RE,
-    BRAND_NAME as _BRAND_NAME,
     ENUM_RE as _ENUM_RE,
     PRICE_KEYS as _PRICE_KEYS,
     PUBLISH_KEYS as _PUBLISH_KEYS,
     TAG_CATALOG as _TAG_CATALOG,
 )
+from function_tools.date_tool import publish_int
 from tools.llm_tool import get_chat_model_name
 from tools.log_tool import get_logger
+from tools.models_repo import all_records, match_key
 
 logger = get_logger(name="model_tool")
 
@@ -59,19 +60,9 @@ def _enumerate_model_infos() -> List[Dict]:
     return enumerate_models({"file_name": {"$ne": "__never__"}}, require_field="price")
 
 
-_model_names_cache: List[str] | None = None
-
-
 def get_all_model_names() -> List[str]:
-    """全量型号名列表（模块级缓存），供型号上下文判断用。
-
-    用 require_field="price" 过滤，只保留真正的型号条目（排除品牌介绍 FAQ
-    里加粗但无价格的标题，如「不染一尘和云境智能是什么关系？」）。
-    """
-    global _model_names_cache
-    if _model_names_cache is None:
-        _model_names_cache = [m["name"] for m in _enumerate_model_infos() if m.get("name")]
-    return _model_names_cache
+    """全量型号名列表，直接从 models_repo 缓存派生（不再另建名单缓存）。"""
+    return [m["name"] for m in _enumerate_model_infos() if m.get("name")]
 
 
 def search_models_by_names(model_names: str) -> List[Dict]:
@@ -254,12 +245,8 @@ def _sort_value_of(record: Dict, sort_by: str) -> float:
 
 
 def _publish_int(record: Dict) -> int:
-    """型号记录的发布时间 → int YYYYMMDD（库里给的是文本，区间比较要数值）。"""
-    value = record.get("publish_date")
-    if isinstance(value, int):
-        return value
-    digits = re.sub(r"\D", "", str(value or ""))
-    return int(digits) if len(digits) >= 8 else 0
+    """型号记录的发布时间 → int YYYYMMDD（统一走 date_tool.publish_int）。"""
+    return publish_int(record.get("publish_date"))
 
 
 def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> List[Dict]:
@@ -268,10 +255,8 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
     任何单个条件写得不对（如参数键不存在、数值填了非数字）只会让该条件命中 0 条，
     不抛异常——编排层据此决定退回语义检索还是兑底话术。
     """
-    from tools.metadata_extractor import get_all_model_records
-
     args = args or {}
-    models = get_all_model_records()
+    models = all_records()
     scopes = _scope_list(args.get("scope"))
     rels = [s for s in scopes if s in _SCOPE_RELATIVE]
     if rels:
@@ -306,12 +291,12 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
     if bmax is not None:
         models = [m for m in models if int(m.get("price") or 0) <= bmax]
 
-    rng = (args.get("publish_range") or "").strip()
-    start = str(args.get("publish_start") or "").strip()
-    end = str(args.get("publish_end") or "").strip()
-    if start:
-        lo = int(re.sub(r"\D", "", start) or 0)
-        hi = int(re.sub(r"\D", "", end) or 99991231)
+    rng = str(args.get("publish_range") or "").strip()
+    start = args.get("publish_start")
+    end = args.get("publish_end")
+    if start not in (None, ""):
+        lo = publish_int(start)
+        hi = publish_int(end) or 99991231
         if lo >= 10000101:
             models = [m for m in models if lo <= _publish_int(m) <= hi]
         else:
@@ -321,8 +306,8 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
 
         parsed = calc_date_range(rng)
         if "start_date" in parsed:
-            lo = int(parsed["start_date"].replace("-", ""))
-            hi = int((parsed.get("end_date") or "9999-12-31").replace("-", ""))
+            lo = publish_int(parsed["start_date"])
+            hi = publish_int(parsed.get("end_date")) or 99991231
             models = [m for m in models if lo <= _publish_int(m) <= hi]
 
     model_arg = (args.get("model") or "").strip()
@@ -370,14 +355,15 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
 
     tags = [str(t).strip() for t in (args.get("tags") or []) if str(t).strip()]
     if tags:
-        from tools.model_tags import has_tags
         filter_tags = [t for t in tags if (_TAG_CATALOG.get(t) or {}).get("mode") == "filter"]
         boost_tags = [t for t in tags if (_TAG_CATALOG.get(t) or {}).get("mode") == "boost"]
         if filter_tags:
-            models = [m for m in models if has_tags(m.get("name", ""), filter_tags)]
+            models = [m for m in models
+                      if all(m.get(f"tag_{tag}") is True for tag in filter_tags)]
         if boost_tags:
             # 稳定分组：有任一 boost 标签的排前面，组内保留原排序
-            models = sorted(models, key=lambda m: 0 if has_tags(m.get("name", ""), boost_tags) else 1)
+            models = sorted(models, key=lambda m: 0 if any(
+                m.get(f"tag_{tag}") is True for tag in boost_tags) else 1)
     else:
         boost_tags = []
 
@@ -389,16 +375,6 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
     return models[:limit]
 
 
-def bare_name(name: str) -> str:
-    """去掉品牌前缀后的型号名（「不染一尘云顶 X2」→「云顶 X2」）。"""
-    return name[len(_BRAND_NAME):] if name.startswith(_BRAND_NAME) else name
-
-
-def match_key(name: str) -> str:
-    """型号名匹配键：去品牌前缀 + 去空白。用户常把「云顶 X2」打成「云顶X2」。"""
-    return re.sub(r"\s+", "", bare_name(name or ""))
-
-
 # 只做确定性纠正（方向翻面、剔除无效条件、枚举问法放开截断），不猜用户意图；
 # 纠正不了的（未知键、库里不存在的值）原样留着，让该条件命中 0 条、由编排层决定降级。
 # 方向词 / 价格键 / 枚举问法正则见 config/word_dict_config.py（顶部按原名导入）
@@ -406,8 +382,7 @@ def match_key(name: str) -> str:
 
 def _spec_values_of(key: str) -> List[str]:
     """某规格键在知识库里出现过的全部原文（用于判断值是否存在）。"""
-    from tools.metadata_extractor import get_all_model_records
-    return [str(m.get(f"param_{key}") or "") for m in get_all_model_records()]
+    return [str(m.get(f"param_{key}") or "") for m in all_records()]
 
 
 def validate_find_models_args(query: str, args: Dict) -> tuple:

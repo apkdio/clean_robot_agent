@@ -8,6 +8,7 @@ import json
 import re
 import time
 
+from function_tools.date_tool import publish_int
 from tools import trace_store
 from tools.dto.sop import SopStepResult
 from tools.log_tool import get_logger
@@ -542,9 +543,8 @@ def _rel_none_msg(rels: list) -> str:
 
 
 def _publish_key(model: dict) -> int:
-    """型号发布时间 → int YYYYMMDD（记录里可能是文本）。"""
-    digits = re.sub(r"\D", "", str(model.get("publish_date") or ""))
-    return int(digits) if len(digits) >= 8 else 0
+    """型号发布时间 → int YYYYMMDD（统一走 date_tool.publish_int）。"""
+    return publish_int(model.get("publish_date"))
 
 
 def _relative_filter(prev: list, models: list, rel: str) -> list:

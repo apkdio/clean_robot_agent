@@ -103,14 +103,14 @@ def test_run_once_repairs_missing_and_holds_snapshot_on_failure():
                                                            if p.endswith("a.txt") else
                                                            {"status": "error", "message": "boom"}))
     orig = {k: getattr(hi, k) for k in ("scan_files", "load_snapshot", "save_snapshot",
-                                        "append_kb_metadata", "rebuild_sparse_index", "chunks_by_file")}
+                                        "append_kb_metadata", "invalidate_runtime_caches", "chunks_by_file")}
     saved = {}
     hi.scan_files = lambda d: {"a.txt": "s1", "b.txt": "s2"}          # 磁盘无变化
     hi.load_snapshot = lambda: {"a.txt": "s1", "b.txt": "s2"}          # 快照也一致 → 哈希视角"无变更"
     hi.chunks_by_file = lambda names: {"a.txt": 1, "b.txt": 0}         # 但 b.txt 索引里是 0
     hi.save_snapshot = lambda snap: saved.update(snap)
     hi.append_kb_metadata = lambda *a, **k: None
-    hi.rebuild_sparse_index = lambda: None
+    hi.invalidate_runtime_caches = lambda: None
     try:
         import tools.redis_store as rs
         orig_lock = (rs.acquire_lock, rs.release_lock)
@@ -134,7 +134,7 @@ def test_kb_metadata_counts_taken_after_apply():
     restore = _patch(get_vector_store=lambda: _FakeStore(col),
                      ingest_file=lambda p, source_tag="": {"status": "ok", "chunks": 3})
     orig = {k: getattr(hi, k) for k in ("scan_files", "load_snapshot", "save_snapshot",
-                                        "append_kb_metadata", "rebuild_sparse_index", "chunks_by_file")}
+                                        "append_kb_metadata", "invalidate_runtime_caches", "chunks_by_file")}
     recorded = {}
     calls = {"n": 0}
 
@@ -147,7 +147,7 @@ def test_kb_metadata_counts_taken_after_apply():
     hi.load_snapshot = lambda: {"a.txt": "s1"}
     hi.chunks_by_file = _counts
     hi.save_snapshot = lambda snap: None
-    hi.rebuild_sparse_index = lambda: None
+    hi.invalidate_runtime_caches = lambda: None
 
     def _append(file_list, ts=""):
         recorded.update(file_list)
@@ -187,13 +187,13 @@ def test_run_once_logs_change_detail():
     orig_info = hi.logger.info
     hi.logger.info = lambda msg, *a: calls.append(msg % a if a else msg)
     orig = {k: getattr(hi, k) for k in ("scan_files", "load_snapshot", "save_snapshot", "append_kb_metadata",
-                                        "rebuild_sparse_index", "chunks_by_file", "apply_changes")}
+                                        "invalidate_runtime_caches", "chunks_by_file", "apply_changes")}
     hi.scan_files = lambda d: {"不染一尘具体型号.txt": "s2"}       # 用真实文件，好验证明细里的 mtime
     hi.load_snapshot = lambda: {"不染一尘具体型号.txt": "s1"}      # 哈希变了 → changed
     hi.chunks_by_file = lambda names: {"不染一尘具体型号.txt": 1}
     hi.save_snapshot = lambda snap: None
     hi.append_kb_metadata = lambda *a, **k: None
-    hi.rebuild_sparse_index = lambda: None
+    hi.invalidate_runtime_caches = lambda: None
     hi.apply_changes = lambda *a, **k: {"added": 0, "changed": 0, "removed": 0,
                                         "failed": ["不染一尘具体型号.txt"]}
     try:
@@ -272,33 +272,38 @@ def test_ingest_file_failure_keeps_old_chunks():
         os.remove(path)
 
 
-def test_rebuild_invalidates_model_names_cache():
-    """rebuild_sparse_index 要一并失效进程内型号名单缓存（R-06）：
+def test_invalidate_invalidates_models_repo():
+    """invalidate_runtime_caches 要一并失效型号记录缓存（R-06）：
     型号增删改名后不重启也能查到，否则新型号永远不触发型号直出。"""
     import tempfile
 
-    from function_tools import model_tool as mt
     from tools import hot_ingest as hi
+    from tools import models_repo as mr
     from tools import path_tool as pt
     import tools.vector_store as vs
 
-    mt._model_names_cache = ["旧型号"]
+    mr._cache["fingerprint"] = "old"
+    mr._cache["records"] = [{"name": "旧型号", "price": 1}]
     # 把 pkl 路径指到空临时目录（isfile=False → 不真删）。
     # 别补丁 hi.os.path.isfile——hi.os 就是全局 os 模块，会把整个进程的 isfile 打掉
     tmp_dir = tempfile.mkdtemp()
     saved_abs, saved_build = pt.get_abs_path, vs.build_hybrid_index
     pt.get_abs_path = lambda p: os.path.join(tmp_dir, os.path.basename(p))
-    vs.build_hybrid_index = lambda: None         # 不真重建
+    vs.build_hybrid_index = lambda: (_ for _ in ()).throw(AssertionError("失效不应同步重建 BM25"))
+    with open(os.path.join(tmp_dir, "bm25_index.pkl"), "wb") as f:
+        f.write(b"stale")
     try:
-        hi.rebuild_sparse_index()
-        _assert(mt._model_names_cache is None, "型号名单进程内缓存被失效")
+        hi.invalidate_runtime_caches()
+        _assert(mr._cache["records"] is None, "型号记录缓存被失效")
+        _assert(not os.path.isfile(os.path.join(tmp_dir, "bm25_index.pkl")), "BM25 pkl 一并失效")
         # 坑的回归哨兵：补丁若打到全局 os.path，配置读取会连带失败（曾把 isfile 打成恒 False）
         from tools.config_tool import load_config
         _assert(isinstance(load_config("prompts"), dict), "补丁没波及全局 os.path（配置仍读得到）")
     finally:
         pt.get_abs_path = saved_abs
         vs.build_hybrid_index = saved_build
-        mt._model_names_cache = None
+        mr._cache["fingerprint"] = None
+        mr._cache["records"] = None
 
 
 TESTS = [
@@ -311,7 +316,7 @@ TESTS = [
     test_run_once_repairs_missing_and_holds_snapshot_on_failure,
     test_change_detail_fields,
     test_run_once_logs_change_detail,
-    test_rebuild_invalidates_model_names_cache,
+    test_invalidate_invalidates_models_repo,
     test_kb_metadata_counts_taken_after_apply,
 ]
 

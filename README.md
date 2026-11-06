@@ -55,8 +55,8 @@ clean_robot_agent/
 │   ├── context/                 # 对话上下文持久化（jsonl，按会话创建日期分子目录：<YYYYMMDD>/）
 │   ├── service_point/           # 售后网点数据（网点清单，城市坐标由 geonamescache 提供）
 │   ├── bgm_model/               # 训练好的分类头模型
-│   ├── pkl/                     # BM25 pickle 缓存
-│   ├── state/                   # 热更新 sha256 快照 + kb_metadata.jsonl + model_tags.json（型号标签映射）
+│   ├── pkl/                     # BM25 / 型号记录 pickle 缓存
+│   ├── state/                   # 热更新 sha256 快照 + kb_metadata.jsonl
 │   ├── versions/                # 版本中台账本 / run manifest / 评测集快照（gitignore，随数据备份）
 │   ├── vector_store/            # Chroma 持久化向量库
 │   └── eval/                    # 评测集与基线：retrieval/ 单轮检索 · context/ 多轮行为 · intent/ 意图分类（本地数据，已 gitignore）
@@ -149,8 +149,8 @@ clean_robot_agent/
 | `sparse_retriever.py` | BM25 关键词检索（含 pickle 持久化缓存） |
 | `rrf_fusion.py` | RRF（倒数排名融合）算法 |
 | `reranker.py` | Cross-Encoder 精排（bge-reranker-v2-m3，本地推理；不可用时降级回 RRF 顺序）|
-| `metadata_extractor.py` | 结构化元数据：价格提取、预算解析、发布时间提取、型号信息抽取 |
-| `model_tags.py` | 型号特点标签：受控标签目录 + `data/state/model_tags.json` 映射；原文 `feature` 保留作证据 |
+| `metadata_extractor.py` | 结构化元数据：价格提取、预算解析、发布时间提取、型号信息/标签抽取 |
+| `models_repo.py` | 型号记录唯一缓存：基础字段 + `param_*` + `tag_*`，去重合并与懒重建 |
 | `selection.py` | 多选序号解析：中英文逗号/顿号/全角数字归一化，只认序号与固定跳过命令 |
 | `model_query.py` | 模型查询业务：预算/日期/系列约束 → `find_models` → 结构化直出（不处理型号详情/追问） |
 | `answer_checker.py` | 答案校验：从 RAG 答案抽已知型号、带货币单位的金额、保修语境下的时长，到最终召回片段里做字面核对；用户原话里的实体豁免，目录外/带虚构后缀的型号记 `unchecked`；结果只记日志与 trace，不拦截流式输出 |
@@ -291,7 +291,7 @@ python webapp/app.py
 
 **热更新**：放入新文件后，系统每 30 分钟自动检测并入库；重启 Flask 会立即触发一次扫描。
 
-**改同一个文件**：把新版本放回 `data/knowledge/`（或走页面上传）即可——重入是**替换**（旧 chunk 会被删掉，不会叠加重复条目），型号缓存与 BM25 索引也跟着重建，直出与检索两边始终一致。
+**改同一个文件**：把新版本放回 `data/knowledge/`（或走页面上传）即可——重入是**替换**（旧 chunk 会被删掉，不会叠加重复条目），型号记录缓存与 BM25 索引缓存跟着失效，下一次检索/型号查询懒重建，直出与检索两边始终一致。
 
 ## 意图分类模型训练
 

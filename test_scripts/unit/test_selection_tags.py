@@ -7,7 +7,6 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools.model_tags import has_tags, reset_cache, tags_of
 from tools.selection import is_skip, parse_multi_select
 
 
@@ -25,19 +24,23 @@ def test_selection_normalization():
 
 
 def test_model_tags_mapping():
-    reset_cache()
-    _assert(has_tags("不染一尘天工 T1 Pro", ["pet_friendly", "anti_tangle"]), "T1 Pro 标签")
-    _assert(not has_tags("不染一尘净白 S1", ["pet_friendly"]), "S1 不具养宠标签")
-    _assert_eq(tags_of("不染一尘净界 P2"), {"auto_dust", "quiet"}, "P2 标签集合")
+    from tools.models_repo import all_records
+    by_name = {m["name"]: m for m in all_records()}
+    t1 = by_name["不染一尘天工 T1 Pro"]
+    _assert(t1.get("tag_pet_friendly") is True and t1.get("tag_anti_tangle") is True,
+            "T1 Pro 标签来自 KB")
+    _assert(by_name["不染一尘净白 S1"].get("tag_pet_friendly") is False, "S1 不具养宠标签")
+    p2 = by_name["不染一尘净界 P2"]
+    _assert(p2.get("tag_auto_dust") is True and p2.get("tag_quiet") is True, "P2 标签集合")
 
 
 def test_find_models_tags_filter_and_boost():
     from function_tools.model_tool import find_models_by_args
     filtered = find_models_by_args({"tags": ["pet_friendly"], "limit": 50})
     _assert(filtered, "pet_friendly 能筛出型号")
-    _assert(all(has_tags(m["name"], ["pet_friendly"]) for m in filtered), "只返回带标签型号")
+    _assert(all(m.get("tag_pet_friendly") is True for m in filtered), "只返回带标签型号")
     boost = find_models_by_args({"tags": ["quiet"], "limit": 50})
-    _assert(boost and has_tags(boost[0]["name"], ["quiet"]), "boost 标签排前")
+    _assert(boost and boost[0].get("tag_quiet") is True, "boost 标签排前")
 
 
 TESTS = [

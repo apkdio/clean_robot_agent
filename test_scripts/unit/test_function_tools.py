@@ -63,6 +63,9 @@ def test_calc_date_range_and_filter():
     err = dt.calc_date_range("瞎写")
     _assert_in("error", err, "无法识别→error")
     _assert_eq(dt._iso_to_int("2026-03-10"), 20260310, "_iso_to_int")
+    _assert_eq(dt.publish_int("2026-03-10"), 20260310, "publish_int ISO")
+    _assert_eq(dt.publish_int(20260310), 20260310, "publish_int int")
+    _assert_eq(dt.publish_int("2025年"), 0, "publish_int 不完整日期→0")
     f = dt.build_date_filter("2026-01-01", "2026-12-31")
     _assert_eq(
         f,
@@ -89,9 +92,10 @@ def test_date_cn_to_int():
 # ──────────────────────────────────────────────────────────────
 
 def test_budget_args_to_filter():
-    from function_tools.budget_tool import budget_args_to_filter as f
+    from function_tools.budget_tool import budget_args_to_filter as f, budget_args_to_range as r
     _assert_eq(f({"budget_max": 1000}), {"min_price": {"$lte": 1000}}, "整数上限")
     _assert_eq(f({"budget_max": "1500"}), {"min_price": {"$lte": 1500}}, "字符串数字上限")
+    _assert_eq(r({"budget_max": 1000}), (None, 1000), "range 上限")
     _assert(f({"budget_max": 0}) is None, "0→None（无预算）")
     _assert(f({"budget_max": None}) is None, "None→None")
     _assert(f({}) is None, "空 args→None")
@@ -123,28 +127,28 @@ def test_search_models_by_names():
 
 def test_model_name_in_query():
     import function_tools.model_tool as mt
-    orig = mt._model_names_cache
-    mt._model_names_cache = ["不染一尘云顶 X2", "不染一尘净白 S1"]
+    orig = mt._enumerate_model_infos
+    mt._enumerate_model_infos = lambda: [{"name": "不染一尘云顶 X2"},
+                                         {"name": "不染一尘净白 S1"}]
     try:
         _assert(mt.model_name_in_query("云顶 X2 怎么样"), "含型号名→True")
         _assert(mt.model_name_in_query("净白 S1 多少钱"), "净白 S1→True")
         _assert(mt.model_name_in_query("云顶X2怎么样"), "不带空格的写法也命中")
         _assert(not mt.model_name_in_query("扫地机器人怎么样"), "泛咨询→False")
     finally:
-        mt._model_names_cache = orig
+        mt._enumerate_model_infos = orig
 
 
 def test_find_models_invalid_args_do_not_clear_results():
     """非法参数只能丢弃该条件，不能把已筛结果清零或把 0 当真实预算。"""
     import function_tools.model_tool as mt
-    import tools.metadata_extractor as me
 
     fake = [
         {"name": "A", "price": 1000, "series": "净白 S", "param_吸力_num": 6000},
         {"name": "B", "price": 2000, "series": "净白 S", "param_吸力_num": 9000},
     ]
-    orig = me.get_all_model_records
-    me.get_all_model_records = lambda: fake
+    orig = mt.all_records
+    mt.all_records = lambda: fake
     try:
         cases = [
             {"params": [{"key": "吸力", "op": ">=", "value": "强"}]},
@@ -156,7 +160,7 @@ def test_find_models_invalid_args_do_not_clear_results():
             _assert_eq(len(mt.find_models_by_args(args)), 2,
                        "非法条件 %r 不应清空结果" % args)
     finally:
-        me.get_all_model_records = orig
+        mt.all_records = orig
 
 
 # ──────────────────────────────────────────────────────────────
