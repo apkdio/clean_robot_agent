@@ -132,6 +132,21 @@ def all_records() -> list[dict]:
         return records
 
 
+def series_catalog() -> list[str]:
+    """从型号记录派生系列目录；repo 不可用时回退静态表并 WARNING。"""
+    try:
+        catalog = sorted({str(r.get("series") or "").strip()
+                           for r in all_records()
+                           if str(r.get("series") or "").strip()})
+        if catalog:
+            return catalog
+        logger.warning("[ModelsRepo] 型号记录里没有 series，系列目录回退静态表")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[ModelsRepo] 系列目录读取失败，回退静态表：%s", e)
+    from config.word_dict_config import SERIES_LIST
+    return list(SERIES_LIST)
+
+
 def invalidate() -> None:
     """丢弃内存与磁盘缓存；入库/热更新后调用。"""
     from tools.path_tool import get_abs_path

@@ -28,6 +28,8 @@ def test_probe_hits():
     _assert_in("sop", hit, "「维修」同时撞 SOP 弱触发（真实竞争，靠表序裁决）")
     _assert("date" not in hit, "date 已并入 find_models，不再是独立操作")
     _assert_in("find_models", ops.probe("有哪些型号"), "型号枚举词命中 find_models")
+    _assert_in("find_models", ops.probe("净白 S 系列有什么产品"),
+               "系列 + 有什么产品 → 型号枚举")
     casual = ops.probe("那你可以陪我玩过家家吗，班里这个游戏很火")
     _assert("model" not in casual, "闲聊句不命中 model（真判据比指代词表窄）")
 
@@ -99,10 +101,27 @@ def test_order_contract():
         ("云顶X2多少钱", "model"),
         ("净白系列有哪些型号", "find_models"),
         ("有哪些型号", "find_models"),
+        ("天工 T 哪几款", "find_models"),
     ]
     for query, expected in cases:
         got = ops.resolve(ops.probe(query), intent="robot", margin=0.9)
         _assert_eq(got, ("win", expected), "%s → %s" % (query, expected))
+
+
+def test_model_intent_predicates_parity():
+    """详情 / 枚举 / 指代三个谓词各管一段，不再由 operations 和执行体各拼一份词表。"""
+    from tools import model_ref, model_query
+
+    _assert(model_query.has_model_ref("云顶 X2 怎么样"), "具体型号名 → 有指代")
+    _assert(model_query.has_model_ref("这两个哪个好"), "指代词 → 有指代")
+    _assert(not model_query.has_model_ref("扫地机器人怎么样"), "泛咨询 → 无指代")
+    _assert(model_query.is_model_detail_query("云顶X2多少钱"), "详情问法")
+    _assert(not model_query.is_model_detail_query("有哪些型号"), "枚举问法不是详情")
+    _assert(model_query.is_model_catalog_intent("天工 T 哪几款"), "哪几款覆盖")
+    _assert(model_query.is_model_catalog_intent("净白系列有哪些型号"), "系列枚举覆盖")
+    _assert_eq(model_ref.has_model_ref, model_query.has_model_ref, "兼容壳转发同一实现")
+    _assert_eq(ops._p_model("云顶X2多少钱"), model_query.is_model_detail_query("云顶X2多少钱"),
+               "operations 与执行体共用详情谓词")
 
 
 def test_score_all_shape_and_determinism():
@@ -260,6 +279,7 @@ def test_operation_labels_sync():
 
 TESTS = [test_registry_shape, test_operation_labels_sync, test_probe_hits, test_resolve_three_states, test_note_ops_why_none,
          test_note_ops_writes_route_and_returns_usable, test_order_contract,
+         test_model_intent_predicates_parity,
          test_score_all_shape_and_determinism, test_score_all_degrades_without_dense,
          test_resolve_by_scores, test_note_ops_shadow_keeps_order,
          test_note_ops_score_mode_orders_by_score, test_find_models_prefers_over_sop,

@@ -205,7 +205,7 @@ def test_result_reply():
     from sops.model_query import MODEL_QUERY_SOP
     reply = MODEL_QUERY_SOP["steps"][-1]["template"]
     full = reply({"count": 2, "list": "- A\n- B"})
-    _assert("符合您条件" in full and "对比其中两款" in full, "有结果时给出列表并追问对比")
+    _assert("在您选择的条件内" in full and "对比其中两款" in full, "有结果时给出列表并追问对比")
     empty = reply({"count": 0, "list": "", "models": []})
     _assert_eq(empty, MODEL_QUERY_EMPTY_REPLIES[0], "0 款时使用唯一的空结果话术")
     _assert(not re.search(r"\d", empty), "0 款时不给价格数字（没有依据的推荐）")
@@ -217,9 +217,11 @@ def test_search_rejects_malformed_slots():
     import sops.model_query as mq
     from config.word_dict_config import MODEL_QUERY_CONSTRAINT_RETRY_REPLY
 
-    saved = mq.find_models_by_args
+    from tools.dto.model_query import FindModelsResult, ModelQueryConstraints
+    saved = mq.find_models_result
     calls = []
-    mq.find_models_by_args = lambda args: calls.append(args) or []
+    mq.find_models_result = lambda args: calls.append(args) or FindModelsResult(
+        [], [], [], ModelQueryConstraints())
     try:
         out = mq._search({"budget": "3000以内"})
         _assert_eq(out.get("error"), "invalid_slots", "字符串预算不能被切片后照常查询")
@@ -241,7 +243,7 @@ def test_search_rejects_malformed_slots():
         out = mq._search({"publish_range": "2025"})
         _assert_eq(out.get("error"), "invalid_slots", "日期形状错误不能静默跳过")
     finally:
-        mq.find_models_by_args = saved
+        mq.find_models_result = saved
 
 
 def test_retry_then_abandon():
@@ -485,7 +487,7 @@ def test_model_query_sop_full_flow():
     _assert_in("特点", reply, "时间跳过后问标签")
     reply, done = _pair(sops.base.continue_sop(sid, "跳过"))
     _assert(done, "标签跳过后 SOP 结束")
-    _assert_in("符合您条件", reply, "推荐含统计")
+    _assert_in("在您选择的条件内", reply, "推荐含统计")
     _assert_in("净白 S1", reply, "1000以内含净白 S1(899)")
     _assert_not_in("净界 P1", reply, "1000以内不含净界 P1(1799)")
     _assert(not sops.base.has_active_sop(sid), "会话已结束")

@@ -7,7 +7,7 @@
 
 import re
 
-from config.word_dict_config import ANSWER_PRICE_RE, ANSWER_WARRANTY_RE, SERIES_LIST
+from config.word_dict_config import ANSWER_PRICE_RE, ANSWER_WARRANTY_RE
 from function_tools.model_tool import match_key
 
 
@@ -27,9 +27,11 @@ def _model_candidates(answer: str, known: set) -> tuple:
     先按系列前缀抓完整 token，再只把 token 整体拿去对目录；
     这样「云顶 X1 Max」不会被截成已知的「云顶 X1」蒙混过关。
     """
+    from tools.models_repo import series_catalog
+
     flat = _compact(answer)
     candidates = []
-    prefixes = [match_key(s) for s in SERIES_LIST if match_key(s)]
+    prefixes = [match_key(s) for s in series_catalog() if match_key(s)]
     if prefixes:
         pattern = re.compile("(?:%s)[A-Za-z0-9]+" % "|".join(
             re.escape(p) for p in sorted(prefixes, key=len, reverse=True)))

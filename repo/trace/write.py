@@ -13,6 +13,7 @@ from datetime import datetime
 from config.word_dict_config import BEHAVIOR_BY_TAG, TRACE_NODE_LABELS, TRACE_NODE_STATUSES
 from tools.log_tool import get_logger
 
+from repo.trace import facts as fact_utils
 from repo.trace import paths, sidecar
 
 logger = get_logger(name="trace_store")
@@ -210,7 +211,7 @@ def step(name: str, **fields) -> None:
         return
     try:
         _apply_step(turn, name, fields)
-        sidecar._event("step", name=name, facts=_scalars(fields))
+        sidecar._event("step", name=name, facts=fact_utils.to_facts(fields))
     except Exception:  # noqa: BLE001
         pass
 
@@ -245,14 +246,15 @@ def begin_span(name: str, kind: str = "step", parent: int | None = None,
         raise ValueError("未知 span kind：%s" % kind)
     parent = _current_parent(turn) if parent is None else parent
     span_id = _next_span_id(turn)
+    in_facts = fact_utils.to_facts(in_)
     rec = {"id": span_id, "parent": parent, "node": name,
            "kind": kind, "status": "running"}
-    if in_:
-        rec["in"] = _scalars(in_)
+    if in_facts:
+        rec["in"] = in_facts
     turn["path"].append(rec)
     turn["span_stack"].append(span_id)
     sidecar._event("span.begin", id=span_id, parent=parent, name=name, kind=kind,
-                   facts=_scalars(in_ or {}))
+                   facts=in_facts)
     return span_id
 
 
@@ -271,15 +273,16 @@ def end_span(span_id: int | None, status: str = "ok", by: str = None,
     rec["status"] = status
     if by:
         rec["by"] = by
-    if out:
-        rec["out"] = _scalars(out)
+    out_facts = fact_utils.to_facts(out)
+    if out_facts:
+        rec["out"] = out_facts
     if ms is not None:
         rec["ms"] = int(ms)
     stack = turn.get("span_stack") or []
     if span_id in stack:
         stack[:] = stack[:stack.index(span_id)]
     sidecar._event("span.end", id=span_id, status=status, by=by, ms=rec.get("ms"),
-                   facts=_scalars(out or {}))
+                   facts=out_facts)
 
 
 def route(name: str, **facts) -> None:
@@ -288,11 +291,12 @@ def route(name: str, **facts) -> None:
     if not turn:
         return
     try:
-        turn["route"].setdefault(name, {}).update(_scalars(facts))
+        route_facts = fact_utils.to_facts(facts)
+        turn["route"].setdefault(name, {}).update(route_facts)
         if name not in _ROUTE_MIRRORED:
             node("route.%s" % name, status="hit" if facts.get("hit") else "ok",
-                 out=_scalars(facts), kind="decision")
-        sidecar._event("route", name=name, facts=_scalars(facts))
+                 out=route_facts, kind="decision")
+        sidecar._event("route", name=name, facts=route_facts)
     except Exception:  # noqa: BLE001
         pass
 
@@ -308,17 +312,19 @@ def node(name: str, status: str = "ok", by: str = None, in_: dict = None,
                "node": name, "kind": kind, "status": status}
         if by:
             rec["by"] = by
-        if in_:
-            rec["in"] = _scalars(in_)
-        if out:
-            rec["out"] = _scalars(out)
+        in_facts = fact_utils.to_facts(in_)
+        out_facts = fact_utils.to_facts(out)
+        if in_facts:
+            rec["in"] = in_facts
+        if out_facts:
+            rec["out"] = out_facts
         if name in turn["ms"]:
             rec["ms"] = turn["ms"][name]
         turn["path"].append(rec)
-        node_facts = {**(in_ or {}), **(out or {})}
+        node_facts = {**in_facts, **out_facts}
         sidecar._event("node", id=rec["id"], parent=rec["parent"], name=name,
                        kind=kind, status=status, by=by,
-                       facts=_scalars(node_facts), ms=rec.get("ms"))
+                       facts=node_facts, ms=rec.get("ms"))
     except Exception as e:  # noqa: BLE001
         logger.warning("[Trace] node event failed: %s", e)
 
@@ -367,7 +373,7 @@ def retrieval(**facts) -> None:
     try:
         turn["retrieval"].update(facts)
         turn["_retrieved"] = True
-        sidecar._event("retrieval", facts=_scalars(facts))
+        sidecar._event("retrieval", facts=fact_utils.to_facts(facts))
     except Exception:  # noqa: BLE001
         pass
 
@@ -380,10 +386,10 @@ def note_behavior(tag: str, detail: dict = None) -> None:
     try:
         turn["tag"] = tag
         turn["tags"].append(tag)
-        if detail:
-            turn["detail"].update({k: v for k, v in detail.items()
-                                   if isinstance(v, (str, int, float, bool))})
-        sidecar._event("behavior", tag=tag, facts=_scalars(detail or {}))
+        detail_facts = fact_utils.to_facts(detail or {})
+        if detail_facts:
+            turn["detail"].update(detail_facts)
+        sidecar._event("behavior", tag=tag, facts=detail_facts)
     except Exception:  # noqa: BLE001
         pass
 

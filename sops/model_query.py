@@ -6,16 +6,17 @@ from config.word_dict_config import (
     BARE_BUDGET_RE,
     MODEL_QUERY_CONSTRAINT_RETRY_REPLY,
     MODEL_QUERY_EMPTY_REPLIES,
+    MODEL_QUERY_RESULT_PREFIX,
     MODEL_QUERY_TRIGGER,
     MODEL_QUERY_WEAK_TRIGGER,
     TAG_CATALOG,
     TAG_ORDER,
 )
-from function_tools.model_tool import find_models_by_args
+from function_tools.model_tool import find_models_result
 from tools import trace_store
 from tools.log_tool import get_logger
 from tools.metadata_extractor import extract_price_constraint, extract_series, format_model_line
-from tools.model_query import parse_publish
+from tools.model_query import format_constraints, parse_publish
 from tools.prompts_tool import render
 from tools.selection import is_skip, parse_multi_select
 
@@ -124,9 +125,18 @@ def _search(slots: dict):
         return {"count": 0, "list": "", "models": [],
                 "error": "invalid_slots", "dropped": dropped}
 
-    models = find_models_by_args(args)
+    result = find_models_result(args)
+    if result.dropped:
+        trace_store.node("find_models", status="degraded", by="invalid_args",
+                         in_={"dropped": ",".join(result.dropped)},
+                         out={"n": 0})
+        logger.warning("[ModelQuery] dropped find_models args: %s", result.dropped)
+        return {"count": 0, "list": "", "models": [],
+                "error": "invalid_slots", "dropped": result.dropped}
+    models = result.models
     lines = [format_model_line(m) for m in models]
-    return {"count": len(models), "list": "\n".join(lines), "models": models}
+    return {"count": len(models), "list": "\n".join(lines), "models": models,
+            "condition": format_constraints(result.constraints)}
 
 
 def _make_reply(templates: dict):
@@ -140,7 +150,8 @@ def _make_reply(templates: dict):
         return render(
             "sop:model_query:reply",
             template=templates.get("ok") or "",
-            count=n, models=ctx.get("list") or "",
+            condition=ctx.get("condition") or "全部型号",
+            number=n, count=n, models=ctx.get("list") or "",
         ) or ""
     return reply
 
@@ -201,7 +212,7 @@ MODEL_QUERY_SOP = {
             "template": _make_reply({
                 "invalid": MODEL_QUERY_CONSTRAINT_RETRY_REPLY,
                 "empty": MODEL_QUERY_EMPTY_REPLIES[0],
-                "ok": "符合您条件的机器人有 $count 款：\n\n$models\n\n需要我帮您对比其中两款吗？",
+                "ok": MODEL_QUERY_RESULT_PREFIX + "\n\n$models\n\n需要我帮您对比其中两款吗？",
             }),
         },
     ],

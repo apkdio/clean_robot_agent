@@ -8,6 +8,7 @@ import json
 import os
 from datetime import datetime
 
+from repo.trace import facts as fact_utils
 from repo.trace import paths
 
 SIDE_VERSION = 1
@@ -49,12 +50,11 @@ def _event(event: str, **facts) -> None:
             "turn_index": turn.get("turn_index"),
             "event": event,
         }
-        for k, v in facts.items():
-            if isinstance(v, dict):
-                for kk, vv in write._scalars(v).items():
-                    rec[kk] = vv
-            elif v is None or isinstance(v, (str, int, float, bool)):
-                rec[k] = v
+        for key, value in (facts or {}).items():
+            if isinstance(value, dict):
+                rec.update(fact_utils.to_facts(value))
+            else:
+                rec[key] = fact_utils.to_fact(value)
         _append(path, rec)
     except Exception:  # noqa: BLE001
         pass

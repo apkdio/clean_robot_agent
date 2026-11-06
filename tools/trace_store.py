@@ -19,6 +19,7 @@ from repo.trace.paths import (
     _date_of_file,
 )
 from repo.trace.read import find_turn, find_turn_by_index, latest_turn
+from repo.trace.facts import to_fact, to_facts
 from repo.trace.sidecar import (
     CHUNK_KIND,
     CHUNK_MAX_CHARS,

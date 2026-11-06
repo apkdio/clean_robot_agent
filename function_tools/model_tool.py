@@ -19,6 +19,8 @@ from config.word_dict_config import (
     TAG_CATALOG as _TAG_CATALOG,
 )
 from function_tools.date_tool import publish_int
+from tools.dto.model_query import (FindModelsResult, ModelQueryConstraints,
+                                   ParamFilter, PriceRange, PublishRange)
 from tools.llm_tool import get_chat_model_name
 from tools.log_tool import get_logger
 from tools.models_repo import all_records, match_key
@@ -249,15 +251,210 @@ def _publish_int(record: Dict) -> int:
     return publish_int(record.get("publish_date"))
 
 
-def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> List[Dict]:
-    """执行 find_models：参数筛选 → 排序 → limit，返回型号记录列表。
+def _drop(dropped: List[str], notes: List[str], field: str, detail: str) -> None:
+    """记录一个被丢弃的参数；调用方据此走 degraded / 澄清，不能静默吞掉。"""
+    dropped.append(field)
+    notes.append("%s: %s" % (field, detail))
+    logger.warning("[ModelTool] dropped %s: %s", field, detail)
 
-    任何单个条件写得不对（如参数键不存在、数值填了非数字）只会让该条件命中 0 条，
-    不抛异常——编排层据此决定退回语义检索还是兑底话术。
+
+def _budget_value(raw, field: str, dropped: List[str], notes: List[str]):
+    """预算数值 → 非负 int 或 None；非法值丢弃并返回 None。"""
+    if raw in (None, "", 0):
+        return None
+    if isinstance(raw, bool):
+        _drop(dropped, notes, field, "boolean is not a budget")
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        _drop(dropped, notes, field, "non-numeric %r" % (raw,))
+        return None
+    if value < 0:
+        _drop(dropped, notes, field, "negative %r" % (raw,))
+        return None
+    return value or None
+
+
+def _publish_bounds(args: Dict, dropped: List[str], notes: List[str]):
+    """日期参数 → (lo, hi) int 或 None；非法/短日期丢弃。"""
+    start = args.get("publish_start")
+    end = args.get("publish_end")
+    rng = str(args.get("publish_range") or "").strip()
+    if start not in (None, ""):
+        lo = publish_int(start)
+        if lo < 10000101:
+            _drop(dropped, notes, "publish_start", "invalid/short date %r" % (start,))
+            return None
+        hi = None
+        if end not in (None, ""):
+            hi = publish_int(end)
+            if hi < 10000101:
+                _drop(dropped, notes, "publish_end", "invalid/short date %r" % (end,))
+                hi = None
+        if hi is not None and hi < lo:
+            _drop(dropped, notes, "publish_range", "end before start")
+            return None
+        return lo, hi
+    if end not in (None, ""):
+        _drop(dropped, notes, "publish_end", "end without start")
+    if rng:
+        from function_tools.date_tool import calc_date_range
+
+        parsed = calc_date_range(rng)
+        if "start_date" not in parsed:
+            _drop(dropped, notes, "publish_range", "unparseable %r" % (rng,))
+            return None
+        lo = publish_int(parsed["start_date"])
+        hi = publish_int(parsed.get("end_date")) or None
+        if lo < 10000101:
+            _drop(dropped, notes, "publish_range", "unparseable %r" % (rng,))
+            return None
+        return lo, hi
+    return None
+
+
+def build_constraints(args: Dict, query: str = "") -> tuple:
+    """把 LLM/内部 dict 校验成 ModelQueryConstraints，返回 (constraints, dropped, notes)。
+
+    这里只做解析与校验，不筛选型号；非法字段只丢自身并记录，供调用方决定降级/澄清。
     """
-    args = args or {}
+    args = dict(args or {})
+    semantic_notes: List[str] = []
+    if query:
+        args, semantic_notes = validate_find_models_args(query, args)
+    dropped: List[str] = []
+    notes: List[str] = list(semantic_notes)
+
+    raw_scopes = _scope_list(args.get("scope"))
+    scopes = []
+    for scope in raw_scopes:
+        if scope in _SCOPE_RELATIVE or scope in ("prev", "last"):
+            scopes.append(scope)
+        else:
+            _drop(dropped, notes, "scope", "unknown %r" % (scope,))
+
+    budget = None
+    phrase = str(args.get("budget") or "").strip()
+    bmin = bmax = None
+    if phrase:
+        from tools.metadata_extractor import extract_price_constraint
+        parsed = extract_price_constraint(phrase)
+        if parsed is not None and (parsed[0] is not None or parsed[1] is not None):
+            bmin, bmax = parsed[0] or None, parsed[1] or None
+        else:
+            _drop(dropped, notes, "budget", "unparseable %r" % (phrase,))
+    if bmin is None and bmax is None:
+        bmin = _budget_value(args.get("budget_min"), "budget_min", dropped, notes)
+        bmax = _budget_value(args.get("budget_max"), "budget_max", dropped, notes)
+    if bmin is not None and bmax is not None and bmin > bmax:
+        _drop(dropped, notes, "budget", "min > max (%s > %s)" % (bmin, bmax))
+        bmin = bmax = None
+    if bmin is not None or bmax is not None:
+        budget = PriceRange(bmin, bmax)
+
+    bounds = _publish_bounds(args, dropped, notes)
+    publish = PublishRange(*bounds) if bounds is not None else None
+
+    model_names = []
+    model_arg = args.get("model")
+    if model_arg not in (None, ""):
+        if not isinstance(model_arg, str):
+            _drop(dropped, notes, "model", "not a string %r" % (model_arg,))
+        else:
+            model_names = [k.strip() for k in model_arg.split(",") if k.strip()]
+
+    series = ""
+    series_arg = args.get("series")
+    if series_arg not in (None, ""):
+        if not isinstance(series_arg, str):
+            _drop(dropped, notes, "series", "not a string %r" % (series_arg,))
+        else:
+            series = series_arg.strip()
+
+    params = []
+    raw_params = args.get("params")
+    if raw_params not in (None, ""):
+        if not isinstance(raw_params, (list, tuple)):
+            _drop(dropped, notes, "params", "not a list")
+            raw_params = []
+        for idx, cond in enumerate(raw_params):
+            field = "params[%d]" % idx
+            if not isinstance(cond, dict):
+                _drop(dropped, notes, field, "not an object")
+                continue
+            key = str(cond.get("key") or "").strip()
+            op = str(cond.get("op") or "含").strip()
+            val = str(cond.get("value") or "").strip()
+            if not key or not val:
+                _drop(dropped, notes, field, "empty key/value")
+                continue
+            if op not in ("含", "=", ">=", "<="):
+                _drop(dropped, notes, field, "unknown op %r" % (op,))
+                continue
+            if op in (">=", "<=") and not _is_number(val):
+                _drop(dropped, notes, field, "non-numeric comparison %r" % (val,))
+                continue
+            params.append(ParamFilter(key, op, val))
+
+    sort_by = str(args.get("sort_by") or "").strip()
+    if sort_by and sort_by not in (_PRICE_KEYS + _PUBLISH_KEYS):
+        if not any(_param_num_of(m, sort_by) is not None for m in all_records()):
+            _drop(dropped, notes, "sort_by", "unknown %r" % (sort_by,))
+            sort_by = ""
+    order = str(args.get("order") or "desc").strip().lower()
+    if order not in ("asc", "desc"):
+        _drop(dropped, notes, "order", "unknown %r" % (order,))
+        order = "desc"
+
+    raw_tags = args.get("tags")
+    tags = []
+    if raw_tags not in (None, ""):
+        if not isinstance(raw_tags, (list, tuple)):
+            _drop(dropped, notes, "tags", "not a list")
+        else:
+            for tag in raw_tags:
+                tag = str(tag).strip()
+                if tag and tag not in _TAG_CATALOG:
+                    _drop(dropped, notes, "tags", "unknown %r" % (tag,))
+                elif tag:
+                    tags.append(tag)
+
+    raw_limit = args.get("limit")
+    if raw_limit in (None, ""):
+        limit = 5
+    else:
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            _drop(dropped, notes, "limit", "non-integer %r" % (raw_limit,))
+            limit = 5
+        if limit <= 0:
+            _drop(dropped, notes, "limit", "must be positive")
+            limit = 5
+    limit = max(1, min(limit, 50))
+
+    constraints = ModelQueryConstraints(
+        budget=budget,
+        publish=publish,
+        model_names=tuple(model_names),
+        series=series,
+        params=tuple(params),
+        scope=tuple(scopes),
+        tags=tuple(tags),
+        sort_by=sort_by,
+        order=order,
+        limit=limit,
+    )
+    return constraints, list(dict.fromkeys(dropped)), notes
+
+
+def find_models(constraints: ModelQueryConstraints,
+                prev_models: "List[Dict] | None" = None) -> FindModelsResult:
+    """按已校验的 ModelQueryConstraints 执行筛选 → 排序 → limit。"""
     models = all_records()
-    scopes = _scope_list(args.get("scope"))
+
+    scopes = list(constraints.scope)
     rels = [s for s in scopes if s in _SCOPE_RELATIVE]
     if rels:
         # 多维度同时满足：「更新更便宜的」= 比上一轮更新 且 更便宜
@@ -268,95 +465,43 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
         by_name = {m.get("name"): m for m in models}
         models = [by_name.get(m.get("name"), m) for m in (prev_models or [])]
 
-    # 预算优先按原话用规则解析：模型见到货币单位会把方向词吃掉，方向/单位/浮动交给规则
-    bmin = bmax = None
-    phrase = str(args.get("budget") or "").strip()
-    if phrase:
-        from tools.metadata_extractor import extract_price_constraint
-        parsed = extract_price_constraint(phrase)
-        if parsed is not None and (parsed[0] is not None or parsed[1] is not None):
-            bmin, bmax = parsed[0] or None, parsed[1] or None
-    if bmin is None and bmax is None:
-        # 规则解析不出（中文数字「预算五千」、口语「八百多」）→ 退回模型填的数值
-        try:
-            raw_min, raw_max = args.get("budget_min"), args.get("budget_max")
-            bmin = None if raw_min in (None, "", 0) else int(raw_min)
-            bmax = None if raw_max in (None, "", 0) else int(raw_max)
-        except (TypeError, ValueError):
-            logger.warning("[ModelTool] invalid budget args dropped: min=%r max=%r",
-                           args.get("budget_min"), args.get("budget_max"))
-            bmin = bmax = None
-    if bmin is not None:
-        models = [m for m in models if int(m.get("price") or 0) >= bmin]
-    if bmax is not None:
-        models = [m for m in models if int(m.get("price") or 0) <= bmax]
+    if constraints.budget is not None:
+        if constraints.budget.min is not None:
+            models = [m for m in models if int(m.get("price") or 0) >= constraints.budget.min]
+        if constraints.budget.max is not None:
+            models = [m for m in models if int(m.get("price") or 0) <= constraints.budget.max]
 
-    rng = str(args.get("publish_range") or "").strip()
-    start = args.get("publish_start")
-    end = args.get("publish_end")
-    if start not in (None, ""):
-        lo = publish_int(start)
-        hi = publish_int(end) or 99991231
-        if lo >= 10000101:
-            models = [m for m in models if lo <= _publish_int(m) <= hi]
-        else:
-            logger.warning("[ModelTool] invalid publish_start dropped: %r", start)
-    elif rng:
-        from function_tools.date_tool import calc_date_range
-
-        parsed = calc_date_range(rng)
-        if "start_date" in parsed:
-            lo = publish_int(parsed["start_date"])
-            hi = publish_int(parsed.get("end_date")) or 99991231
+    if constraints.publish is not None:
+        lo = constraints.publish.start
+        hi = constraints.publish.end or 99991231
+        if lo is not None:
             models = [m for m in models if lo <= _publish_int(m) <= hi]
 
-    model_arg = (args.get("model") or "").strip()
-    if model_arg:
-        keys = [k.strip() for k in model_arg.split(",") if k.strip()]
-        exact = [m for m in models if any(match_key(m["name"]).endswith(match_key(k)) for k in keys)]
-        models = exact or [m for m in models if any(match_key(k) in match_key(m["name"]) for k in keys)]
+    if constraints.model_names:
+        keys = [match_key(k) for k in constraints.model_names]
+        exact = [m for m in models if any(match_key(m["name"]).endswith(k) for k in keys)]
+        models = exact or [m for m in models if any(k in match_key(m["name"]) for k in keys)]
 
-    series_arg = (args.get("series") or "").strip()
-    if series_arg:
-        want = match_key(series_arg.replace("系列", ""))
+    if constraints.series:
+        want = match_key(constraints.series.replace("系列", ""))
         models = [m for m in models if want in match_key(str(m.get("series") or ""))]
 
-    for cond in args.get("params") or []:
-        if not isinstance(cond, dict):
-            logger.warning("[ModelTool] invalid param condition dropped: %r", cond)
-            continue
-        key, op, val = str(cond.get("key") or "").strip(), str(cond.get("op") or "含").strip(), str(cond.get("value") or "").strip()
-        if not key or not val:
-            logger.warning("[ModelTool] empty param condition dropped: %r", cond)
-            continue
-        if op not in ("含", "=", ">=", "<="):
-            logger.warning("[ModelTool] unknown param op dropped: %r", op)
-            continue
-        if op in (">=", "<="):
-            try:
-                threshold = float(val)
-            except ValueError:
-                logger.warning("[ModelTool] non-numeric comparison dropped: %r", cond)
-                continue
+    for cond in constraints.params:
+        if cond.op in (">=", "<="):
+            threshold = float(cond.value)
             models = [m for m in models
-                      if _param_num_of(m, key) is not None
-                      and (float(_param_num_of(m, key)) >= threshold if op == ">=" else float(_param_num_of(m, key)) <= threshold)]
+                      if _param_num_of(m, cond.key) is not None
+                      and (float(_param_num_of(m, cond.key)) >= threshold if cond.op == ">=" else float(_param_num_of(m, cond.key)) <= threshold)]
         else:
-            models = [m for m in models if val in _param_of(m, key)]
+            models = [m for m in models if cond.value in _param_of(m, cond.key)]
 
-    sort_by = (args.get("sort_by") or "").strip()
-    if sort_by and sort_by not in (_PRICE_KEYS + _PUBLISH_KEYS):
-        if not any(_param_num_of(m, sort_by) is not None for m in models):
-            logger.warning("[ModelTool] unknown sort_by dropped: %r", sort_by)
-            sort_by = ""
-    if sort_by:
-        order = (args.get("order") or "desc").strip()
-        models = sorted(models, key=lambda m: _sort_value_of(m, sort_by), reverse=(order != "asc"))
+    if constraints.sort_by:
+        models = sorted(models, key=lambda m: _sort_value_of(m, constraints.sort_by),
+                        reverse=(constraints.order != "asc"))
 
-    tags = [str(t).strip() for t in (args.get("tags") or []) if str(t).strip()]
-    if tags:
-        filter_tags = [t for t in tags if (_TAG_CATALOG.get(t) or {}).get("mode") == "filter"]
-        boost_tags = [t for t in tags if (_TAG_CATALOG.get(t) or {}).get("mode") == "boost"]
+    if constraints.tags:
+        filter_tags = [t for t in constraints.tags if (_TAG_CATALOG.get(t) or {}).get("mode") == "filter"]
+        boost_tags = [t for t in constraints.tags if (_TAG_CATALOG.get(t) or {}).get("mode") == "boost"]
         if filter_tags:
             models = [m for m in models
                       if all(m.get(f"tag_{tag}") is True for tag in filter_tags)]
@@ -364,25 +509,20 @@ def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> 
             # 稳定分组：有任一 boost 标签的排前面，组内保留原排序
             models = sorted(models, key=lambda m: 0 if any(
                 m.get(f"tag_{tag}") is True for tag in boost_tags) else 1)
-    else:
-        boost_tags = []
 
-    limit = args.get("limit") or 5
-    try:
-        limit = max(1, min(int(limit), 50))
-    except (TypeError, ValueError):
-        limit = 5
-    return models[:limit]
+    return FindModelsResult(models[:constraints.limit], [], [], constraints)
 
 
-# 只做确定性纠正（方向翻面、剔除无效条件、枚举问法放开截断），不猜用户意图；
-# 纠正不了的（未知键、库里不存在的值）原样留着，让该条件命中 0 条、由编排层决定降级。
-# 方向词 / 价格键 / 枚举问法正则见 config/word_dict_config.py（顶部按原名导入）
+def find_models_result(args: Dict, prev_models: "List[Dict] | None" = None) -> FindModelsResult:
+    """LLM/内部 dict → 校验后的 constraints → 查询结果。"""
+    constraints, dropped, notes = build_constraints(args)
+    result = find_models(constraints, prev_models)
+    return FindModelsResult(result.models, dropped, notes, constraints)
 
 
-def _spec_values_of(key: str) -> List[str]:
-    """某规格键在知识库里出现过的全部原文（用于判断值是否存在）。"""
-    return [str(m.get(f"param_{key}") or "") for m in all_records()]
+def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> List[Dict]:
+    """兼容旧调用方：只返回型号列表；需要 dropped/notes 时用 find_models_result()。"""
+    return find_models_result(args, prev_models).models
 
 
 def validate_find_models_args(query: str, args: Dict) -> tuple:
@@ -488,7 +628,8 @@ def _is_number(value: str) -> bool:
 
 
 def run_find_models(query: str, args: Dict, prev_models: "List[Dict] | None" = None) -> tuple:
-    """工具层入口：先按原话校验纠正，再执行。返回 (型号列表, 纠正说明)。
+    """工具层入口：先按原话校验纠正，再执行。返回 (型号列表, 说明)。
     """
     fresh, notes = validate_find_models_args(query, args)
-    return find_models_by_args(fresh, prev_models), notes
+    result = find_models_result(fresh, prev_models)
+    return result.models, notes + result.notes

@@ -7,7 +7,8 @@ from tools.dto.clarify import (
     ClarifyData, ClarifyResult,
 )
 from tools.dto.executor import ExecOutcome, NotMine, Reply
-from tools.dto.model_query import ModelQueryResult
+from tools.dto.model_query import (FindModelsResult, ModelQueryConstraints, ModelQueryResult,
+                                   ParamFilter, PriceRange, PublishRange)
 from tools.dto.request import ChatRequest
 from tools.dto.sop import SopStepResult
 from tools.dto.stage import Continue, Finish, StageOutcome
@@ -18,7 +19,8 @@ __all__ = [
     "Reply", "NotMine", "ExecOutcome",
     "ClarifyData", "ClarifyResult",
     "CLARIFY_DONE", "CLARIFY_RESUME", "CLARIFY_DROP", "CLARIFY_KINDS",
-    "ModelQueryResult",
+    "ModelQueryResult", "FindModelsResult", "ModelQueryConstraints",
+    "PriceRange", "PublishRange", "ParamFilter",
     "ChatRequest",
     "SopStepResult",
     "TurnEvent",

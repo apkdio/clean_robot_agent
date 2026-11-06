@@ -169,6 +169,14 @@ def test_extract_model_aspect():
 # 4. 系列提取 / 中文数字 / 过滤
 # ──────────────────────────────────────────────────────────────
 
+def test_series_catalog_from_repo():
+    if not _models_ready():
+        _skip("无型号数据（Chroma/pkl 缓存缺失）")
+    from tools.models_repo import all_records, series_catalog
+    expected = {m.get("series") for m in all_records() if m.get("series")}
+    _assert_eq(set(series_catalog()), expected, "系列目录从型号记录派生")
+
+
 def test_extract_series():
     from tools.metadata_extractor import extract_series as f
     _assert_eq(f("净白 S 系列有什么产品"), "净白 S", "净白 S 系列")
@@ -218,12 +226,13 @@ def test_enumerate_models_by_series():
     if not _models_ready():
         _skip("无型号数据（Chroma/pkl 缓存缺失）")
         return
-    from tools.metadata_extractor import enumerate_models_by_series, SERIES_LIST
+    from tools.metadata_extractor import enumerate_models_by_series
+    from tools.models_repo import series_catalog
     expected = {"净白 S": 3, "净界 P": 5, "天工 T": 5, "云顶 X": 3}
     for series, cnt in expected.items():
         models = enumerate_models_by_series(series)
         _assert_eq(len(models), cnt, f"{series} 系列应有 {cnt} 个型号")
-    for series in SERIES_LIST:
+    for series in series_catalog():
         for m in enumerate_models_by_series(series):
             _assert_eq(m.get("series"), series, f"{m.get('name')} 的 series 应为 {series}")
     _assert_eq(len(enumerate_models_by_series("不存在系列")), 0, "不存在系列→0 个")
@@ -344,6 +353,7 @@ TESTS = [
     test_extract_model_info,
     test_format_model_line,
     test_extract_model_aspect,
+    test_series_catalog_from_repo,
     test_extract_series,
     test_budget_range_filter_parity,
     test_extract_tag_metadata,

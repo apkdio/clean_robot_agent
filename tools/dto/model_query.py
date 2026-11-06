@@ -1,7 +1,7 @@
 """模型查询结果：预算/日期/系列筛选后的型号集合。"""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -19,7 +19,37 @@ class PublishRange:
 
 
 @dataclass(frozen=True)
-class ModelQueryResult:
+class ParamFilter:
+    """型号规格筛选条件。 如 吸力/导航_大于/含_6000/LDS """
+    key: str
+    op: str
+    value: str
+
+
+@dataclass(frozen=True)
+class ModelQueryConstraints:
+    """型号查询的完整输入：所有约束都先校验成这个对象。"""
+    budget: PriceRange | None = None
+    publish: PublishRange | None = None
+    model_names: tuple[str, ...] = ()
+    series: str = ""
+    params: tuple[ParamFilter, ...] = ()
+    scope: tuple[str, ...] = ()        # 追问逻辑使用，供选择追问范围
+    tags: tuple[str, ...] = ()
+    sort_by: str = ""
+    order: str = "desc"
+    limit: int = 5
+
+
+@dataclass(frozen=True)
+class FindModelsResult:
+    """型号查询结果：模型列表 + 被丢弃的参数 + 诊断说明 + 实际生效约束。"""
     models: list
-    kind: str
-    constraints: dict
+    dropped: list = field(default_factory=list)
+    notes: list = field(default_factory=list)
+    constraints: ModelQueryConstraints | None = None
+    kind: str = ""
+
+
+# 兼容旧导入；直出层现在直接使用 FindModelsResult。
+ModelQueryResult = FindModelsResult

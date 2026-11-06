@@ -139,7 +139,8 @@ MODEL_QUERY_WEAK_TRIGGER = ["选购", "买", "预算", "性价比"]
 # 型号枚举类问法：没有预算/系列约束，但明确是在要型号清单。
 # 操作器用它作为 find_models 的入口兜底词；命中后仍由执行体判断是否进 SOP 补槽。
 MODEL_LIST_WORDS = ["有哪些型号", "有什么型号", "型号有哪些", "型号清单", "型号列表",
-                    "型号汇总", "哪些型号", "哪几款", "系列有哪些", "系列型号"]
+                    "型号汇总", "哪些型号", "哪几款", "系列有哪些", "系列型号",
+                    "有什么产品", "有哪些产品", "有什么款"]
 
 # 维修强触发词（去掉"修"单字）：意图分类器对"维修""怎么维修"这类短口语可能判 other，
 REPAIR_STRONG_WORDS = REPAIR_BASE_WORDS + ["水痕", "水印", "修理", "维修"]
@@ -307,9 +308,13 @@ FEEDBACK_REASON_LAYERS = {r["key"]: r["layer"] for r in FEEDBACK_REASONS}
 # 品牌名：型号匹配与检索里要去掉的统一前缀
 BRAND_NAME = "不染一尘"
 
-# 系列列表（与知识库「系列」字段一致，规则子串匹配用）
+# 直出前缀：$condition 由已校验的约束生成，$number 为结果数
+MODEL_QUERY_RESULT_PREFIX = "在您选择的条件内（$condition）的产品有 $number 款："
+
+# 系列目录的静态兜底（正常从 models_repo 的 series 字段派生）
 SERIES_LIST = ["净白 S", "净界 P", "天工 T", "云顶 X"]
-SERIES_MAP_DICT = {
+# 短名 → 全名；只放用户口语别名，不再维护第二份系列目录
+SERIES_ALIASES = {
     "净白": "净白 S",
     "净界": "净界 P",
     "天工": "天工 T",

@@ -163,6 +163,36 @@ def test_trace_record_schema():
     _assert_eq(read_last_turn(sid), {}, "reset_trace 之后读不到（文件与进程内计数都清了）")
 
 
+def test_trace_nested_facts_are_json_strings():
+    """path/event 的叶子事实统一转换：嵌套对象变 JSON 字符串，标量原样。"""
+    import json
+
+    from tools import trace_store
+
+    sid = "tracetest-nested-facts"
+    reset_trace(sid)
+    trace_store.begin_turn(sid, "嵌套事实")
+    trace_store.node("find_models",
+                     in_={"kind": "budget",
+                          "constraint_detail": {"budget": {"max": 2000}}},
+                     out={"n": 1, "dropped": ["budget"], "ok": True})
+    trace_store.end_turn()
+    rec = read_last_turn(sid)
+    node = next(n for n in rec["path"] if n.get("node") == "find_models")
+    _assert(isinstance(node["in"]["constraint_detail"], str), "嵌套对象转成字符串")
+    _assert_eq(json.loads(node["in"]["constraint_detail"]),
+               {"budget": {"max": 2000}}, "嵌套内容可还原")
+    _assert_eq(node["out"]["dropped"], '["budget"]', "list 转成 JSON 字符串")
+    _assert_eq(node["out"]["n"], 1, "标量不变")
+    _assert_eq(node["out"]["ok"], True, "bool 不变")
+    events = trace_store.events_of(sid)
+    event = next(e for e in events if e.get("event") == "node"
+                 and e.get("name") == "find_models")
+    _assert_eq(event.get("constraint_detail"),
+               node["in"]["constraint_detail"], "event 与主 trace 的事实一致")
+    reset_trace(sid)
+
+
 def test_trace_event_sidecar():
     """旁路事件日志：执行中逐条追加，崩溃后仍能复原；主 trace 仍是一轮一条。"""
     import json
@@ -909,6 +939,7 @@ TESTS = [
     test_disable_shadow_restores,
     test_isolation_and_import_convention,
     test_trace_record_schema,
+    test_trace_nested_facts_are_json_strings,
     test_trace_event_sidecar,
     test_stage_spans_and_stream_close,
     test_stage_branch_alignment,

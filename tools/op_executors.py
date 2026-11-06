@@ -9,8 +9,8 @@ from langchain_core.messages import HumanMessage
 from tools import trace_store, turn_recorder
 from tools.dto.executor import ExecOutcome, NotMine, Reply
 from tools.log_tool import get_logger
-from tools.model_query import format_model_query, resolve_model_query
-from tools.model_ref import has_model_ref
+from tools.model_query import (format_model_query, is_model_detail_query,
+                               resolve_model_query)
 from tools.query_rewrite import history_block
 from tools.sop_runtime import enter_sop
 from tools.turn_context import TurnContext
@@ -22,11 +22,8 @@ PIPELINE_OPS = {"domain"}
 
 def _resolve_model_query(session_id: str, query: str):
     """型号查询兜底：命中触发词 → LLM 提取型号名 → 按名精准检索型号详情。"""
-    from config.word_dict_config import MODEL_CONSULT_WORDS, MODEL_QUERY_WORDS
-
-    if not any(w in query for w in MODEL_QUERY_WORDS):
-        if not (any(w in query for w in MODEL_CONSULT_WORDS) and has_model_ref(query)):
-            return None
+    if not is_model_detail_query(query):
+        return None
     try:
         from function_tools.model_tool import (
             MODEL_TOOL_SCHEMA, model_tool_model, search_models_by_names,
@@ -78,7 +75,7 @@ def exec_model(ctx: TurnContext) -> ExecOutcome:
 
 
 def exec_find_models(ctx: TurnContext) -> ExecOutcome:
-    from tools.model_query import constraints_to_slots, is_model_query_intent
+    from tools.model_query import constraints_to_slots, is_model_catalog_intent
 
     result = resolve_model_query(ctx.q)
     if result:
@@ -87,7 +84,7 @@ def exec_find_models(ctx: TurnContext) -> ExecOutcome:
                                    kind="series" if result.kind == "series" else "filter",
                                    n=len(result.models))
         return Reply(format_model_query(result))
-    if is_model_query_intent(ctx.q):
+    if is_model_catalog_intent(ctx.q):
         return Reply(enter_sop(ctx.session_id, "model_query", ctx.q,
                                slots=constraints_to_slots(ctx.q)))
     return NotMine()

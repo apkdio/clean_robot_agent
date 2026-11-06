@@ -28,22 +28,18 @@ def _p_followup(query: str) -> bool:
 
 
 def _p_model(query: str) -> bool:
-    """命中型号查询入口：触发词，或咨询词加指代特征。"""
-    from config.word_dict_config import MODEL_QUERY_WORDS, MODEL_CONSULT_WORDS
-    from tools.model_ref import has_model_ref
+    """命中型号详情/对比入口：统一谓词，避免与执行体重复拼词表。"""
+    from tools.model_query import is_model_detail_query
 
-    if any(w in query for w in MODEL_QUERY_WORDS):
-        return True
-    return any(w in query for w in MODEL_CONSULT_WORDS) and has_model_ref(query)
+    return is_model_detail_query(query)
 
 
 def _p_find_models(query: str) -> bool:
     """预算 / 日期 / 系列规则约束，或明确的型号枚举问法，交给型号筛选。"""
-    from config.word_dict_config import MODEL_LIST_WORDS
-    from tools.model_query import resolve_model_constraints
+    from tools.model_query import is_model_catalog_intent, resolve_model_constraints
 
     return (resolve_model_constraints(query, allow_llm=False) is not None
-            or any(w in query for w in MODEL_LIST_WORDS))
+            or is_model_catalog_intent(query))
 
 
 def _p_service_point(query: str) -> bool:
@@ -207,10 +203,9 @@ def _strong_ops(query: str) -> set:
     """强判据命中的操作（确定性证据，给固定加分；不是"像"）。"""
     out = set()
     try:
-        from config.word_dict_config import MODEL_LIST_WORDS
         from sops import match_sop, sop_has_strong_trigger
-        from tools.model_query import resolve_model_constraints
-        from tools.model_ref import has_model_ref
+        from tools.model_query import (has_model_ref, is_model_catalog_intent,
+                                       resolve_model_constraints)
 
         if match_sop(query, "service_point", log=False):
             out.add("service_point")
@@ -218,7 +213,7 @@ def _strong_ops(query: str) -> set:
         if sid and sop_has_strong_trigger(sid, query):
             out.add("sop")
         if (resolve_model_constraints(query, allow_llm=False)
-                or any(w in query for w in MODEL_LIST_WORDS)):
+                or is_model_catalog_intent(query)):
             out.add("find_models")
         if has_model_ref(query):
             out.add("model")

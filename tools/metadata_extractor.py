@@ -19,8 +19,7 @@ from config.word_dict_config import (
     PRICE_PATTERN as _PRICE_PATTERN,
     PRICE_RANGE_PATTERN as _PRICE_RANGE_PATTERN,
     PUBLISH_DATE_PATTERN as _PUBLISH_DATE_PATTERN,
-    SERIES_LIST,
-    SERIES_MAP_DICT,
+    SERIES_ALIASES,
     SPEC_SKIP_KEYS as _SPEC_SKIP_KEYS,
     TAG_CATALOG as _TAG_CATALOG,
 )
@@ -315,21 +314,23 @@ def enumerate_models(filter: dict, require_field: str = "price") -> list[Dict]:
     return models
 
 
-# 系列列表与系列映射（SERIES_LIST / SERIES_MAP_DICT）见 config/word_dict_config.py
+# 系列目录从 models_repo 派生；别名（SERIES_ALIASES）在 config/word_dict_config.py
 
 
 def extract_series(query: str) -> str:
-    """从 query 规则提取系列名（子串匹配 SERIES_LIST），未精准命中时尝试走映射。
+    """从 query 规则提取系列名（子串匹配 repo 系列目录），未精准命中时尝试走别名。
 
     返回系列名（如「净白 S」）。匹配忽略空白，兼容「云顶X」这种不带空格的写法。
     """
+    from tools.models_repo import series_catalog
+
     flat = re.sub(r"\s+", "", query)
-    for s in SERIES_LIST:
-        if re.sub(r"\s+", "", s) in flat:
-            return s
-    for s in SERIES_MAP_DICT:
-        if re.sub(r"\s+", "", s) in flat:
-            return SERIES_MAP_DICT[s]
+    for series in series_catalog():
+        if re.sub(r"\s+", "", series) in flat:
+            return series
+    for alias, series in SERIES_ALIASES.items():
+        if alias in flat:
+            return series
     return ""
 
 

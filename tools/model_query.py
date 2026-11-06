@@ -4,17 +4,24 @@
 """
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
+
 from tools import trace_store
-from tools.dto.model_query import ModelQueryResult, PriceRange, PublishRange
+from tools.dto.model_query import (FindModelsResult, ModelQueryConstraints, ModelQueryResult,
+                                   PriceRange, PublishRange)
 from tools.log_tool import get_logger
 from tools.metadata_extractor import extract_series, format_model_line, resolve_budget_range
+from tools.prompts_tool import render
 from function_tools.date_tool import DATE_TOOL_SCHEMA, calc_date_range, parse_date, publish_int
-from function_tools.model_tool import find_models_by_args
+from function_tools.model_tool import find_models
 from config.word_dict_config import (
     BRAND_EVENT_WORDS,
     DATE_SELECT_HINT_RE,
     PURCHASE_DURATION_RE,
+    MODEL_QUERY_RESULT_PREFIX,
     RELEASE_HINT_RE,
+    TAG_CATALOG,
     TIME_HINT_RE,
 )
 
@@ -71,14 +78,39 @@ def parse_publish(query: str, allow_llm: bool = True) -> PublishRange | None:
     return PublishRange(start, end or None)
 
 
-def is_model_query_intent(query: str) -> bool:
-    """明确在问型号/产品/系列，而不是普通叙述里碰巧出现「有什么」。"""
-    words = ("型号", "机型", "产品", "系列", "推荐", "清单", "列表", "款式")
+def has_model_ref(query: str) -> bool:
+    """query 是否指向具体型号：指代词或直接出现的型号名。"""
+    from config.word_dict_config import MODEL_REF_WORDS
+
+    if any(w in query for w in MODEL_REF_WORDS):
+        return True
+    try:
+        from function_tools.model_tool import model_name_in_query
+        return model_name_in_query(query)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[ModelQuery] model name check failed: %s", e)
+        return False
+
+
+def is_model_detail_query(query: str) -> bool:
+    """型号详情/对比入口：强触发词，或咨询词 + 具体型号指代。"""
+    from config.word_dict_config import MODEL_CONSULT_WORDS, MODEL_QUERY_WORDS
+
+    if any(w in query for w in MODEL_QUERY_WORDS):
+        return True
+    return any(w in query for w in MODEL_CONSULT_WORDS) and has_model_ref(query)
+
+
+def is_model_catalog_intent(query: str) -> bool:
+    """型号/系列枚举意图，覆盖「哪几款 / 有哪些 / 型号清单」等 catalog 问法。"""
+    from config.word_dict_config import MODEL_LIST_WORDS
+
+    words = tuple(MODEL_LIST_WORDS) + ("哪几款", "有哪些")
     return any(w in query for w in words)
 
 
 def resolve_model_constraints(query: str, allow_llm: bool = True):
-    """把 query 收敛成 (find_models 参数, kind)；allow_llm=False 只走规则。"""
+    """把 query 收敛成 (ModelQueryConstraints, kind)；allow_llm=False 只走规则。"""
     budget = parse_budget(query, allow_llm=allow_llm)
     publish = None
     if not any(w in query for w in BRAND_EVENT_WORDS):
@@ -87,7 +119,7 @@ def resolve_model_constraints(query: str, allow_llm: bool = True):
     if publish and not budget and not DATE_SELECT_HINT_RE.search(query):
         logger.info("[ModelQuery] date without selection hint, skip: %s", query[:40])
         publish = None
-    series = extract_series(query) if is_model_query_intent(query) else ""
+    series = extract_series(query) if is_model_catalog_intent(query) else ""
     if not (budget or publish or series):
         return None
     if series and not (budget or publish):
@@ -98,15 +130,13 @@ def resolve_model_constraints(query: str, allow_llm: bool = True):
         kind = "date"
     else:
         kind = "series"
-    args = {
-        "budget_min": (budget.min or 0) if budget else 0,
-        "budget_max": (budget.max or 0) if budget else 0,
-        "publish_start": publish.start if publish else "",
-        "publish_end": publish.end if publish else "",
-        "series": series or "",
-        "limit": 50,
-    }
-    return args, kind
+    constraints = ModelQueryConstraints(
+        budget=budget,
+        publish=publish,
+        series=series or "",
+        limit=50,
+    )
+    return constraints, kind
 
 
 def constraints_to_slots(query: str) -> dict:
@@ -114,14 +144,14 @@ def constraints_to_slots(query: str) -> dict:
     resolved = resolve_model_constraints(query)
     if not resolved:
         return {}
-    args, _kind = resolved
+    constraints, _kind = resolved
     slots = {}
-    if args.get("budget_min") or args.get("budget_max"):
-        slots["budget"] = (args["budget_min"] or None, args["budget_max"] or None)
-    if args.get("series"):
-        slots["series"] = args["series"]
-    if args.get("publish_start"):
-        slots["publish_range"] = (args["publish_start"], args["publish_end"])
+    if constraints.budget is not None:
+        slots["budget"] = (constraints.budget.min, constraints.budget.max)
+    if constraints.series:
+        slots["series"] = constraints.series
+    if constraints.publish is not None:
+        slots["publish_range"] = (constraints.publish.start, constraints.publish.end)
     return slots
 
 
@@ -130,28 +160,66 @@ def resolve_model_query(query: str):
     resolved = resolve_model_constraints(query)
     if resolved is None:
         return None
-    args, kind = resolved
-    models = find_models_by_args(args)
-    trace_store.node("find_models", status="hit" if models else "miss",
-                     in_={"kind": kind, "budget_min": args["budget_min"],
-                          "budget_max": args["budget_max"],
-                          "publish_start": args["publish_start"] or "-",
-                          "publish_end": args["publish_end"] or "-",
-                          "series": args.get("series") or "-"},
-                     out={"n": len(models)})
-    if not models:
+    constraints, kind = resolved
+    result = find_models(constraints)
+    models = result.models
+    status = "degraded" if result.dropped else ("hit" if models else "miss")
+    out = {"n": len(models)}
+    if result.dropped:
+        out["dropped"] = ",".join(result.dropped)
+    if result.notes:
+        out["notes"] = json.dumps(result.notes, ensure_ascii=False)
+    trace_store.node("find_models", status=status,
+                     in_={"kind": kind,
+                          "constraint_detail": json.dumps(asdict(constraints),
+                                                          ensure_ascii=False, default=str)},
+                     out=out)
+    if result.dropped or not models:
         return None
-    return ModelQueryResult(models=models, kind=kind, constraints=args)
+    return FindModelsResult(models=models, dropped=result.dropped, notes=result.notes,
+                            constraints=constraints, kind=kind)
+
+
+def format_constraints(constraints: ModelQueryConstraints) -> str:
+    """把已校验约束渲染成确定性的中文条件串。"""
+    parts = []
+    b = constraints.budget
+    if b is not None:
+        if b.min is not None and b.max is not None:
+            parts.append("预算 %s–%s 元" % (b.min, b.max))
+        elif b.max is not None:
+            parts.append("预算 %s 元以内" % b.max)
+        elif b.min is not None:
+            parts.append("预算 %s 元以上" % b.min)
+    p = constraints.publish
+    if p is not None and p.start is not None:
+        start = _fmt_day(p.start)
+        end = _fmt_day(p.end) if p.end else start
+        parts.append("%s 至 %s 发布" % (start, end) if start != end else "%s 发布" % start)
+    if constraints.model_names:
+        parts.append("型号 " + "、".join(constraints.model_names))
+    if constraints.series:
+        parts.append("%s 系列" % constraints.series)
+    for cond in constraints.params:
+        parts.append("%s %s %s" % (cond.key, cond.op, cond.value))
+    if constraints.scope:
+        labels = {"cheaper": "更便宜", "pricier": "更贵", "newer": "更新",
+                  "older": "更旧", "prev": "上一轮结果", "last": "上一轮结果"}
+        parts.extend(labels.get(s, s) for s in constraints.scope)
+    if constraints.tags:
+        parts.extend((TAG_CATALOG.get(t) or {}).get("label", t) for t in constraints.tags)
+    return "、".join(parts) or "全部型号"
+
+
+def _fmt_day(value: int) -> str:
+    text = str(value)
+    return "%s-%s-%s" % (text[:4], text[4:6], text[6:8]) if len(text) == 8 else text
 
 
 def format_model_query(result: ModelQueryResult) -> str:
-    """按约束类型选前缀，列表统一用 format_model_line。"""
+    """统一条件前缀 + 型号列表；条件只来自实际生效的 constraints。"""
     n = len(result.models)
-    series = result.constraints.get("series") or "该"
-    prefix = {
-        "budget": f"在您预算内的机器人有 {n} 款：",
-        "date": f"该时间段内发布的机器人有 {n} 款：",
-        "series": f"{series}系列有以下型号 {n} 款：",
-        "budget+date": f"符合您预算和时间要求的机器人有 {n} 款：",
-    }.get(result.kind, f"符合条件的机器人有 {n} 款：")
+    constraint_text = format_constraints(result.constraints or ModelQueryConstraints())
+    prefix = render("model_query_result", template=MODEL_QUERY_RESULT_PREFIX,
+                    condition=constraint_text, number=n) or ""
     return prefix + "\n\n" + "\n".join(format_model_line(m) for m in result.models)

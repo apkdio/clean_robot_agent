@@ -63,7 +63,7 @@ def test_normal_selection_sop():
     r5 = _chat("跳过", sid)
     _assert_in("特点", r5, "时间跳过后问标签")
     r6 = _chat("跳过", sid)
-    _assert_in("符合您条件", r6, "推荐含统计")
+    _assert_in("在您选择的条件内", r6, "推荐含统计")
     _assert_in("净白 S1", r6, "推荐含净白 S1(899)")
 
 
