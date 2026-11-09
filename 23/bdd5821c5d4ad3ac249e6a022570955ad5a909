@@ -1,0 +1,109 @@
+README.md
+  s_40681318f5a20b::t_f7de76d65d4b2a 75
+  s_40681318f5a20b::t_4535b4a78dab12 104
+  s_40681318f5a20b::t_7c41aa85959810 182
+  s_40681318f5a20b::t_7dd07e1fc83af9 157
+  s_40681318f5a20b::t_a5866277109d0a 191
+test_scripts/unit/test_repair_sop.py
+  s_40681318f5a20b::t_6609afbebde2f3 177
+  s_40681318f5a20b::t_cde6e4221e6be6 46-52
+  s_40681318f5a20b::t_2acfc6f4f1021b 146,149-150,153-154,160-161,166-168
+  s_40681318f5a20b::t_b75d5bc820818b 98-104
+tools/sop_runtime.py
+  s_40681318f5a20b::t_7a7bfe98c7fdd6 17-19
+  s_40681318f5a20b::t_112eee85f3ce0d 6
+tools/model_query.py
+  s_40681318f5a20b::t_8e928bcca6db58 206
+test_scripts/unit/test_find_models_validation.py
+  s_40681318f5a20b::t_bc6020fd196b0c 52
+tools/dto/sop.py
+  s_40681318f5a20b::t_4fad9831e14583 8-24
+test_scripts/unit/test_model_query_sop.py
+  s_40681318f5a20b::t_b38aaa5ac44a4b 656-658
+  s_40681318f5a20b::t_e817178bb3aacf 182-198,200-272
+  s_40681318f5a20b::t_5a998219274ca3 199
+  s_40681318f5a20b::t_a7900b9d693f31 137-181,273-290
+  s_40681318f5a20b::t_cefb082a5fd1cc 350-355
+  s_40681318f5a20b::t_b9532f6be0c849 654-655,659
+test_scripts/unit/test_followup.py
+  s_40681318f5a20b::t_89f29fd262b657 30
+  s_40681318f5a20b::t_b779bff12896e1 11
+  s_40681318f5a20b::t_6296b756e8fc95 76
+  s_40681318f5a20b::t_365cda0cb9cb27 102
+  s_40681318f5a20b::t_237f4f62358c23 51-61
+  s_40681318f5a20b::t_25e77840bef341 1-10,12-29,31-50,62-75,77-101,103-114
+sops/repair.py
+  s_40681318f5a20b::t_5bbfc71094dff5 104
+  s_40681318f5a20b::t_67137f11d152b7 65
+  s_40681318f5a20b::t_182a20cac09659 6
+  s_40681318f5a20b::t_53957af5c276ab 14,18,24-28,48-53,58-60
+sops/model_query.py
+  s_40681318f5a20b::t_f840c2d7f79e66 169
+  s_40681318f5a20b::t_dbc595e2a68d9a 33,36,38-40,45-49,54,56-58,64,66-67
+  s_40681318f5a20b::t_54dc0bf2477509 4-5
+test_scripts/unit/test_service_point_sop.py
+  s_40681318f5a20b::t_e77c38b16a896f 149-170
+  s_40681318f5a20b::t_4658f46d4d80f0 223
+tools/followup.py
+  s_40681318f5a20b::t_917cfe62e87068 113,123-128
+  s_40681318f5a20b::t_6ebb6d6afb7418 1-38,41-47,49-51,58,63-112,114-122,129-138
+  s_40681318f5a20b::t_3ee9b7f167e681 39-40,48,52-57,59-62
+sops/base.py
+  s_40681318f5a20b::t_0624f91b97d866 11
+  s_40681318f5a20b::t_7575b7d1e1ac0a 396-399
+  s_40681318f5a20b::t_4e1ffb2a3cd022 498-499,508-509,524-526,530,532,537-538,541-542,544,546-548,555-556,572-574,576,578-579,581-582,588,592-593,595-598,602-603
+  s_40681318f5a20b::t_d085c8cb33a785 340-344
+  s_40681318f5a20b::t_8cd6c2937a1736 438-469
+  s_40681318f5a20b::t_bcbbe11e11a33c 19
+  s_40681318f5a20b::t_bda96c59aa27d4 72-165,168-171,173
+  s_40681318f5a20b::t_0fe0f29b3efe08 204-207,209
+  s_40681318f5a20b::t_3172d33772896a 31-32
+  s_40681318f5a20b::t_2b26755b583702 18
+  s_40681318f5a20b::t_af70ac5b35849b 27-29
+test_scripts/unit/test_dto_contracts.py
+  s_40681318f5a20b::t_d53a2b4743717f 153
+  s_40681318f5a20b::t_8459826d071be5 79-86
+  s_40681318f5a20b::t_926e80c393597e 15
+tools/chat_service.py
+  s_40681318f5a20b::t_6ab1b28d9c5d87 79-80,86
+sops/service_point.py
+  s_40681318f5a20b::t_42daf625274981 9
+  s_40681318f5a20b::t_27ab51e9ce808b 101
+  s_40681318f5a20b::t_acd49218136a83 57-58,62-63,65-67,74,76-78
+tools/dto/__init__.py
+  s_40681318f5a20b::t_1db4d9de20d009 13
+config/word_dict_config.py
+  s_40681318f5a20b::t_f8577b78efd0a8 435
+  s_40681318f5a20b::t_e5d0ea8f9d51b5 430
+  s_40681318f5a20b::t_32d460f9b8c0ca 209-210
+function_tools/model_tool.py
+  s_40681318f5a20b::t_80286533423e00 166,168
+  s_40681318f5a20b::t_6d671c2b6b262a 472,475
+  s_40681318f5a20b::t_e54c4865e5746d 199-205,216,227-238
+  s_40681318f5a20b::t_b04485b2ff2e94 347
+  s_40681318f5a20b::t_92b6df3566ac31 614-615
+  s_40681318f5a20b::t_d99a72376bd8d2 252
+tools/op_executors.py
+  s_40681318f5a20b::t_8c03a55209a1dd 56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.52-trip",
+  "base_commit_sha": "23bdd5821c5d4ad3ac249e6a022570955ad5a909",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
