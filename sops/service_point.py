@@ -68,14 +68,14 @@ def _extract_city(text: str, _slots: dict):
 
 
 def _extract_pick(text: str, slots: dict):
-    """答序号 → 候选下标（从 0 起）。"""
-    m = re.search(r"[1-9]", text or "")
-    if not m:
+    """答序号 → 候选下标（从 0 起）；越界/句子里没有完整序号都算失败。"""
+    from tools.selection import parse_index
+
+    candidates = slots.get("candidates") or []
+    status, idx = parse_index(text, len(candidates))
+    if status != "ok":
         return ExtractResult("fail", reason="no_pick")
-    idx = int(m.group()) - 1
-    if not 0 <= idx < len(slots.get("candidates") or []):
-        return ExtractResult("fail", reason="out_of_range")
-    return ExtractResult("done", idx)
+    return ExtractResult("done", idx - 1)
 
 
 def format_nearest(coord: dict) -> str:

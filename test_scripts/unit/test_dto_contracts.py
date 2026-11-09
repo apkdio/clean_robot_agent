@@ -8,7 +8,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
 
 from test_scripts._runner import *
 
-from tools.dto.clarify import CLARIFY_DONE, ClarifyResult
+from tools.dto.clarify import CLARIFY_DONE, CLARIFY_DROP, CLARIFY_RESUME, ClarifyResult
 from tools.dto.executor import NotMine, Reply
 from tools.dto.handoff import Handoff
 from tools.dto.model_query import ModelQueryConstraints, ModelQueryResult
@@ -43,6 +43,13 @@ def test_clarify_result():
     handoff = Handoff("retrieve", "机器人不移动", "repair")
     _assert_eq(ClarifyResult.done_handoff(handoff).handoff.target, "retrieve",
                "done 可带 handoff")
+    _assert_eq(ClarifyResult.drop().code, CLARIFY_DROP, "drop 形态")
+    resumed = ClarifyResult.resume("原句", prefix="先说",
+                                   prefer_op="followup", enter_declined=True)
+    _assert_eq((resumed.code, resumed.message, resumed.data.query,
+                resumed.data.prefer_op, resumed.data.enter_declined),
+               (CLARIFY_RESUME, "先说", "原句", "followup", True),
+               "resume 载荷原样带出")
     _assert_raises(ValueError, lambda: ClarifyResult("bad"), "未知 code 报错")
     _assert_raises(ValueError, lambda: ClarifyResult.done(""), "done 空 message 报错")
     _assert_raises(ValueError, lambda: ClarifyResult.resume(""), "resume 空 query 报错")

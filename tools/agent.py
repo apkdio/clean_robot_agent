@@ -22,8 +22,14 @@ from tools.query_rewrite import (
     rewrite_query as _rewrite_query,
     window_domain as _window_domain,
 )
-from tools.safety import (recent_carry_count, safety_carry_max, safety_carry_text,
-                          window_danger_word)
+from tools.safety import (
+    SAFETY_CARRY,
+    SAFETY_NONE,
+    SAFETY_STOP,
+    decide_safety,
+    recent_carry_count,
+    safety_carry_max,
+)
 from tools.sop_runtime import (
     enter_sop_result as _enter_sop_result,
     has_residual_request as _has_residual_request,
@@ -35,8 +41,8 @@ from tools.sop_runtime import (
 from tools.clarify_service import (
     CLARIFY_DONE,
     CLARIFY_RESUME,
-    CLARIFY_HANDLERS as _CLARIFY_HANDLERS,
     apply_resume,
+    dispatch_clarify as _dispatch_clarify,
     open_clarify as _open_clarify,
 )
 from tools.domain_router import (
@@ -53,13 +59,11 @@ from tools.op_executors import OP_EXECUTORS as _OP_EXEC, PIPELINE_OPS as _PIPELI
 from tools.generation import casual_stream, rag_stream
 
 from config.word_dict_config import (
-    AFTERSALES_HOTLINE,
     EMOTION_MILD,
     EMOTION_STRONG,
     EXIT_WORDS,
     NO_ANSWER_REPLIES,
     REFUSE_OFFTOPIC_REPLY as _REFUSE_OFFTOPIC_REPLY,
-    SAFETY_STOP_REPLY,
     SOP_ENTER_FAILED_REPLY as _SOP_ENTER_FAILED_REPLY,
 )
 from config.word_dict_config import BLOCK_INJECT_REPLY as _BLOCK_INJECT_REPLY
@@ -160,12 +164,12 @@ def _stage_inject_guard(ctx: TurnContext) -> StageOutcome:
 def _stage_danger_guard(ctx: TurnContext) -> StageOutcome:
     """危险现象：安全优先，立即停机联系售后。"""
     from tools.context_store import append_message
-    from config.word_dict_config import DANGER_WORDS
 
-    danger_hit = next((w for w in DANGER_WORDS if w in ctx.q), None)
-    if not danger_hit:
+    decision = decide_safety(ctx.session_id, ctx.q, mode=SAFETY_STOP)
+    if decision.level == SAFETY_NONE:
         trace_store.route("danger", hit=False)
         return Continue()
+    danger_hit = decision.word
     trace_store.route("danger", hit=True, word=danger_hit)
     append_message(ctx.session_id, "user", ctx.query, danger=True,
                    trace=trace_store.turn_anchor())
@@ -175,7 +179,7 @@ def _stage_danger_guard(ctx: TurnContext) -> StageOutcome:
     end_sop(ctx.session_id)
     pending_store.close(ctx.session_id)
     _log_behavior("stop_use_safety", word=danger_hit)
-    return Finish(text=SAFETY_STOP_REPLY.format(hotline=AFTERSALES_HOTLINE))
+    return Finish(text=decision.reply)
 
 
 def _stage_record_user(ctx: TurnContext) -> StageOutcome:
@@ -199,14 +203,7 @@ def _stage_pending_clarify(ctx: TurnContext) -> StageOutcome:
     if not pending:
         return Continue()
     biz = pending.get("biz") or "-"
-    trace_store.node("clarify", in_={"biz": biz,
-                                     "retry": int(pending.get("retry") or 0)})
-    handler = _CLARIFY_HANDLERS.get(biz)
-    if handler is None:
-        logger.warning("[Clarify] 未登记的业务 %r，退出澄清", biz)
-        pending_store.close(ctx.session_id)
-        return Continue()
-    result = handler(ctx.session_id, ctx.query, ctx.q)
+    result = _dispatch_clarify(ctx.session_id, biz, ctx.query, ctx.q)
     if result.code == CLARIFY_DONE:
         if result.handoff is not None:
             ctx.handoff = result.handoff
@@ -316,19 +313,19 @@ def _stage_intent(ctx: TurnContext) -> StageOutcome:
 
 def _stage_safety_carry(ctx: TurnContext) -> StageOutcome:
     """近期发生过安全告警 → 主链路直接承接（零检索、零 LLM）。"""
-    danger_word = window_danger_word(ctx.session_id)
-    reply = safety_carry_text(ctx.session_id, ctx.q, intent=ctx.intent, margin=ctx.margin)
-    if not reply:
+    decision = decide_safety(ctx.session_id, ctx.q, intent=ctx.intent,
+                             margin=ctx.margin, mode=SAFETY_CARRY)
+    if decision.level != SAFETY_CARRY:
         return Continue()
     high_conf_margin = float((_ctx_cfg().get("intent") or {}).get("high_conf_margin", 0) or 0)
-    _log_behavior("carry_safety", danger=danger_word or "-")
+    _log_behavior("carry_safety", danger=decision.word or "-")
     trace_store.node("guard.safety_carry", status="hit",
                      in_={"count": recent_carry_count(ctx.session_id),
                           "max": safety_carry_max(),
                           "need_margin": high_conf_margin,
                           "margin": round(ctx.margin, 3)},
-                     out={"chars": len(reply)})
-    return Finish(text=reply)
+                     out={"chars": len(decision.reply)})
+    return Finish(text=decision.reply)
 
 
 def _stage_other_downgrade(ctx: TurnContext) -> StageOutcome:

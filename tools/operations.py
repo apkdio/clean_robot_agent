@@ -7,7 +7,17 @@ from __future__ import annotations
 
 import threading
 
+from config.word_dict_config import (
+    CLARIFY_GUESS,
+    OPERATION_LABELS,
+    OPS_CLARIFY_RETRY,
+)
+from tools import pending_store, trace_store
+from tools.clarify_service import match_op_choice, register_clarify_handler
+from tools.dto.clarify import ClarifyResult
 from tools.log_tool import get_logger
+from tools.safety import with_safety_hint
+from tools.turn_recorder import log_behavior
 
 logger = get_logger(name="operations")
 
@@ -383,3 +393,53 @@ def note_ops(query: str, *, intent: str = None, margin: float = None,
     trace_store.route("ops", **note)
     # 注意顺序：note 里的 scores 是给 trace 的字符串，返回给主链路的是分数表
     return {"ops": raw, "usable": usable, **note, "scores": scores}
+
+
+def _clarify_ops(session_id: str, query: str, _q: str) -> ClarifyResult:
+    """操作澄清：答 1/2（或操作别名）按选择重放；两次认不出取 top1。"""
+    rec = pending_store.take(session_id, pending_store.BIZ_OPS_CLARIFY)
+    if not rec:
+        return ClarifyResult.drop()
+    st = rec.get("state") or {}
+    opts = list((rec.get("data") or {}).get("options") or [])
+    retry = int(rec.get("retry") or 0)
+
+    def _label(op):
+        return (OPERATION_LABELS.get(op) or (op,))[0]
+
+    if not opts:
+        pending_store.close(session_id, pending_store.BIZ_OPS_CLARIFY)
+        logger.warning("[Clarify] ops.clarify 没有候选，退出澄清 session=%s", session_id)
+        return ClarifyResult.drop()
+    if len(opts) == 1:
+        # 单候选不是真正的二选一；直接按唯一候选继续，避免拼出 "1=x，2=-"。
+        pending_store.close(session_id, pending_store.BIZ_OPS_CLARIFY)
+        trace_store.node("ops.clarify", status="skipped",
+                         in_={"top1": opts[0]},
+                         out={"pick": opts[0]})
+        return ClarifyResult.resume(st.get("query") or query, prefer_op=opts[0])
+
+    pick = match_op_choice(query, opts)
+    if pick:
+        pending_store.close(session_id, pending_store.BIZ_OPS_CLARIFY)
+        trace_store.node("ops.clarify",
+                         in_={"top1": opts[0], "top2": opts[1] if len(opts) > 1 else "-"},
+                         out={"pick": pick})
+        return ClarifyResult.resume(st.get("query") or query, prefer_op=pick)
+    if retry >= 1:
+        pending_store.close(session_id, pending_store.BIZ_OPS_CLARIFY)
+        trace_store.node("ops.clarify", status="miss",
+                         in_={"top1": opts[0] if opts else "-"},
+                         out={"pick": opts[0] if opts else "-"})
+        return ClarifyResult.resume(
+            st.get("query") or query,
+            prefix=CLARIFY_GUESS.format(a=_label(opts[0])) + "\n\n" if opts else "",
+            prefer_op=opts[0] if opts else None)
+    pending_store.bump(session_id, pending_store.BIZ_OPS_CLARIFY)
+    log_behavior("ask_clarify", kind="ops_clarify_retry")
+    return ClarifyResult.done(with_safety_hint(OPS_CLARIFY_RETRY.format(
+        a=_label(opts[0]) if opts else "-",
+        b=_label(opts[1]) if len(opts) > 1 else "-"), session_id, by="clarify"))
+
+
+register_clarify_handler(pending_store.BIZ_OPS_CLARIFY, _clarify_ops)

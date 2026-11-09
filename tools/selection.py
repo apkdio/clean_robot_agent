@@ -1,4 +1,7 @@
-"""多选序号解析：只认序号与固定跳过命令，不做标签别名匹配。"""
+"""序号解析：单序号、多选序号与固定跳过命令共用一套规则。
+
+只认序号本身，不做标签文字/操作别名匹配；别名由调用方在序号解析失败后自己处理。
+"""
 from __future__ import annotations
 
 import re
@@ -9,6 +12,8 @@ from config.word_dict_config import TAG_SKIP_WORDS
 _SELECTION_SEP_RE = re.compile(r"[\s,，、；;/／]+")
 _CN_DIGIT = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
              "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+_INDEX_RE = re.compile(r"^(?:第|选)?\s*([0-9]+|[一二两三四五六七八九十]+)\s*(?:个|项|号)?$")
+_SELECTOR_RE = re.compile(r"(?:选|第)\s*([0-9]+|[一二两三四五六七八九十]+)\s*(?:个|项|号)?")
 
 
 def _normalize(text: str) -> str:
@@ -16,6 +21,40 @@ def _normalize(text: str) -> str:
     text = unicodedata.normalize("NFKC", text or "")
     text = text.replace("，", ",").replace("、", ",").replace("；", ",").replace(";", ",")
     return text.replace("／", "/").strip()
+
+
+def _to_index(token: str):
+    if token.isdigit():
+        return int(token)
+    return _CN_DIGIT.get(token)
+
+
+def parse_index(text: str, n: int, allow_skip: bool = False):
+    """解析单个序号，返回 ("ok", idx) / ("skip", None) / ("invalid", None)。
+
+    整串必须是序号（可带「选/第」「个/项/号」）；越界直接 invalid，不能把 "10"
+    截成 1。句中带明确「选/第」的句子（如「2个都不对，选1」）取最后一个选择标记。
+    """
+    raw = _normalize(text)
+    if not raw:
+        return "invalid", None
+    compact = re.sub(r"\s+", "", raw)
+    if allow_skip and compact in TAG_SKIP_WORDS:
+        return "skip", None
+    if n <= 0:
+        return "invalid", None
+
+    m = _INDEX_RE.fullmatch(compact)
+    if m:
+        idx = _to_index(m.group(1))
+        return ("ok", idx) if idx is not None and 1 <= idx <= n else ("invalid", None)
+
+    # 整串不是纯序号时，只接受句末明确的选择标记；裸数字仍按越界失败处理。
+    matches = _SELECTOR_RE.findall(compact)
+    if not matches:
+        return "invalid", None
+    idx = _to_index(matches[-1])
+    return ("ok", idx) if idx is not None and 1 <= idx <= n else ("invalid", None)
 
 
 def parse_multi_select(text: str, max_n: int):
@@ -34,17 +73,11 @@ def parse_multi_select(text: str, max_n: int):
         return "invalid", []
     out = []
     for part in parts:
-        token = re.sub(r"^(?:第|选)|(?:个|项|号)$", "", part.strip())
-        if token.isdigit():
-            n = int(token)
-        elif token in _CN_DIGIT:
-            n = _CN_DIGIT[token]
-        else:
+        status, idx = parse_index(part, max_n)
+        if status != "ok":
             return "invalid", []
-        if n < 1 or n > max_n:
-            return "invalid", []
-        if n not in out:
-            out.append(n)
+        if idx not in out:
+            out.append(idx)
     return "ok", out
 
 

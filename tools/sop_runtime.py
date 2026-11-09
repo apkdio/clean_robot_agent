@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from config.word_dict_config import EXIT_WORDS
-from dto import SopStepResult
+from tools.dto.sop import SopStepResult
 from tools import pending_store, trace_store
 from tools.log_tool import get_logger
 from tools.turn_recorder import log_behavior

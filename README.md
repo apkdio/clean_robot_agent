@@ -73,6 +73,7 @@ clean_robot_agent/
 │   └── registry.py              # 工具注册中心（对外暴露的工具白名单 + 编排开关读取）
 ├── sops/                        # SOP 标准操作流程（多轮引导）
 │   ├── base.py                  # 会话状态（按 session_id 隔离，带定义指纹）+ 执行器 + 注册/匹配/进入门
+│   ├── sop_gate.py              # SOP 进入/退出确认门：注册澄清 handler
 │   ├── model_query.py           # 选购/型号查询 SOP（预算/系列/时间/标签补槽，承接推荐/买/预算入口）
 │   ├── repair.py                # 故障排查 SOP（症状确认 → handoff 到主链 retrieve，domain=repair）
 │   └── service_point.py         # 售后网点 SOP（问城市 → 重名选序号）
@@ -103,6 +104,7 @@ clean_robot_agent/
 │   │   ├── test_service_point_sop.py # 网点 SOP（城市解析 / 重名选序号）
 │   │   ├── test_followup.py     # 追问解析 / 相对维度 / 最后命中 index
 │   │   ├── test_handoff.py      # SOP handoff / 前向跳 / domain 检索
+│   │   ├── test_clarify_safety.py # 澄清注册制 / A10 / SafetyDecision
 │   │   ├── test_trace_report_html.py # trace HTML 报告（数据整形 / 渲染 / 边界）
 │   │   ├── test_review_fixes.py # 代码 review 修复回归（依赖降级 / 日期闸门 / 上传净化 / 重答与历史口径）
 │   │   ├── test_webapp_routes.py # webapp 路由层契约（入参校验 / 状态码 / 并发锁拒绝）
@@ -138,7 +140,8 @@ clean_robot_agent/
 | `domain_router.py` | 知识域打分与检索 filter：top1 单域 / top2 双域 / 无域全库兜底 |
 | `query_rewrite.py` | 上下文承接与改写：历史挑选、规则拼接、LLM 改写与忠实性校验 |
 | `sop_runtime.py` | SOP 运行时：进出 SOP、重答重开、SOP 进度记录 |
-| `clarify_service.py` | 统一澄清处理器：SOP 进入/退出确认、操作澄清；使用 `dto/clarify` 的 `ClarifyResult` |
+| `clarify_service.py` | 澄清机制层：按 biz 分派、登记 handler、载荷恢复与 `ClarifyResult`；SOP 门在 `sops/sop_gate.py`、操作澄清在 `operations.py` 注册，未登记 biz 显式消费并落 `clarify/skipped` |
+| `safety.py` | 安全判定：`SafetyDecision(level, word, reply)` 统一危险停机 / 告警窗口硬承接 / 澄清软提醒；调用方只负责持久化与出口 |
 | `op_executors.py` | 操作执行体注册表：追问 / 型号详情 / 型号筛选 / 网点 / SOP，返回 `ExecOutcome`（`Reply / NotMine`） |
 | `generation.py` | 流式生成与兜底：闲聊 / RAG Prompt、生成失败话术、答案硬事实校验接线 |
 | `chat_service.py` | 一轮对话生命周期：会话锁、停止标志、user/assistant 收尾、标题与 meta 事件；webapp 只做 HTTP/SSE 转换 |
@@ -153,7 +156,7 @@ clean_robot_agent/
 | `reranker.py` | Cross-Encoder 精排（bge-reranker-v2-m3，本地推理；不可用时降级回 RRF 顺序）|
 | `metadata_extractor.py` | 结构化元数据：价格提取、预算解析、发布时间提取、型号信息/标签抽取 |
 | `models_repo.py` | 型号记录唯一缓存：基础字段 + `param_*` + `tag_*`，去重合并与懒重建 |
-| `selection.py` | 多选序号解析：中英文逗号/顿号/全角数字归一化，只认序号与固定跳过命令 |
+| `selection.py` | 序号解析：`parse_index` 统一「第/选/个/项/号」、中文数字、整串匹配与越界；`parse_multi_select` 建在它上面，只认序号与固定跳过命令 |
 | `model_query.py` | 模型查询业务：预算/日期/系列约束 → `find_models` → 结构化直出（不处理型号详情/追问） |
 | `followup.py` | 追问业务：全局最新/价格极值；相对上一轮边界（更便宜/更贵/更新/更旧）解析与筛选，过滤排序复用 `function_tools.model_tool.filter_by_relative` |
 | `answer_checker.py` | 答案校验：从 RAG 答案抽已知型号、带货币单位的金额、保修语境下的时长，到最终召回片段里做字面核对；用户原话里的实体豁免，目录外/带虚构后缀的型号记 `unchecked`；结果只记日志与 trace，不拦截流式输出 |
@@ -190,6 +193,7 @@ clean_robot_agent/
 | 模块 | 职责 |
 |------|------|
 | `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 注册/匹配/进入门。**会话状态带定义指纹**：代码改过 SOP 定义后，Redis 里的旧会话读时自动作废（不会拿旧下标续跑）；无 Redis 降级的内存态同样按 TTL 过期 |
+| `sop_gate.py` | SOP 进入/退出确认门：注册 `sop.enter` / `sop.exit` 澄清 handler；缺 `sop` 或状态对不上时显式作废，不默认进某条流程 |
 | `model_query.py` | 选购/型号查询 SOP：承接「推荐/买/预算」入口（含进入确认门与选购/售后/品牌 guards），收集预算、系列、发布时间与标签（养宠/静音/防缠绕等）→ `find_models` → 列表；标签只认序号与固定跳过命令 |
 | `repair.py` | 故障排查 SOP：问现象 → 症状归一 → handoff 到主链 `retrieve`（domain=repair）→ `generate`；生成、history、stop_check、answer.verify、fallback 全在主链 |
 
@@ -369,7 +373,9 @@ python intent_classifier_training/train_intent_classifier.py
 | `unit/test_context.py` | 上下文存储（消息读写 / meta / UUID 校验 / 会话列表） | |
 | `unit/test_metadata.py` | 结构化提取（价格 / 日期 / 型号 / 系列 / 过滤） | |
 | `unit/test_model_query.py` | 模型查询收敛（预算 / 日期 / 组合 / 守卫） | |
-| `unit/test_selection_tags.py` | 标签序号解析（中英文逗号 / 全角 / 跳过）与型号标签过滤 | |
+| `unit/test_selection_tags.py` | 单/多选序号解析（整串 / 越界 / 跳过）与型号标签过滤 | |
+| `unit/test_clarify_safety.py` | 澄清注册制 / A10 / SafetyDecision | |
+| `unit/test_handoff.py` | SOP handoff / 前向跳 / domain 检索 | |
 | `unit/test_function_tools.py` | 日期 / 预算 / 型号 / 症状 / 网点五个工具 | |
 | `unit/test_retrieval.py` | 检索链路（域路由 / 分词 / 过滤 / RRF / 阈值 / 精排 / 条目切分） | 部分 |
 | `unit/test_agent_guards.py` | Agent 前置防护（情绪 / 注入 / 危险 / 退出意图 / 域外拒答门） | |

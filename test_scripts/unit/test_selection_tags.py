@@ -7,7 +7,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools.selection import is_skip, parse_multi_select
+from tools.selection import is_skip, parse_index, parse_multi_select
 
 
 def test_selection_normalization():
@@ -21,6 +21,20 @@ def test_selection_normalization():
     _assert_eq(parse_multi_select("有猫", 5), ("invalid", []), "不做标签文字匹配")
     _assert_eq(parse_multi_select("跳过", 5), ("skip", []), "显式跳过")
     _assert(is_skip("不需要"), "固定跳过命令")
+
+
+def test_index_parsing():
+    _assert_eq(parse_index("2", 2), ("ok", 2), "裸数字")
+    _assert_eq(parse_index("第2个", 2), ("ok", 2), "第/个")
+    _assert_eq(parse_index("选 一", 2), ("ok", 1), "选/中文数字/空格")
+    _assert_eq(parse_index("10", 2), ("invalid", None), "越界不截断")
+    _assert_eq(parse_index("2个都不对，选1", 2), ("ok", 1), "句中明确选择取最后一个")
+    _assert_eq(parse_index("跳过", 2, allow_skip=True), ("skip", None), "单序号也支持 skip")
+    _assert_eq(parse_index("跳过", 0, allow_skip=True), ("skip", None), "无候选也认跳过")
+    _assert_eq(parse_index("跳过", 2), ("invalid", None), "未开 skip 不消费跳过词")
+    _assert_eq(parse_multi_select("2个都不对，选1", 5), ("invalid", []),
+               "多选不猜句子里的局部选择")
+    _assert_eq(parse_multi_select("1,10", 5), ("invalid", []), "多选同样拒绝越界")
 
 
 def test_model_tags_mapping():
@@ -45,6 +59,7 @@ def test_find_models_tags_filter_and_boost():
 
 TESTS = [
     test_selection_normalization,
+    test_index_parsing,
     test_model_tags_mapping,
     test_find_models_tags_filter_and_boost,
 ]

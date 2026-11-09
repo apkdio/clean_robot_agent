@@ -98,7 +98,8 @@ def test_enter_gate_decline_reuses_entry_query():
 def test_enter_gate_timeout_is_not_decline():
     """进入确认门两次没听懂只跳过本轮，不写持久拒绝标记。"""
     from tools import pending_store, trace_store
-    from tools.clarify_service import CLARIFY_DONE, CLARIFY_RESUME, _clarify_sop_enter
+    from sops.sop_gate import _clarify_sop_enter
+    from tools.clarify_service import CLARIFY_DONE, CLARIFY_RESUME
     from tools.context_store import is_enter_declined
     from test_scripts import trace_reader
 
@@ -181,20 +182,6 @@ def test_all_sop_entry_gate():
     finally:
         pending_store.close(sid)
         end_sop(sid)
-
-
-def test_enter_confirm_policy():
-    """门策略由 SOP 自己声明：默认 always，声明 never 才不问。"""
-    import sops
-    from sops.base import SOPS
-
-    _assert_eq(sops.enter_confirm_mode("model_query"), "always", "默认/声明为 always")
-    saved = SOPS["model_query"].get("enter_confirm")
-    SOPS["model_query"]["enter_confirm"] = "never"
-    try:
-        _assert(not sops.sop_needs_enter_confirm("model_query", "帮我推荐一款"), "never 不问门")
-    finally:
-        SOPS["model_query"]["enter_confirm"] = saved
 
 
 def test_safety_hint_in_sop_clarify():
@@ -513,7 +500,7 @@ def test_sop_exit_confirm_does_not_emit_sop_active():
     """退出确认是 clarify 分支：不能伪装成 _stage_active_sop 的 sop.active。"""
     from sops import end_sop, start_sop
     from tools import pending_store, trace_store
-    from tools.clarify_service import _clarify_sop_exit
+    from sops.sop_gate import _clarify_sop_exit
     from test_scripts import trace_reader
 
     sid = "t-sop-exit-trace"
@@ -543,7 +530,8 @@ def test_sop_exit_confirm_does_not_emit_sop_active():
 def test_ops_clarify_single_option_does_not_ask_two():
     """单候选不是二选一：直接按唯一候选继续，不能拼出「2=-」。"""
     from tools import pending_store
-    from tools.clarify_service import CLARIFY_RESUME, _clarify_ops, match_op_choice
+    from tools.clarify_service import CLARIFY_RESUME, match_op_choice
+    from tools.operations import _clarify_ops
 
     _assert_eq(match_op_choice("筛选", ["find_models", "sop"]), "find_models",
                "find_models 的别名已同步并可用于选择")
@@ -603,26 +591,6 @@ def test_ops_clarify_two_misses_take_top1():
         ops_mod.score_all = saved
         pending_store.close(sid)
         end_sop(sid)
-
-
-def test_clarify_result_contract():
-    """处理器返回体是统一 DTO：code 三种、message 承载话术/前缀、data 承载 resume 载荷。"""
-    from tools.clarify_service import (CLARIFY_DONE, CLARIFY_DROP, CLARIFY_RESUME, ClarifyResult)
-
-    _assert_eq(ClarifyResult.done("x").code, CLARIFY_DONE, "done 形态")
-    _assert_eq(ClarifyResult.drop().code, CLARIFY_DROP, "drop 形态")
-    r = ClarifyResult.resume("原句", prefix="先说", prefer_op="followup", enter_declined=True)
-    _assert_eq((r.code, r.message, r.data.query, r.data.prefer_op, r.data.enter_declined),
-               (CLARIFY_RESUME, "先说", "原句", "followup", True), "resume 载荷原样带出")
-
-    for make, why in ((lambda: ClarifyResult("bogus"), "未知 kind"),
-                      (lambda: ClarifyResult.done(""), "done 空回复"),
-                      (lambda: ClarifyResult.resume(""), "resume 空 query")):
-        try:
-            make()
-            _assert(False, why + " 应报错")
-        except ValueError:
-            _assert(True, why + " 被拒绝")
 
 
 def test_ops_clarify_only_when_close():
@@ -871,7 +839,6 @@ TESTS = [
     test_enter_gate_timeout_is_not_decline,
     test_enter_gate_decline_hint_truthful,
     test_all_sop_entry_gate,
-    test_enter_confirm_policy,
     test_safety_hint_in_sop_clarify,
     test_safety_hint_in_active_sop,
     test_model_list_routes_through_find_models,
@@ -886,7 +853,6 @@ TESTS = [
     test_sop_exit_confirm_does_not_emit_sop_active,
     test_ops_clarify_single_option_does_not_ask_two,
     test_ops_clarify_two_misses_take_top1,
-    test_clarify_result_contract,
     test_ops_clarify_only_when_close,
 ]
 

@@ -737,9 +737,12 @@ def test_clarify_hub_contract():
     from tools.redis_store import clarify_ttl, sop_ttl
 
     biz_consts = {getattr(ps, n) for n in dir(ps) if n.startswith("BIZ_")}
-    _assert_eq(set(clarify.CLARIFY_HANDLERS), biz_consts, "每个澄清业务都有处理器，且没有多余键")
-    for biz, handler in clarify.CLARIFY_HANDLERS.items():
+    handlers = clarify.registered_handlers()
+    _assert_eq(set(handlers), biz_consts, "每个澄清业务都有处理器，且没有多余键")
+    for biz, handler in handlers.items():
         _assert_true(callable(handler), f"{biz} 的处理器可调用")
+    _assert_eq(clarify.clarify_handler(ps.BIZ_SOP_ENTER), handlers[ps.BIZ_SOP_ENTER],
+               "按 biz 取到同一处理器")
     _assert_eq(set(clarify._CLARIFY_KINDS), {"done", "resume", "drop"}, "返回体 kind 是闭集")
     _assert_raises(ValueError, lambda: clarify.ClarifyResult("bad", message="x"), "闭集外的 code 直接报错")
     _assert_raises(ValueError, lambda: clarify.ClarifyResult(clarify.CLARIFY_DONE), "done 必须带 message")
@@ -795,12 +798,15 @@ def test_sop_enter_confirm_policy():
         if mode == "weak":
             _assert_true(sb.SOPS[sid].get("weak_trigger"), f"{sid} 声明 weak 必须配弱触发词")
 
+    _assert_eq(sb.enter_confirm_mode("model_query"), "always", "默认/声明为 always")
     saved = sb.SOPS["model_query"].get("enter_confirm")
     try:
         sop = sb.SOPS["model_query"]
         weak_words = set(sop.get("weak_trigger") or [])
         strong_q = next(w for w in sop["trigger"] if w not in weak_words)
         weak_q = sop["weak_trigger"][0]
+        sop["enter_confirm"] = "never"
+        _assert_false(sb.sop_needs_enter_confirm("model_query", strong_q), "never 不问门")
         sop["enter_confirm"] = "always"
         _assert_true(sb.sop_needs_enter_confirm("model_query", strong_q), "always：强触发也过门")
         _assert_true(sb.sop_has_strong_trigger("model_query", strong_q), "强触发可识别")
