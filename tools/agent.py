@@ -25,7 +25,7 @@ from tools.query_rewrite import (
 from tools.safety import (recent_carry_count, safety_carry_max, safety_carry_text,
                           window_danger_word)
 from tools.sop_runtime import (
-    enter_sop as _enter_sop,
+    enter_sop_result as _enter_sop_result,
     has_residual_request as _has_residual_request,
     is_symbols_only as _is_symbols_only,
     note_sop as _note_sop,
@@ -208,6 +208,9 @@ def _stage_pending_clarify(ctx: TurnContext) -> StageOutcome:
         return Continue()
     result = handler(ctx.session_id, ctx.query, ctx.q)
     if result.code == CLARIFY_DONE:
+        if result.handoff is not None:
+            ctx.handoff = result.handoff
+            return Continue(prefix=result.message, handoff=result.handoff)
         return Finish(text=result.message)
     if result.code == CLARIFY_RESUME:
         ctx.query, ctx.q, ctx.enter_declined_turn, ctx.prefer_op = apply_resume(
@@ -254,11 +257,14 @@ def _stage_active_sop(ctx: TurnContext) -> StageOutcome:
     if result is None or result.kind == "noop":
         return Continue()
     _note_sop(ctx.session_id, sop_id, state=st, done=bool(result.done))
-    if result.reply:
+    if result.reply or result.handoff:
         _log_behavior("sop_step")
     else:
         # 空回复也必须留下行为出口，避免 branch 为空；正文由 sops.base 兜底。
         _log_behavior("sop_step", empty=True)
+    if result.handoff is not None:
+        ctx.handoff = result.handoff
+        return Continue(prefix=result.reply, handoff=result.handoff)
     return Finish(text=result.reply or "")
 
 
@@ -271,7 +277,11 @@ def _stage_retry_reopen_sop(ctx: TurnContext) -> StageOutcome:
     reentered, reply = _reenter_sop_on_retry(ctx.session_id, ctx.query)
     if not reentered:
         return Continue()
-    return Finish(text=reply or _SOP_ENTER_FAILED_REPLY)
+    if getattr(reply, "handoff", None) is not None:
+        ctx.handoff = reply.handoff
+        return Continue(prefix=reply.reply, handoff=reply.handoff)
+    text = getattr(reply, "reply", reply) or ""
+    return Finish(text=text or _SOP_ENTER_FAILED_REPLY)
 
 
 def _stage_intent(ctx: TurnContext) -> StageOutcome:
@@ -396,6 +406,9 @@ def _stage_ops_dispatch(ctx: TurnContext) -> StageOutcome:
             continue
         if not isinstance(reply, Reply):
             raise TypeError("操作执行体 %s 返回了未知 DTO：%r" % (name, reply))
+        if reply.handoff is not None:
+            ctx.handoff = reply.handoff
+            return Continue(prefix=reply.text, handoff=reply.handoff)
         return Finish(text=reply.text)
     return Continue()
 
@@ -409,8 +422,12 @@ def _stage_intent_exit(ctx: TurnContext) -> StageOutcome:
         if any(w in ctx.q for w in REPAIR_STRONG_WORDS):
             sop_id = match_sop(ctx.q)
             if sop_id == "repair":
-                reply = _enter_sop(ctx.session_id, sop_id, ctx.q, via="strong_words")
-                return Finish(text=reply or _SOP_ENTER_FAILED_REPLY)
+                reply = _enter_sop_result(ctx.session_id, sop_id, ctx.q,
+                                          via="strong_words")
+                if reply.handoff is not None:
+                    ctx.handoff = reply.handoff
+                    return Continue(prefix=reply.reply, handoff=reply.handoff)
+                return Finish(text=reply.reply or _SOP_ENTER_FAILED_REPLY)
         if _route_domain(ctx.q):
             logger.info("[Intent] other 但命中知识域 → 不拒答，交给 RAG：%s", ctx.q[:40])
             trace_store.node("guard.refuse", status="skipped", by="domain_hit")
@@ -427,17 +444,21 @@ def _stage_intent_exit(ctx: TurnContext) -> StageOutcome:
 
 def _stage_retrieve(ctx: TurnContext) -> StageOutcome:
     """检索：改写 → 域定向 → 双路召回 → 注入过滤。"""
-    from config.word_dict_config import INJECT_RE
+    from config.word_dict_config import INJECT_RE, domain_filter
 
+    handoff = ctx.handoff
     if ctx.stop_check is not None and ctx.stop_check():
         logger.info("[Agent] stopped before retrieval")
         trace_store.node("retrieve", status="skipped", by="stopped")
         return Finish(text="")
     hr = _get_retriever()
-    turn_recorder.shadow_probe(ctx.q, ctx.session_id, "kb_search", "RAG 检索")
+    search_query = (handoff.query or ctx.q) if handoff else ctx.q
+    turn_recorder.shadow_probe(search_query, ctx.session_id, "kb_search", "RAG 检索")
 
     t0 = time.perf_counter()
-    if ctx.low_conf or ctx.intent == "unknown":
+    if handoff:
+        effective_query, rewrite_via = search_query, "sop_handoff"
+    elif ctx.low_conf or ctx.intent == "unknown":
         effective_query, rewrite_via = _rewrite_query(ctx.session_id, ctx.q)
     else:
         effective_query, rewrite_via = ctx.q, "none"
@@ -446,7 +467,10 @@ def _stage_retrieve(ctx: TurnContext) -> StageOutcome:
                      effective_query=effective_query[:200])
 
     t0 = time.perf_counter()
-    domain_value, domain_via = _domain_filter(effective_query)
+    if handoff and handoff.domain:
+        domain_value, domain_via = domain_filter(handoff.domain), "sop_handoff"
+    else:
+        domain_value, domain_via = _domain_filter(effective_query)
     retrieve_facts = {}
     ranked = hr.search_with_scores(
         effective_query,
@@ -458,7 +482,7 @@ def _stage_retrieve(ctx: TurnContext) -> StageOutcome:
     trace_store.step("retrieve", domain=domain_value, via=domain_via,
                      n_chunks=len(chunks), chunks=trace_store.chunk_brief(ranked))
 
-    if (not chunks and effective_query != ctx.q
+    if (not chunks and not handoff and effective_query != ctx.q
             and _rewrite_cfg().get("retry_with_origin", True)):
         logger.info("[Rewrite] no hit via %s, retry with origin over full KB: %s",
                     rewrite_via, ctx.q[:40])
@@ -555,6 +579,8 @@ def _stage_out(outcome: StageOutcome | None, acted: bool, stream_completed=None,
     elif isinstance(outcome, Continue):
         out = {"result": "continue", "prefix_chars": len(outcome.prefix),
                "acted": bool(acted)}
+        if outcome.handoff is not None:
+            out["handoff"] = outcome.handoff.target
     else:
         out = {"result": "finish", "prefix_chars": len(outcome.prefix),
                "text_chars": len(outcome.text or ""),
@@ -578,12 +604,31 @@ def _record_stage(span_id, spec: StageSpec, outcome: StageOutcome | None, starte
                          out=out)
 
 
+def _stage_index(target: str) -> int:
+    """阶段 id → 顺序下标；只允许前向跳，目标必须存在。"""
+    for i, spec in enumerate(_STAGES):
+        if spec.id == target:
+            return i
+    raise ValueError("未知阶段跳转目标：%r" % target)
+
+
+def _skip_stages(start: int, end: int, source: str) -> None:
+    """记录被 handoff 跳过的阶段，保持 path 可解释。"""
+    for spec in _STAGES[start:end]:
+        span_id = trace_store.begin_span(spec.node, kind="stage")
+        trace_store.end_span(span_id, status="skipped", by="jump:%s" % source,
+                             out={"result": "skipped"})
+
+
 def _run_stages(ctx: TurnContext) -> Iterator[str]:
     """按固定顺序跑阶段：前缀先输出，Finish 即本轮出口。
 
     阶段 span 由这里统一落；流式出口要等流消费完才关，避免父节点先于 answer.verify。
+    handoff 只允许向前跳，跳过的阶段记 skipped。
     """
-    for spec in _STAGES:
+    i = 0
+    while i < len(_STAGES):
+        spec = _STAGES[i]
         started = time.perf_counter()
         span_id = trace_store.begin_span(spec.node, kind="stage")
         before = _ctx_mark(ctx)
@@ -597,6 +642,14 @@ def _run_stages(ctx: TurnContext) -> Iterator[str]:
                           _stage_acted(outcome, _ctx_mark(ctx) != before))
             if outcome.prefix:
                 yield outcome.prefix
+            if outcome.handoff is not None:
+                target = _stage_index(outcome.handoff.target)
+                if target <= i:
+                    raise ValueError("阶段只能向前跳：%s → %s" % (spec.id, outcome.handoff.target))
+                _skip_stages(i + 1, target, spec.id)
+                i = target
+            else:
+                i += 1
             continue
         if isinstance(outcome, Finish):
             acted = _stage_acted(outcome, _ctx_mark(ctx) != before)

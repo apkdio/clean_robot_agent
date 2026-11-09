@@ -4,12 +4,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterator
 
+from tools.dto.handoff import Handoff
+
 
 @dataclass(frozen=True)
 class Continue:
     """本轮继续走下一阶段；prefix 是要先输出给用户的横切话术。"""
 
     prefix: str = ""
+    handoff: Handoff | None = None
 
 
 @dataclass(frozen=True)

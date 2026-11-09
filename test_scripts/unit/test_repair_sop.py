@@ -69,15 +69,18 @@ def test_repair_trigger():
 
 def test_repair_sop_flow():
     _cleanup()
-    orig = sops.repair.REPAIR_SOP["steps"][1]["action"]
-    sops.repair.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"answer": "第一步：检查电源是否接通。"}
+    steps = sops.repair.REPAIR_SOP["steps"]
+    orig_action = steps[1]["action"]
+    steps[1]["action"] = lambda slots: {"query": "机器人不移动怎么办", "domain": "repair"}
     try:
-        reply, done = _pair(sops.base.start_sop("r1", "repair", "机器人不动了怎么办"))
-        _assert(done, "触发词含症状→一次完成")
-        _assert_in("第一步", reply, "返回排查步骤")
+        result = sops.base.start_sop("r1", "repair", "机器人不动了怎么办")
+        _assert(result.done, "触发词含症状→一次完成")
+        _assert_eq(result.handoff.target, "retrieve", "交给主链 retrieve")
+        _assert_eq(result.handoff.domain, "repair", "带 repair 域")
+        _assert_eq(result.handoff.query, "机器人不移动怎么办", "带归一化 query")
         _assert(not sops.base.has_active_sop("r1"), "会话已结束")
     finally:
-        sops.repair.REPAIR_SOP["steps"][1]["action"] = orig
+        steps[1]["action"] = orig_action
     _cleanup()
 
 
@@ -97,24 +100,36 @@ def test_repair_sop_ask_fallback():
 
 def test_repair_dropped_symptom_does_not_search():
     """症状槽位被放弃后 slots 里没有该键，不能把 None 字符串拿去检索。"""
-    out = sops.repair._search_and_generate({"_slot_status": {"symptom": "dropped"}})
-    _assert_in("没识别出具体故障现象", (out or {}).get("answer", ""),
-               "dropped 槽位直接走确定性兜底")
+    out = sops.repair._search_repair({"_slot_status": {"symptom": "dropped"}})
+    _assert_eq(out.get("query"), "", "dropped 槽位直接返回空 query")
+
+
+def test_repair_handoff_contract():
+    """症状确认后只产出 handoff，不在 SOP 内检索/生成。"""
+    result = sops.repair._search_repair({"symptom": "机器人不移动"})
+    _assert_eq(result.get("query"), "机器人不移动", "action 只归一 query")
+    _assert_eq(result.get("domain"), "repair", "action 标记 repair 域")
+    handoff = sops.repair._repair_handoff(result)
+    _assert_eq(handoff.target, "retrieve", "目标阶段 retrieve")
+    _assert_eq(handoff.query, "机器人不移动", "query 透传")
+    _assert_eq(handoff.domain, "repair", "domain 透传")
+    _assert_eq(sops.repair._repair_handoff({"query": ""}), None, "无 query 不 handoff")
 
 
 def test_repair_empty_reply_falls_back():
-    """action 返回空 answer 时，reply 模板不能把空串当正常回答。"""
+    """没有 query 时 handoff 返回 None，reply 用步骤级 fallback。"""
     _cleanup()
-    orig = sops.repair.REPAIR_SOP["steps"][1]["action"]
-    fallback = sops.repair.REPAIR_SOP["steps"][2]["fallback"]
-    sops.repair.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"answer": ""}
+    steps = sops.repair.REPAIR_SOP["steps"]
+    orig_action = steps[1]["action"]
+    fallback = steps[2]["fallback"]
+    steps[1]["action"] = lambda slots: {"query": "", "domain": "repair"}
     try:
         reply, done = _pair(sops.base.start_sop("r-empty", "repair", "机器人不动了怎么办"))
         _assert(done, "空回复仍应结束")
         _assert_in(fallback, reply, "空回复走步骤级兜底")
         _assert(not sops.base.has_active_sop("r-empty"), "会话已结束")
     finally:
-        sops.repair.REPAIR_SOP["steps"][1]["action"] = orig
+        steps[1]["action"] = orig_action
     _cleanup()
 
 
@@ -147,7 +162,7 @@ def test_symptom_mapping_leaves_trace():
     import tools.llm_tool as lt
     real = lt.chat_with_tools
     orig_action = sops.repair.REPAIR_SOP["steps"][1]["action"]
-    sops.repair.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"answer": "（stub）"}
+    sops.repair.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"query": "", "domain": "repair"}
     try:
         lt.chat_with_tools = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm"))
         path = _path_of("sym1", "它不动了",
@@ -175,6 +190,7 @@ TESTS = [
     test_repair_sop_flow,
     test_repair_sop_ask_fallback,
     test_repair_dropped_symptom_does_not_search,
+    test_repair_handoff_contract,
     test_repair_empty_reply_falls_back,
     test_symptom_maps_in_sync,
     test_symptom_mapping_leaves_trace,

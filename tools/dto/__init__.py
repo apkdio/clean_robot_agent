@@ -7,6 +7,7 @@ from tools.dto.clarify import (
     ClarifyData, ClarifyResult,
 )
 from tools.dto.executor import ExecOutcome, NotMine, Reply
+from tools.dto.handoff import Handoff
 from tools.dto.model_query import (FindModelsResult, ModelQueryConstraints, ModelQueryResult,
                                    ParamFilter, PriceRange, PublishRange)
 from tools.dto.request import ChatRequest
@@ -16,7 +17,7 @@ from tools.dto.transport import TurnEvent
 
 __all__ = [
     "Continue", "Finish", "StageOutcome",
-    "Reply", "NotMine", "ExecOutcome",
+    "Reply", "NotMine", "ExecOutcome", "Handoff",
     "ClarifyData", "ClarifyResult",
     "CLARIFY_DONE", "CLARIFY_RESUME", "CLARIFY_DROP", "CLARIFY_KINDS",
     "ModelQueryResult", "FindModelsResult", "ModelQueryConstraints",

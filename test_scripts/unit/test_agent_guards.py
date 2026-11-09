@@ -325,9 +325,10 @@ def test_empty_sop_reply_still_has_branch():
     sid = "t-empty-sop-branch"
     end_sop(sid)
     _reset_session(sid)
-    orig = sops.repair.REPAIR_SOP["steps"][1]["action"]
-    fallback = sops.repair.REPAIR_SOP["steps"][2]["fallback"]
-    sops.repair.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"answer": ""}
+    steps = sops.repair.REPAIR_SOP["steps"]
+    orig_action = steps[1]["action"]
+    fallback = steps[2]["fallback"]
+    steps[1]["action"] = lambda slots: {"query": "", "domain": "repair"}
     try:
         _save_session(sid, make_session("repair", step=1, slots={"symptom": "机器人不动"}))
         trace_store.begin_turn(sid, "继续")
@@ -338,7 +339,37 @@ def test_empty_sop_reply_still_has_branch():
         _assert_in(fallback, reply, "空 reply 走步骤级兜底，不发送空串")
         _assert_eq(row.get("branch"), "sop_step", "空 reply 仍留下唯一行为出口")
     finally:
-        sops.repair.REPAIR_SOP["steps"][1]["action"] = orig
+        steps[1]["action"] = orig_action
+        end_sop(sid)
+        _reset_session(sid)
+
+
+def test_active_sop_repair_hands_off_to_retrieve():
+    """repair 的 handoff 必须由 agent 转成 Continue(handoff)，不应在 SOP 内生成。"""
+    from sops import end_sop
+    from sops.base import _save_session, make_session
+    import sops.repair
+    from tools.agent import _stage_active_sop
+    from tools.dto.request import ChatRequest
+    from tools.dto.stage import Continue
+    from tools.turn_context import TurnContext
+
+    sid = "t-sop-handoff"
+    end_sop(sid)
+    _reset_session(sid)
+    steps = sops.repair.REPAIR_SOP["steps"]
+    orig_action = steps[1]["action"]
+    steps[1]["action"] = lambda slots: {"query": "机器人不移动", "domain": "repair"}
+    try:
+        _save_session(sid, make_session("repair", step=1, slots={"symptom": "机器人不移动"}))
+        ctx = TurnContext.from_request(ChatRequest("继续", sid))
+        outcome = _stage_active_sop(ctx)
+        _assert(isinstance(outcome, Continue), "agent 返回 Continue")
+        _assert_eq(outcome.handoff.target, "retrieve", "跳到 retrieve")
+        _assert_eq(outcome.handoff.domain, "repair", "保留 repair 域")
+        _assert_eq(ctx.handoff.target, "retrieve", "ctx 同步 handoff")
+    finally:
+        steps[1]["action"] = orig_action
         end_sop(sid)
         _reset_session(sid)
 
@@ -847,6 +878,7 @@ TESTS = [
     test_exit_with_residual_uses_trace_not_behavior,
     test_stopped_before_retrieval_records_node,
     test_empty_sop_reply_still_has_branch,
+    test_active_sop_repair_hands_off_to_retrieve,
     test_active_sop_reads_state_once,
     test_safety_carry_main_text,
     test_ops_clarify_roundtrip,

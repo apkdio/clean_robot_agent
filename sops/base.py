@@ -34,7 +34,8 @@ SKIP = object()
 #            原件仍是 session["slots"]，fn 对副本的修改不回写；
 #            副本带内部 "_slot_status": {slot: filled|skipped|dropped}，仅供 fn 读取，
 #            slot_status 本身留在 session；两者都不进入模板上下文。
-# reply 步：{"id": xxx, "type": "reply", "template": str|fn, "fallback": str}
+# reply 步：{"id": xxx, "type": "reply", "template": str|fn, "handoff": fn, "fallback": str}
+#          template 只做展示；handoff(ctx) 返回 Handoff 时交给主链后续阶段，返回 None 再回 template/fallback。
 # 三种步骤都可带 "when": fn 条件跳过；reply 的 fallback 用于空串或模板异常。
 # 执行器每个循环迭代开一条 sop.step span；out 与 sop.flow 的条目同源。
 
@@ -134,10 +135,13 @@ def _validate_sop(sop: dict) -> None:
                 _sop_error(sop, "action 步骤需要可调用的 action", step)
         else:
             tpl = step.get("template")
-            if tpl is None:
-                _sop_error(sop, "reply 步骤需要 template", step)
-            if not isinstance(tpl, str) and not callable(tpl):
+            handoff = step.get("handoff")
+            if tpl is None and handoff is None:
+                _sop_error(sop, "reply 步骤需要 template 或 handoff", step)
+            if tpl is not None and not isinstance(tpl, str) and not callable(tpl):
                 _sop_error(sop, "reply template 必须是字符串或函数", step)
+            if handoff is not None and not callable(handoff):
+                _sop_error(sop, "reply handoff 必须可调用", step)
             fallback = step.get("fallback")
             if fallback is not None and not isinstance(fallback, str):
                 _sop_error(sop, "reply fallback 必须是字符串", step)
@@ -304,7 +308,9 @@ def start_sop(session_id: str, sop_id: str, query: str, slots: dict = None) -> S
     result = _run(session_id, query)
     intro = SOPS[sop_id].get("intro")
     if intro:
-        return SopStepResult(result.kind, _with_exit_hint(intro) + "\n\n" + result.reply, result.done)
+        prefix = _with_exit_hint(intro) + "\n\n"
+        return SopStepResult(result.kind, prefix + result.reply, result.done,
+                             handoff=result.handoff)
     return result
 
 
@@ -607,12 +613,25 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
                 continue
 
             elif step["type"] == "reply":
-                # 输出结果并结束；template 可以是字符串（.format 取槽位/结果）或函数（按结果分支，如 0 款换话术）
+                # 输出结果并结束；template 只做展示，handoff 负责把后续阶段交给主链。
                 ctx = {**session["slots"], **session.get("result", {})}
                 _record({"i": session["step"], "type": "reply", "outcome": "done"})
-                tpl = step["template"]
+                handoff_factory = step.get("handoff")
+                if callable(handoff_factory):
+                    handoff = handoff_factory(ctx)
+                    if handoff is not None:
+                        ended = True
+                        _finished_store.set(session_id, session)
+                        _end(session_id)
+                        _close_step(step_span, "hit", step_out)
+                        step_span = None
+                        logger.info("[SOP] %s finished (handoff)", sop["id"])
+                        return SopStepResult("reply", done=True, handoff=handoff)
+                tpl = step.get("template")
                 if callable(tpl):
                     reply = tpl(ctx)
+                elif tpl is None:
+                    reply = step.get("fallback", SOP_EMPTY_REPLY_FALLBACK)
                 else:
                     label = "sop:%s:%s:reply" % (sop["id"], step.get("id") or "?")
                     reply = render(label, template=tpl, **ctx)

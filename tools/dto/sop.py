@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from tools.dto.handoff import Handoff
+
 
 @dataclass(frozen=True)
 class ExtractResult:
@@ -27,11 +29,14 @@ class SopStepResult:
     kind: str
     reply: str = ""
     done: bool = False
+    handoff: Handoff | None = None
 
     def __post_init__(self):
         if self.kind not in ("ask", "reply", "done", "noop"):
             raise ValueError("SOP 返回 kind 不在闭集内：%r" % self.kind)
-        if self.kind == "noop" and (self.reply or self.done):
-            raise ValueError("SOP noop 不能带 reply/done")
-        if self.kind == "ask" and self.done:
-            raise ValueError("SOP ask 不能标记 done")
+        if self.kind == "noop" and (self.reply or self.done or self.handoff):
+            raise ValueError("SOP noop 不能带 reply/done/handoff")
+        if self.kind == "ask" and (self.done or self.handoff):
+            raise ValueError("SOP ask 不能标记 done/handoff")
+        if self.handoff is not None and self.kind not in ("reply", "done"):
+            raise ValueError("SOP handoff 只能出现在 reply/done")

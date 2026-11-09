@@ -57,8 +57,9 @@ def test_sop_step_spans_match_flow():
     import sops.repair
 
     sid = "tracetest-sop-steps"
-    old = sops.repair.REPAIR_SOP["steps"][1]["action"]
-    sops.repair.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"answer": "排查结果"}
+    steps = sops.repair.REPAIR_SOP["steps"]
+    old_action = steps[1]["action"]
+    steps[1]["action"] = lambda slots: {"query": "", "domain": "repair"}
     try:
         trace_store.begin_turn(sid, "机器人不动了")
         stage_id = trace_store.begin_span("stage.sop", kind="stage")
@@ -67,7 +68,7 @@ def test_sop_step_spans_match_flow():
         trace_store.note_behavior("sop_step")
         trace_store.end_turn(reply=result.reply)
     finally:
-        sops.repair.REPAIR_SOP["steps"][1]["action"] = old
+        steps[1]["action"] = old_action
         sops.base.end_sop(sid)
 
     row = read_last_turn(sid)

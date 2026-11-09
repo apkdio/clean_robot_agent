@@ -10,6 +10,7 @@ from test_scripts._runner import *
 
 from tools.dto.clarify import CLARIFY_DONE, ClarifyResult
 from tools.dto.executor import NotMine, Reply
+from tools.dto.handoff import Handoff
 from tools.dto.model_query import ModelQueryConstraints, ModelQueryResult
 from tools.dto.request import ChatRequest
 from tools.dto.sop import ExtractResult, SopStepResult
@@ -30,12 +31,18 @@ def test_stage_outcome():
 def test_exec_outcome():
     _assert_eq(Reply("答案").text, "答案", "Reply 带话术")
     _assert_eq(Reply().text, "", "Reply 可为空（接管但无话术）")
+    handoff = Handoff("retrieve", "机器人不移动", "repair")
+    _assert_eq(Reply(handoff=handoff).handoff.target, "retrieve", "Reply 可带 handoff")
     _assert(isinstance(NotMine(), NotMine), "NotMine 是显式类型")
     _assert_raises(ValueError, lambda: Reply(None), "Reply.text 必须是 str")
+    _assert_raises(ValueError, lambda: Handoff(""), "Handoff.target 不能为空")
 
 
 def test_clarify_result():
     _assert_eq(ClarifyResult.done("好的").code, CLARIFY_DONE, "done 形态")
+    handoff = Handoff("retrieve", "机器人不移动", "repair")
+    _assert_eq(ClarifyResult.done_handoff(handoff).handoff.target, "retrieve",
+               "done 可带 handoff")
     _assert_raises(ValueError, lambda: ClarifyResult("bad"), "未知 code 报错")
     _assert_raises(ValueError, lambda: ClarifyResult.done(""), "done 空 message 报错")
     _assert_raises(ValueError, lambda: ClarifyResult.resume(""), "resume 空 query 报错")
@@ -70,9 +77,14 @@ def test_ops_dispatch_rejects_unknown_outcome():
 def test_sop_result():
     _assert_eq(SopStepResult("ask", "预算多少？").reply, "预算多少？", "ask 带话术")
     _assert_true(SopStepResult("reply", "结果", done=True).done, "reply 可标记 done")
+    handoff = Handoff("retrieve", "机器人不移动", "repair")
+    _assert_eq(SopStepResult("reply", done=True, handoff=handoff).handoff.target,
+               "retrieve", "reply 可带 handoff")
     _assert_true(SopStepResult("noop").reply == "", "noop 无话术")
     _assert_raises(ValueError, lambda: SopStepResult("bad"), "未知 kind 报错")
     _assert_raises(ValueError, lambda: SopStepResult("ask", done=True), "ask 不能 done")
+    _assert_raises(ValueError, lambda: SopStepResult("ask", handoff=handoff),
+                   "ask 不能带 handoff")
     _assert_raises(ValueError, lambda: SopStepResult("noop", "x"), "noop 不能带话术")
 
 

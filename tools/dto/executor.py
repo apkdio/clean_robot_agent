@@ -3,12 +3,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from tools.dto.handoff import Handoff
+
 
 @dataclass(frozen=True)
 class Reply:
-    """接管本轮；text 为空表示接管但无话术。"""
+    """接管本轮；text 为前台话术，handoff 表示还要跳到后续阶段。"""
 
     text: str = ""
+    handoff: Handoff | None = None
 
     def __post_init__(self):
         if not isinstance(self.text, str):

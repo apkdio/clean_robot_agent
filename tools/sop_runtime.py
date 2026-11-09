@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 
 from config.word_dict_config import EXIT_WORDS
+from dto import SopStepResult
 from tools import pending_store, trace_store
 from tools.log_tool import get_logger
 from tools.turn_recorder import log_behavior
@@ -52,23 +53,27 @@ def note_sop(session_id: str, sop_id: str = None, state: dict = None, **extra) -
         trace_store.step("sop", **fields)
 
 
-def enter_sop(session_id: str, sop_id: str, query: str, **detail) -> str:
-    """进一条 SOP：启动 + 记 trace 进度 + 打行为标签，返回要回给用户的话。"""
+def enter_sop_result(session_id: str, sop_id: str, query: str, **detail) -> SopStepResult:
+    """进一条 SOP，返回完整 SopStepResult（可能带 handoff）。"""
     from sops import start_sop
     from tools.context_store import set_last_sop
 
     slots = detail.pop("slots", None)
     result = start_sop(session_id, sop_id, query, slots=slots)
-    reply = result.reply
     note_sop(session_id, sop_id)
     set_last_sop(session_id, sop_id, query)
-    if reply:
+    if result.reply or result.handoff:
         log_behavior("start_sop", sop=sop_id, **detail)
-    return reply
+    return result
+
+
+def enter_sop(session_id: str, sop_id: str, query: str, **detail) -> str:
+    """进一条 SOP 并只取文本话术；需要 handoff 时用 enter_sop_result。"""
+    return enter_sop_result(session_id, sop_id, query, **detail).reply
 
 
 def reenter_sop_on_retry(session_id: str, query: str) -> tuple:
-    """「重新回答」时判断要不要重开 SOP，返回 (是否接管, 要回给用户的话)。"""
+    """「重新回答」时判断要不要重开 SOP，返回 (是否接管, 话术或 SopStepResult)。"""
     from sops import sop_needs_enter_confirm, enter_confirm_text
     from sops.base import SOPS
     from tools.context_store import get_last_sop
@@ -93,4 +98,6 @@ def reenter_sop_on_retry(session_id: str, query: str) -> tuple:
                      trace_in={"sop": sop_id, "via": "retry", "entry": entry[:40]})
         log_behavior("ask_clarify", kind="confirm_enter", via="retry")
         return True, enter_confirm_text(sop_id)
-    return True, enter_sop(session_id, sop_id, entry, via="retry")
+    result = enter_sop_result(session_id, sop_id, entry, via="retry")
+    # 普通话术仍返回 str，保持旧调用方兼容；只有 handoff 才把 DTO 交给上层。
+    return True, result if result.handoff is not None else result.reply

@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+from tools.dto.handoff import Handoff
 from tools.dto.request import ChatRequest
 from tools.dto.stage import Continue, Finish, StageOutcome
 
@@ -31,6 +32,7 @@ class TurnContext:
     enter_declined_turn: bool = False
     op_note: dict = field(default_factory=dict)
     chunks: list | None = None
+    handoff: Handoff | None = None
 
     @classmethod
     def from_request(cls, request: ChatRequest,

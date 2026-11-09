@@ -12,7 +12,7 @@ from tools.log_tool import get_logger
 from tools.model_query import (format_model_query, is_model_detail_query,
                                resolve_model_query)
 from tools.query_rewrite import history_block
-from tools.sop_runtime import enter_sop
+from tools.sop_runtime import enter_sop_result
 from tools.turn_context import TurnContext
 
 logger = get_logger(name="op_executors")
@@ -85,8 +85,9 @@ def exec_find_models(ctx: TurnContext) -> ExecOutcome:
                                    n=len(result.models))
         return Reply(format_model_query(result))
     if is_model_catalog_intent(ctx.q):
-        return Reply(enter_sop(ctx.session_id, "model_query", ctx.q,
-                               slots=constraints_to_slots(ctx.q)))
+        result = enter_sop_result(ctx.session_id, "model_query", ctx.q,
+                                  slots=constraints_to_slots(ctx.q))
+        return Reply(result.reply, handoff=result.handoff)
     return NotMine()
 
 
@@ -112,7 +113,8 @@ def exec_service_point(ctx: TurnContext) -> ExecOutcome:
                      trace_in={"sop": "service_point", "via": "point"})
         turn_recorder.log_behavior("ask_clarify", kind="confirm_enter", via="point")
         return Reply(enter_confirm_text("service_point"))
-    return Reply(enter_sop(ctx.session_id, "service_point", ctx.q))
+    result = enter_sop_result(ctx.session_id, "service_point", ctx.q)
+    return Reply(result.reply, handoff=result.handoff)
 
 
 def exec_sop(ctx: TurnContext) -> ExecOutcome:
@@ -134,14 +136,16 @@ def exec_sop(ctx: TurnContext) -> ExecOutcome:
                 logger.info("[SOP] enter declined, skip gate: %s", sop_id)
                 trace_store.step("sop_gate", skipped="declined", sop=sop_id)
                 return NotMine()
-            return Reply(enter_sop(ctx.session_id, sop_id, ctx.q, via="strong"))
+            result = enter_sop_result(ctx.session_id, sop_id, ctx.q, via="strong")
+            return Reply(result.reply, handoff=result.handoff)
         open_clarify(ctx.session_id, pending_store.BIZ_SOP_ENTER,
                      state={"sop": sop_id, "entry": ctx.q},
                      trace_in={"sop": sop_id, "via": "strong" if strong else "weak"})
         turn_recorder.log_behavior("ask_clarify", kind="confirm_enter")
         return Reply(enter_confirm_text(sop_id))
-    return Reply(enter_sop(ctx.session_id, sop_id, ctx.q,
-                           via="strong" if strong else "weak"))
+    result = enter_sop_result(ctx.session_id, sop_id, ctx.q,
+                              via="strong" if strong else "weak")
+    return Reply(result.reply, handoff=result.handoff)
 
 
 OP_EXECUTORS = {

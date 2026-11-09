@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from tools.dto.handoff import Handoff
+
 CLARIFY_DONE = "done"
 CLARIFY_RESUME = "resume"
 CLARIFY_DROP = "drop"
@@ -25,14 +27,17 @@ class ClarifyResult:
     code: str
     message: str = ""
     data: ClarifyData | None = None
+    handoff: Handoff | None = None
 
     def __post_init__(self):
         if self.code not in CLARIFY_KINDS:
             raise ValueError("clarify code 不在闭集内：%r" % self.code)
-        if self.code == CLARIFY_DONE and not self.message:
-            raise ValueError("clarify done 必须带 message")
+        if self.code == CLARIFY_DONE and not self.message and self.handoff is None:
+            raise ValueError("clarify done 必须带 message 或 handoff")
         if self.code == CLARIFY_RESUME and (not self.data or not self.data.query):
             raise ValueError("clarify resume 必须带 query")
+        if self.handoff is not None and self.code != CLARIFY_DONE:
+            raise ValueError("clarify handoff 只能出现在 done")
 
     @property
     def kind(self) -> str:
@@ -42,6 +47,10 @@ class ClarifyResult:
     @classmethod
     def done(cls, reply: str) -> "ClarifyResult":
         return cls(CLARIFY_DONE, message=reply)
+
+    @classmethod
+    def done_handoff(cls, handoff: Handoff, message: str = "") -> "ClarifyResult":
+        return cls(CLARIFY_DONE, message=message, handoff=handoff)
 
     @classmethod
     def resume(cls, query: str, prefix: str = "", prefer_op: str | None = None,

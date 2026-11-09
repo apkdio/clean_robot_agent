@@ -80,7 +80,7 @@ def _apply_patches(names):
         for step in (sops.base.SOPS.get("repair") or {}).get("steps") or []:
             if step.get("type") == "action":
                 saved.append((step, "action", step["action"]))
-                step["action"] = lambda slots: {"answer": "（stub）故障排查结果"}
+                step["action"] = lambda slots: {"query": "机器人不移动怎么办", "domain": "repair"}
     return saved
 
 
@@ -134,7 +134,8 @@ def _run_case(case):
                 entry = case.get("entry", "")
                 reply, flow = _turn(
                     sid,
-                    lambda: sops.start_sop(sid, case["sop"], entry, slots=case.get("slots")).reply,
+                    lambda: _reply_of(sops.start_sop(
+                        sid, case["sop"], entry, slots=case.get("slots"))),
                     turn.get("q") or entry)
             else:
                 q = turn.get("q") or ""

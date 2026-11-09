@@ -410,19 +410,22 @@ def test_reenter_sop_logs_node():
     trace_store.end_turn()
     trace_store.begin_turn(sid, q)        # 第 2 轮（本轮 = 重答）
 
+    from tools.dto.sop import SopStepResult
+
     saved = (trace_store.find_turn, trace_store.latest_turn, trace_store.find_turn_by_index,
-             sr.enter_sop, cs.get_last_sop, sops.sop_needs_enter_confirm)
+             sr.enter_sop_result, cs.get_last_sop, sops.sop_needs_enter_confirm)
     trace_store.find_turn = lambda s, query: {"date": "2026-10-20", "turn_index": 1}
     trace_store.latest_turn = lambda s: {"date": "2026-10-20", "turn_index": 1}
     trace_store.find_turn_by_index = lambda s, d, i: {"sop": {"id": "model_query"}, "branch": "start_sop"}
-    sr.enter_sop = lambda sid, sop_id, query, **kw: "您的预算大概是多少？"
+    sr.enter_sop_result = lambda sid, sop_id, query, **kw: SopStepResult(
+        "reply", "您的预算大概是多少？", done=True)
     cs.get_last_sop = lambda s: {"entry_query": q}
     sops.sop_needs_enter_confirm = lambda *a, **kw: False   # 本用例只测重开，不测进入门
     try:
         taken, reply = sr.reenter_sop_on_retry(sid, q)
     finally:
         (trace_store.find_turn, trace_store.latest_turn, trace_store.find_turn_by_index,
-         sr.enter_sop, cs.get_last_sop, sops.sop_needs_enter_confirm) = saved
+         sr.enter_sop_result, cs.get_last_sop, sops.sop_needs_enter_confirm) = saved
     _assert(taken, "重开被接管")
     _assert_in("预算", reply, "回到 SOP 第一步")
     trace_store.end_turn()
@@ -473,19 +476,22 @@ def test_reenter_across_days():
     sid, q = "t-reenter-cross", "帮我推荐一款扫地机器人"
     reset_trace(sid)
     trace_store.begin_turn(sid, q)                  # 当前轮
+    from tools.dto.sop import SopStepResult
+
     saved = (trace_store.latest_turn, trace_store.find_turn, trace_store.find_turn_by_index,
-             sr.enter_sop, cs.get_last_sop, sops.sop_needs_enter_confirm)
+             sr.enter_sop_result, cs.get_last_sop, sops.sop_needs_enter_confirm)
     trace_store.latest_turn = lambda s: {"date": "2026-10-19", "turn_index": 7}
     trace_store.find_turn = lambda s, query: {"date": "2026-10-19", "turn_index": 7}
     trace_store.find_turn_by_index = lambda s, d, i: {"sop": {"id": "model_query"}, "branch": "start_sop"}
-    sr.enter_sop = lambda sid, sop_id, query, **kw: "您的预算大概是多少？"
+    sr.enter_sop_result = lambda sid, sop_id, query, **kw: SopStepResult(
+        "reply", "您的预算大概是多少？", done=True)
     cs.get_last_sop = lambda s: {"entry_query": q}
     sops.sop_needs_enter_confirm = lambda *a, **kw: False   # 本用例只测跨天重开
     try:
         taken, reply = sr.reenter_sop_on_retry(sid, q)
     finally:
         (trace_store.latest_turn, trace_store.find_turn, trace_store.find_turn_by_index,
-         sr.enter_sop, cs.get_last_sop, sops.sop_needs_enter_confirm) = saved
+         sr.enter_sop_result, cs.get_last_sop, sops.sop_needs_enter_confirm) = saved
         reset_trace(sid)
     _assert(taken, "昨天最后一轮 + 今天重答 → 仍重开")
     _assert_in("预算", reply, "回到 SOP 第一步")

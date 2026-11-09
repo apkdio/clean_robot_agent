@@ -17,7 +17,7 @@ from tools.dto.clarify import ClarifyData, ClarifyResult
 from tools.dto import clarify as _clarify_dto
 from tools.log_tool import get_logger
 from tools.safety import with_safety_hint
-from tools.sop_runtime import enter_sop, sop_name, note_sop
+from tools.sop_runtime import enter_sop_result, sop_name, note_sop
 from tools.turn_recorder import log_behavior
 
 logger = get_logger(name="clarify_service")
@@ -186,8 +186,10 @@ def _clarify_sop_enter(session_id: str, query: str, _q: str) -> ClarifyResult:
                      out={"decision": decision})
     if ans is True:
         pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
-        reply = enter_sop(session_id, sop_id, entry, via="confirm_enter")
-        return ClarifyResult.done(reply or _SOP_ENTER_FAILED_REPLY)
+        result = enter_sop_result(session_id, sop_id, entry, via="confirm_enter")
+        if result.handoff is not None:
+            return ClarifyResult.done_handoff(result.handoff, result.reply)
+        return ClarifyResult.done(result.reply or _SOP_ENTER_FAILED_REPLY)
     if ans is False:
         pending_store.close(session_id, pending_store.BIZ_SOP_ENTER)
         mark_enter_declined(session_id, sop_id)

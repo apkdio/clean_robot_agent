@@ -1,12 +1,17 @@
 """故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤。"""
 
 from sops.base import register, is_aftersales
-from config.word_dict_config import SYMPTOM_MAP, REPAIR_TRIGGER, REPAIR_WEAK_TRIGGER
+from config.word_dict_config import (
+    REPAIR_NO_SYMPTOM_REPLY,
+    REPAIR_TRIGGER,
+    REPAIR_WEAK_TRIGGER,
+    SYMPTOM_MAP,
+)
 
+from tools.dto.handoff import Handoff
 from tools.dto.sop import ExtractResult
 from tools.llm_tool import get_small_model_name
 from tools.log_tool import get_logger
-from tools import trace_store
 
 # 故障现象兜底用的小模型（默认 3b 更快；精度不够可在 agent.yaml 调 llm.small_model）
 logger = get_logger(name="repair_sop")
@@ -60,45 +65,22 @@ def _extract_symptom(text: str, _slots: dict):
     }})
 
 
-def _search_and_generate(slots: dict):
-    """按现象检索故障条目，交给 LLM 生成排查步骤。"""
+def _search_repair(slots: dict):
+    """把症状归一成检索 query；不在这里检索，也不在这里生成。"""
     query = str(slots.get("symptom") or "").strip()
+    return {"query": query, "domain": "repair"}
+
+
+def _repair_handoff(ctx: dict):
+    """症状已确认 → 交给主链 retrieve（domain=repair）→ generate。"""
+    query = str(ctx.get("query") or "").strip()
+    domain = str(ctx.get("domain") or "repair").strip() or "repair"
     if not query:
-        return {"answer": "抱歉，没识别出具体故障现象，你可以换个说法再描述一下～"}
-
-    from tools.hybrid_retriever import HybridRetriever
-    from tools import trace_store
-    from config.word_dict_config import domain_filter
-    hr = HybridRetriever()
-    hr.ensure_sparse_index()
-    # 定向故障排除域，避免"吸力下降"等被选购域的"吸力参数"带偏
-    facts = {}
-    ranked = hr.search_with_scores(query, filter={"file_name": domain_filter("repair")},
-                                   trace_out=facts)
-    chunks = [doc for doc, _score, _meta in ranked]
-    # SOP 内部检索单独标记，不再伪装成主链 retrieve
-    trace_store.retrieval(**facts)
-    trace_store.node("sop.retrieve", status="ok", out={"via": "sop", "n": len(chunks)},
-                     in_={"chunks": len(ranked)})
-    trace_store.chunks(ranked)
-    if not chunks:
-        return {"answer": "知识库暂时没有收录这个故障的排查方案，建议联系官方售后进一步咨询～"}
-
-    context = "\n\n".join(c.page_content for c in chunks[:3])
-
-    from langchain_core.messages import HumanMessage, SystemMessage
-    from tools.llm_tool import get_chat_model
-    from tools.prompts_tool import load_main_prompts, render
-
-    user_msg = render("repair_steps", context=context, query=query)
-    if user_msg is None:
-        return {"answer": ""}
-    llm = get_chat_model(temperature=0.3)
-    resp = llm.invoke([SystemMessage(content=load_main_prompts()), HumanMessage(content=user_msg)])
-    return {"answer": (resp.content or "").strip()}
+        return None
+    return Handoff(target="retrieve", query=query, domain=domain)
 
 
-# 槽位形如 {"symptom": xxx}（检索用的标准说法）；action 返回 {"answer": xxx}
+# 槽位形如 {"symptom": xxx}（检索用的标准说法）；action 只返回 query/domain，生成交给主链。
 REPAIR_SOP = {
     "id": "repair",
     "name": "故障排查",
@@ -122,13 +104,13 @@ REPAIR_SOP = {
         {
             "id": "do_search",
             "type": "action",
-            "action": _search_and_generate,
+            "action": _search_repair,
         },
         {
             "id": "reply",
             "type": "reply",
-            "template": "$answer",
-            "fallback": "抱歉，出了一点小问题，请重新提问～",
+            "handoff": _repair_handoff,
+            "fallback": REPAIR_NO_SYMPTOM_REPLY,
         },
     ],
 }

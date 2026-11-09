@@ -74,7 +74,7 @@ clean_robot_agent/
 ├── sops/                        # SOP 标准操作流程（多轮引导）
 │   ├── base.py                  # 会话状态（按 session_id 隔离，带定义指纹）+ 执行器 + 注册/匹配/进入门
 │   ├── model_query.py           # 选购/型号查询 SOP（预算/系列/时间/标签补槽，承接推荐/买/预算入口）
-│   ├── repair.py                # 故障排查 SOP
+│   ├── repair.py                # 故障排查 SOP（症状确认 → handoff 到主链 retrieve，domain=repair）
 │   └── service_point.py         # 售后网点 SOP（问城市 → 重名选序号）
 ├── test_scripts/                # 测试与评测（run_tests.py 只聚合 eval/ 评测轨；unit/ 功能测试可单独运行）
 │   ├── run_tests.py             # 评测入口：python run_tests.py --e2e
@@ -102,6 +102,7 @@ clean_robot_agent/
 │   │   ├── test_hot_ingest.py   # 知识库热更新（增量同步的删除/重入语义）
 │   │   ├── test_service_point_sop.py # 网点 SOP（城市解析 / 重名选序号）
 │   │   ├── test_followup.py     # 追问解析 / 相对维度 / 最后命中 index
+│   │   ├── test_handoff.py      # SOP handoff / 前向跳 / domain 检索
 │   │   ├── test_trace_report_html.py # trace HTML 报告（数据整形 / 渲染 / 边界）
 │   │   ├── test_review_fixes.py # 代码 review 修复回归（依赖降级 / 日期闸门 / 上传净化 / 重答与历史口径）
 │   │   ├── test_webapp_routes.py # webapp 路由层契约（入参校验 / 状态码 / 并发锁拒绝）
@@ -190,7 +191,7 @@ clean_robot_agent/
 |------|------|
 | `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 注册/匹配/进入门。**会话状态带定义指纹**：代码改过 SOP 定义后，Redis 里的旧会话读时自动作废（不会拿旧下标续跑）；无 Redis 降级的内存态同样按 TTL 过期 |
 | `model_query.py` | 选购/型号查询 SOP：承接「推荐/买/预算」入口（含进入确认门与选购/售后/品牌 guards），收集预算、系列、发布时间与标签（养宠/静音/防缠绕等）→ `find_models` → 列表；标签只认序号与固定跳过命令 |
-| `repair.py` | 故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤 |
+| `repair.py` | 故障排查 SOP：问现象 → 症状归一 → handoff 到主链 `retrieve`（domain=repair）→ `generate`；生成、history、stop_check、answer.verify、fallback 全在主链 |
 
 ## 快速开始
 
