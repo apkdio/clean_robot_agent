@@ -1,0 +1,120 @@
+tools/agent.py
+  s_40681318f5a20b::t_54ffe1dff2d9ae 409-411
+  s_40681318f5a20b::t_061e071e88ce15 447,449,455-456,459-461,470-473
+  s_40681318f5a20b::t_25b9b0ef62b046 28
+  s_40681318f5a20b::t_d52459a35e5322 607-622,627,629-631,645-652
+  s_40681318f5a20b::t_8c110f6c120bd5 211-213
+  s_40681318f5a20b::t_622ad22b42efe6 260,265-267
+  s_40681318f5a20b::t_8f52b2cb3b38ce 582-583
+  s_40681318f5a20b::t_905a2d07d77781 426-429
+  s_40681318f5a20b::t_43b059a9dcea96 485
+  s_40681318f5a20b::t_7b279cdf52bfa0 425,430
+  s_40681318f5a20b::t_4a318759c2e538 283-284
+  s_40681318f5a20b::t_b90afdce114606 280-282
+tools/turn_context.py
+  s_40681318f5a20b::t_aa5314361e2ae5 35
+  s_40681318f5a20b::t_732c66382ce484 11
+tools/dto/executor.py
+  s_40681318f5a20b::t_65a401cd531737 6-7,11,14
+sops/repair.py
+  s_40681318f5a20b::t_d50db77b4fdaff 112-113
+  s_40681318f5a20b::t_bce114ce7eed10 11
+  s_40681318f5a20b::t_a958c7a20f091b 83
+  s_40681318f5a20b::t_5ff36be2a7068a 68,76,78
+  s_40681318f5a20b::t_c8ee7311fbdae6 4-9
+  s_40681318f5a20b::t_4616babcc76f64 69,71,74-75,77,79-80
+  s_40681318f5a20b::t_da7eea12bd845e 107
+test_scripts/unit/test_dto_contracts.py
+  s_40681318f5a20b::t_0711e3cc03c29c 34-35,38,43-45
+  s_40681318f5a20b::t_74527c5200563a 13
+test_scripts/unit/test_handoff.py
+  s_40681318f5a20b::t_3e94981544b21d 85-101,106
+  s_40681318f5a20b::t_6344d39bf27c8e 1-12,14-84,102-105,107-116
+  s_40681318f5a20b::t_b2791b3ad4c962 13
+tools/clarify_service.py
+  s_40681318f5a20b::t_3c22858a8a6f6e 189,192
+  s_40681318f5a20b::t_af95f7438e9b45 190-191
+  s_40681318f5a20b::t_2b0ea94deb1a70 20
+tools/dto/__init__.py
+  s_40681318f5a20b::t_1c28c7ada756d1 10
+  s_40681318f5a20b::t_4e4426049d1b50 20
+config/word_dict_config.py
+  s_40681318f5a20b::t_1dc4b97773e7cb 438
+  s_40681318f5a20b::t_5fc10029dabe6f 439
+test_scripts/unit/test_review_fixes.py
+  s_40681318f5a20b::t_62b8046585b883 494
+  s_40681318f5a20b::t_b5d97f6d77c720 428
+  s_40681318f5a20b::t_73732a1d6b66f6 479-480,482,486-487
+test_scripts/eval/test_sop_eval.py
+  s_40681318f5a20b::t_def2e6e522135c 137-138
+tools/dto/sop.py
+  s_40681318f5a20b::t_36bb7a284e6796 32,37-42
+  s_40681318f5a20b::t_05f5a80d80d0b0 6
+tools/sop_runtime.py
+  s_40681318f5a20b::t_85dd55d0b5cdd9 76
+  s_40681318f5a20b::t_0a18bf818eb55e 67-69
+  s_40681318f5a20b::t_d40904d2096c99 101-103
+  h_26b9a38f4942dd 7,56
+  s_40681318f5a20b::t_5b46f12fd151bd 57,65,70-72
+test_scripts/unit/test_trace_split.py
+  s_40681318f5a20b::t_f01179d51959ab 61-62
+  s_40681318f5a20b::t_6266fffb2561fe 60
+  s_40681318f5a20b::t_bd1bfb3c778d30 71
+tools/dto/clarify.py
+  s_40681318f5a20b::t_23f84c7d6889a3 30,35-36,39-40
+  s_40681318f5a20b::t_3c60a66d674094 6
+  s_40681318f5a20b::t_e1b75a10d7ee03 54
+README.md
+  s_40681318f5a20b::t_b0aa0e06a5bed3 194
+  s_40681318f5a20b::t_482b4658240af6 105
+  s_40681318f5a20b::t_6f93936ebd01ed 77
+tools/dto/handoff.py
+  s_40681318f5a20b::t_12d0fbcfefc805 1-21
+sops/base.py
+  s_40681318f5a20b::t_53cda3cf2d4097 619-622,628-629
+  s_40681318f5a20b::t_37d2d06340e673 623-627,630,633-634
+  s_40681318f5a20b::t_bc954683dbc89e 616
+  s_40681318f5a20b::t_e1cf7dda02c7a9 312-313
+  s_40681318f5a20b::t_897a703cdfba2a 141
+  s_40681318f5a20b::t_37f985f8bb93ac 138-140,143-144
+  s_40681318f5a20b::t_e2353c00bdf7ea 37-38
+  s_40681318f5a20b::t_e77dce83d93b4a 311
+test_scripts/unit/test_repair_sop.py
+  s_40681318f5a20b::t_a7a56cd3cd8796 103-106
+  s_40681318f5a20b::t_00d41f6cb4c029 120,123,125,132
+  s_40681318f5a20b::t_e969ef08f52569 122,124
+  s_40681318f5a20b::t_624afc21093d9a 193
+  s_40681318f5a20b::t_e2d02e45eefced 73-74,76-80,83
+  s_40681318f5a20b::t_e5383b3f468535 107-116
+  s_40681318f5a20b::t_09c672a654ff38 165
+tools/op_executors.py
+  s_40681318f5a20b::t_f45d1f50805c88 15,88-90,116-117,139-140,146-148
+tools/dto/stage.py
+  s_40681318f5a20b::t_efe06716442abc 7-8,15
+test_scripts/unit/test_agent_guards.py
+  s_40681318f5a20b::t_e218e6e7f02ccd 881
+  s_40681318f5a20b::t_165e565cb7e813 328,330
+  s_40681318f5a20b::t_11a8baaf5c8075 329,331,342-348,354,357,361-362,365-370,372
+  s_40681318f5a20b::t_5a68e8d623ba42 349-353,355-356,358-360,363-364,371
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.52-trip",
+  "base_commit_sha": "e95829a413ceb02018535adc6f3a6a3093d85c5f",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
