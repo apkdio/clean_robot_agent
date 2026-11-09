@@ -1,0 +1,71 @@
+sops/sop_gate.py
+  s_40681318f5a20b::t_14ae6a389e2590 1-130
+test_scripts/unit/test_dto_contracts.py
+  s_40681318f5a20b::t_53699dee3e46d7 46-52
+  s_40681318f5a20b::t_e6f823d218ffa8 11
+test_scripts/unit/test_clarify_safety.py
+  s_40681318f5a20b::t_5877d70ca085d0 1
+  s_40681318f5a20b::t_a92c2d1b0187f8 2-92,94-98
+  s_40681318f5a20b::t_4db96adeffcfb7 93
+tools/clarify_service.py
+  s_40681318f5a20b::t_e2fbc1f717ec68 105-108,113-116
+  s_40681318f5a20b::t_f02b80db7221e6 112
+  s_40681318f5a20b::t_f106bea0fca624 1-6,10,12,17,26-59,66-69,72-74,76-78,80
+  s_40681318f5a20b::t_c7eadc913f0063 70-71,75,79
+  s_40681318f5a20b::t_71e6c924b82818 60-65
+tools/selection.py
+  s_40681318f5a20b::t_57e0d61b20a306 44-45
+  s_40681318f5a20b::t_80c8c7a30ad9c4 1-4,15-16,26-43,46-59,76-77,79-80
+README.md
+  s_40681318f5a20b::t_cf0d953639abda 76
+  s_40681318f5a20b::t_df61d69e910405 196
+  s_40681318f5a20b::t_c76eb2befc1359 107
+  s_40681318f5a20b::t_764fc74a54a70e 377
+sops/service_point.py
+  s_40681318f5a20b::t_fa3e2310d5fd94 71-76,78
+test_scripts/unit/test_selection_tags.py
+  s_40681318f5a20b::t_7440c5ec3dd8bf 26
+  s_40681318f5a20b::t_3f00921f74347d 33-37
+  s_40681318f5a20b::t_2a3c932d2b2468 62
+tools/operations.py
+  s_40681318f5a20b::t_33de2cf2c9285a 10-17,19-20
+  s_40681318f5a20b::t_00fa263992043c 396-445
+tools/safety.py
+  s_40681318f5a20b::t_01636965bdf2b9 1,4-6,10-11,13-14,18,20-22,26-51,76-81,104-121,124-129,131-133,136,140-142,146-150,154-155,163-164,166,171
+  s_40681318f5a20b::t_8db0bc169b8b98 143
+  s_40681318f5a20b::t_5a2a32b67731d2 130
+  s_40681318f5a20b::t_16ca234cbbaf4e 15,17
+tools/agent.py
+  s_40681318f5a20b::t_a4d73ce04c45cd 25-32
+  s_40681318f5a20b::t_ad2b1b5ee0c8eb 45
+  s_40681318f5a20b::t_3edb36cf3305a1 206
+  s_40681318f5a20b::t_1a0c0e3db4328d 316-318,321,327-328
+  s_40681318f5a20b::t_d5adaef4a56a9d 168-169,172,182
+tools/sop_runtime.py
+  s_40681318f5a20b::t_8619fe048ed400 7
+sops/__init__.py
+  s_40681318f5a20b::t_8ea1443d76a93c 32
+test_scripts/unit/test_agent_guards.py
+  s_40681318f5a20b::t_d10827bd1b1fd8 101-102
+  s_40681318f5a20b::t_7246226d1ee822 503
+  s_40681318f5a20b::t_87e6799198f89f 533-534
+test_scripts/eval/test_behavior_tags.py
+  s_40681318f5a20b::t_bd24cf13dc8832 740-742,744-745
+  s_40681318f5a20b::t_b34abfa58da2f5 801,808-809
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.52-trip",
+  "base_commit_sha": "37bc523e338d2ec979681652dea8c043fa96bb35",
+  "prompts": {},
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
