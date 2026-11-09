@@ -43,13 +43,13 @@ def _cleanup():
 
 def test_extract_symptom_rule():
     from sops.repair import _extract_symptom
-    _assert_eq(_extract_symptom("机器人不动了", {}), "机器人不移动怎么办", "不动")
-    _assert_eq(_extract_symptom("水箱漏水", {}), "水箱漏水怎么办", "漏水")
-    _assert_eq(_extract_symptom("有异响", {}), "扫地机器人异响怎么办", "异响")
-    _assert_eq(_extract_symptom("充不进电", {}), "机器人充不进电怎么办", "充不进电")
-    _assert_eq(_extract_symptom("找不到充电座", {}), "机器人找不到充电座怎么办", "找不到充电座")
-    _assert_eq(_extract_symptom("吸力变小了", {}), "吸力下降怎么办", "吸力")
-    _assert_eq(_extract_symptom("拖地后地面有水痕", {}), "拖地后地面有明显水痕", "水痕")
+    _assert_eq(_extract_symptom("机器人不动了", {}).value, "机器人不移动怎么办", "不动")
+    _assert_eq(_extract_symptom("水箱漏水", {}).value, "水箱漏水怎么办", "漏水")
+    _assert_eq(_extract_symptom("有异响", {}).value, "扫地机器人异响怎么办", "异响")
+    _assert_eq(_extract_symptom("充不进电", {}).value, "机器人充不进电怎么办", "充不进电")
+    _assert_eq(_extract_symptom("找不到充电座", {}).value, "机器人找不到充电座怎么办", "找不到充电座")
+    _assert_eq(_extract_symptom("吸力变小了", {}).value, "吸力下降怎么办", "吸力")
+    _assert_eq(_extract_symptom("拖地后地面有水痕", {}).value, "拖地后地面有明显水痕", "水痕")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -95,6 +95,13 @@ def test_repair_sop_ask_fallback():
     _cleanup()
 
 
+def test_repair_dropped_symptom_does_not_search():
+    """症状槽位被放弃后 slots 里没有该键，不能把 None 字符串拿去检索。"""
+    out = sops.repair._search_and_generate({"_slot_status": {"symptom": "dropped"}})
+    _assert_in("没识别出具体故障现象", (out or {}).get("answer", ""),
+               "dropped 槽位直接走确定性兜底")
+
+
 def test_repair_empty_reply_falls_back():
     """action 返回空 answer 时，reply 模板不能把空串当正常回答。"""
     _cleanup()
@@ -136,22 +143,29 @@ def _path_of(sid, query, fn):
 
 
 def test_symptom_mapping_leaves_trace():
-    """症状映射来源要落 trace：规则命中带 kw、两条都没命中记 miss（分得清"词表没覆盖"与"模型归类错"）。"""
+    """症状映射来源要落 trace：extractor 只返回 extra["trace"]，由 base 统一写。"""
     import tools.llm_tool as lt
     real = lt.chat_with_tools
+    orig_action = sops.repair.REPAIR_SOP["steps"][1]["action"]
+    sops.repair.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"answer": "（stub）"}
     try:
         lt.chat_with_tools = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm"))
-        path = _path_of("sym1", "它不动了", lambda: sops.repair._extract_symptom("它不动了", {}))
+        path = _path_of("sym1", "它不动了",
+                        lambda: sops.base.start_sop("sym1", "repair", "它不动了"))
         node = next((n for n in path if n.get("node") == "sop.symptom"), None)
         _assert(node is not None, "规则命中留 sop.symptom 节点")
         _assert_eq(((node or {}).get("out") or {}).get("via"), "rule", "via=rule")
         _assert_eq(((node or {}).get("out") or {}).get("kw"), "不动", "带命中的口语词")
 
-        path = _path_of("sym2", "说不上来", lambda: sops.repair._extract_symptom("嗯…说不上来", {}))
+        path = _path_of("sym2", "说不上来",
+                        lambda: sops.base.start_sop("sym2", "repair", "嗯…说不上来"))
         node = next((n for n in path if n.get("node") == "sop.symptom"), None)
         _assert_eq((node or {}).get("status"), "miss", "两条都没命中 → status=miss")
     finally:
         lt.chat_with_tools = real
+        sops.repair.REPAIR_SOP["steps"][1]["action"] = orig_action
+        sops.base.end_sop("sym1")
+        sops.base.end_sop("sym2")
         sops.base._sessions = {}
 
 
@@ -160,6 +174,7 @@ TESTS = [
     test_repair_trigger,
     test_repair_sop_flow,
     test_repair_sop_ask_fallback,
+    test_repair_dropped_symptom_does_not_search,
     test_repair_empty_reply_falls_back,
     test_symptom_maps_in_sync,
     test_symptom_mapping_leaves_trace,

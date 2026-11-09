@@ -23,7 +23,6 @@ from sops.base import (  # noqa: F401
     mark_enter_declined,
     enter_decline_hint,
     sop_name,
-    handle_followup,
 )
 
 # 导入各 SOP 模块，触发 register 注册（顺序＝ match_sop 的优先顺序）

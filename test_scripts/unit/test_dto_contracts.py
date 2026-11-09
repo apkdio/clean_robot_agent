@@ -12,7 +12,7 @@ from tools.dto.clarify import CLARIFY_DONE, ClarifyResult
 from tools.dto.executor import NotMine, Reply
 from tools.dto.model_query import ModelQueryConstraints, ModelQueryResult
 from tools.dto.request import ChatRequest
-from tools.dto.sop import SopStepResult
+from tools.dto.sop import ExtractResult, SopStepResult
 from tools.dto.stage import Continue, Finish
 from tools.dto.transport import TurnEvent
 
@@ -74,6 +74,14 @@ def test_sop_result():
     _assert_raises(ValueError, lambda: SopStepResult("bad"), "未知 kind 报错")
     _assert_raises(ValueError, lambda: SopStepResult("ask", done=True), "ask 不能 done")
     _assert_raises(ValueError, lambda: SopStepResult("noop", "x"), "noop 不能带话术")
+
+
+def test_extract_result():
+    _assert_eq(ExtractResult("done", "x").value, "x", "done 带值")
+    _assert_eq(ExtractResult("skip").kind, "skip", "skip 形态")
+    _assert_eq(ExtractResult("fail", reason="no_x").reason, "no_x", "fail 带原因")
+    _assert_raises(ValueError, lambda: ExtractResult("bad"), "未知 kind 报错")
+    _assert_raises(ValueError, lambda: ExtractResult("done", extra=[]), "extra 必须是 dict")
 
 
 def test_model_query_result():
@@ -142,6 +150,7 @@ TESTS = [
     test_ops_dispatch_rejects_unknown_outcome,
     test_run_stages_rejects_unknown_outcome,
     test_sop_result,
+    test_extract_result,
     test_model_query_result,
     test_chat_request,
     test_stage_registry,

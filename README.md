@@ -72,7 +72,7 @@ clean_robot_agent/
 │   ├── service_point_tool.py    # 售后网点工具（geonamescache 离线解析城市 + Haversine 距离）
 │   └── registry.py              # 工具注册中心（对外暴露的工具白名单 + 编排开关读取）
 ├── sops/                        # SOP 标准操作流程（多轮引导）
-│   ├── base.py                  # 会话状态（按 session_id 隔离，带定义指纹）+ 执行器 + 知识域定义
+│   ├── base.py                  # 会话状态（按 session_id 隔离，带定义指纹）+ 执行器 + 注册/匹配/进入门
 │   ├── model_query.py           # 选购/型号查询 SOP（预算/系列/时间/标签补槽，承接推荐/买/预算入口）
 │   ├── repair.py                # 故障排查 SOP
 │   └── service_point.py         # 售后网点 SOP（问城市 → 重名选序号）
@@ -101,6 +101,7 @@ clean_robot_agent/
 │   │   ├── test_query_normalizer.py # query 入口归一化（标点/空格/全半角/同义词/幂等）
 │   │   ├── test_hot_ingest.py   # 知识库热更新（增量同步的删除/重入语义）
 │   │   ├── test_service_point_sop.py # 网点 SOP（城市解析 / 重名选序号）
+│   │   ├── test_followup.py     # 追问解析 / 相对维度 / 最后命中 index
 │   │   ├── test_trace_report_html.py # trace HTML 报告（数据整形 / 渲染 / 边界）
 │   │   ├── test_review_fixes.py # 代码 review 修复回归（依赖降级 / 日期闸门 / 上传净化 / 重答与历史口径）
 │   │   ├── test_webapp_routes.py # webapp 路由层契约（入参校验 / 状态码 / 并发锁拒绝）
@@ -153,6 +154,7 @@ clean_robot_agent/
 | `models_repo.py` | 型号记录唯一缓存：基础字段 + `param_*` + `tag_*`，去重合并与懒重建 |
 | `selection.py` | 多选序号解析：中英文逗号/顿号/全角数字归一化，只认序号与固定跳过命令 |
 | `model_query.py` | 模型查询业务：预算/日期/系列约束 → `find_models` → 结构化直出（不处理型号详情/追问） |
+| `followup.py` | 追问业务：全局最新/价格极值；相对上一轮边界（更便宜/更贵/更新/更旧）解析与筛选，过滤排序复用 `function_tools.model_tool.filter_by_relative` |
 | `answer_checker.py` | 答案校验：从 RAG 答案抽已知型号、带货币单位的金额、保修语境下的时长，到最终召回片段里做字面核对；用户原话里的实体豁免，目录外/带虚构后缀的型号记 `unchecked`；结果只记日志与 trace，不拦截流式输出 |
 | `entry_splitter.py` | 编号条目分块器（每个问答/型号一个 chunk） |
 | `hot_ingest.py` | 知识库热更新：定时扫描 + 增量入库 |
@@ -177,7 +179,7 @@ clean_robot_agent/
 | `date_tool.py` | 日期计算工具：`calc_date_range` 把"最近半年""2025年三月"等表达换算成日期范围 |
 | `budget_tool.py` | 预算提取工具：规则 miss 时用 3b function calling 提取预算上限（"一千来块"等） |
 | `symptom_tool.py` | 故障分类工具：规则 miss 时用 3b function calling 归类口语故障（"奇怪的声音"等） |
-| `model_tool.py` | 型号工具：7b function calling 提取型号名（含上下文指代）后精准检索详情；`find_models` 支持按预算（传原话，规则解析方向与浮动）/ 规格参数 / 排序（规格、「参考价」、「发布时间」）/ **筛选范围（全库 / 上一轮推荐内 / 比上一轮更便宜·更贵·更新·更旧，可组合）** 筛选型号，并带参数校验（按用户原话纠正方向、剔除无效条件） |
+| `model_tool.py` | 型号工具：7b function calling 提取型号名（含上下文指代）后精准检索详情；`find_models` 支持按预算（传原话，规则解析方向与浮动）/ 规格参数 / 排序（规格、「参考价」、「发布时间」）/ **相对上一轮边界（更便宜·更贵·更新·更旧，可组合）** 筛选型号，并带参数校验（按用户原话纠正方向、剔除无效条件） |
 | `service_point_tool.py` | 售后网点工具：geonamescache 离线解析城市经纬度（中文名/重名候选）+ Haversine 距离排序 + 网点格式化 |
 | `kb_tool.py` | 知识库检索工具：`search_kb` 接自足检索式 + 可选知识域（域为软约束，域内置信度低时检索器会撤过滤并合并全库结果） |
 | `registry.py` | 工具注册中心：收敛对外暴露的工具白名单（型号筛选 / 知识库检索 / 售后网点），未知工具名直接报错 |
@@ -186,7 +188,7 @@ clean_robot_agent/
 
 | 模块 | 职责 |
 |------|------|
-| `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 知识域定义（DOMAIN_MAP）+ 追问处理（比较新/更便宜）+ 最近发布查询。**会话状态带定义指纹**：代码改过 SOP 定义后，Redis 里的旧会话读时自动作废（不会拿旧下标续跑）；无 Redis 降级的内存态同样按 TTL 过期 |
+| `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 注册/匹配/进入门。**会话状态带定义指纹**：代码改过 SOP 定义后，Redis 里的旧会话读时自动作废（不会拿旧下标续跑）；无 Redis 降级的内存态同样按 TTL 过期 |
 | `model_query.py` | 选购/型号查询 SOP：承接「推荐/买/预算」入口（含进入确认门与选购/售后/品牌 guards），收集预算、系列、发布时间与标签（养宠/静音/防缠绕等）→ `find_models` → 列表；标签只认序号与固定跳过命令 |
 | `repair.py` | 故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤 |
 

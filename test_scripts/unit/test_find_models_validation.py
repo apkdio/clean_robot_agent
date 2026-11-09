@@ -49,6 +49,7 @@ def test_invalid_conditions_are_dropped_not_cleared():
         ({"params": [{"key": "吸力", "op": ">=", "value": "强"}]}, "params[0]"),
         ({"params": [{"key": "", "op": "=", "value": "x"}]}, "params[0]"),
         ({"scope": ["unknown"]}, "scope"),
+        ({"scope": ["prev"]}, "scope"),
         ({"sort_by": "不存在的参数"}, "sort_by"),
         ({"tags": ["unknown"]}, "tags"),
         ({"limit": "many"}, "limit"),

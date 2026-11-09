@@ -134,6 +134,160 @@ def test_register_and_match():
     _assert_eq(sops.base.match_sop("边刷多久换一次"), None, "维护不触发")
 
 
+def test_sop_name_from_definition():
+    """名称只认 SOP 定义；匿名测试 SOP 缺省回 id，运行时不再维护第二张名称表。"""
+    from tools.sop_runtime import sop_name as runtime_sop_name
+
+    _assert_eq(sops.base.sop_name("model_query"), "选购推荐", "model_query 名称来自定义")
+    _assert_eq(sops.base.sop_name("repair"), "故障排查", "repair 名称来自定义")
+    _assert_eq(sops.base.sop_name("service_point"), "售后网点查询", "service_point 名称来自定义")
+    _assert_eq(sops.base.sop_name("sop_unit_test"), "sop_unit_test", "匿名 SOP 缺省 name=id")
+    _assert_eq(runtime_sop_name("model_query"), "选购推荐", "runtime 薄转发同一份名称")
+    _assert_eq(sops.base.sop_name("not_registered"), "not_registered", "未知 id 原样返回")
+
+
+def _expect_register_error(sop, label):
+    try:
+        sops.base.register(sop)
+    except ValueError as e:
+        _assert("SOP" in str(e), "%s：错误信息带 SOP 定位" % label)
+    else:
+        _assert(False, "%s：应当拒绝注册" % label)
+
+
+def test_register_validation():
+    """注册前拦住缺字段/错类型/重复 step，避免运行到一半才 KeyError。"""
+    base = {"id": "sop_validate", "steps": [{"id": "r", "type": "reply", "template": "ok"}]}
+    _expect_register_error(dict(base, id=""), "id 为空")
+    _expect_register_error(dict(base, steps=[]), "steps 为空")
+    _expect_register_error(dict(base, steps=[
+        {"id": "r", "type": "reply", "template": "ok"},
+        {"id": "r", "type": "reply", "template": "again"},
+    ]), "step id 重复")
+    _expect_register_error(dict(base, steps=[{"id": "r", "type": "unknown"}]), "未知 step 类型")
+    _expect_register_error(dict(base, steps=[
+        {"id": "a", "type": "ask", "slot": "x", "ask": "问"},
+    ]), "ask 缺 extract")
+    _expect_register_error(dict(base, steps=[{"id": "a", "type": "action"}]), "action 缺 action")
+    _expect_register_error(dict(base, steps=[{"id": "r", "type": "reply"}]), "reply 缺 template")
+    _expect_register_error(dict(base, guards=[{"check": "not-callable"}]), "guard 不可调用")
+    _expect_register_error(dict(base, max_retry=-1), "max_retry 为负")
+    _expect_register_error(dict(base, enter_confirm="sometimes"), "enter_confirm 非法")
+
+    sops.base.register(dict(base, steps=[{"id": "r", "type": "reply", "template": "ok"}]))
+    _assert("sop_validate" in sops.base.SOPS, "合法定义可以注册")
+    sops.base.SOPS.pop("sop_validate", None)
+
+
+def test_extract_done_skip_and_drop_are_distinct():
+    """done 合并 extra；skip 写 None+skipped；fail 超限只写 dropped，不把槽位塞进 slots。"""
+    from tools.dto.sop import ExtractResult
+
+    sop_id = "sop_extract_result"
+    sops.base.register({
+        "id": sop_id,
+        "steps": [
+            {"id": "a", "type": "ask", "slot": "a",
+             "ask": "a?", "extract": lambda text, slots: ExtractResult(
+                 "done", "A", extra={"candidates": ["x"], "choice_prompt": "选"})},
+            {"id": "b", "type": "ask", "slot": "b",
+             "ask": "b?", "extract": lambda text, slots: ExtractResult("skip")},
+            {"id": "c", "type": "ask", "slot": "c",
+             "ask": "c?", "extract": lambda text, slots: ExtractResult("fail")},
+            {"id": "reply", "type": "reply", "template": "ok"},
+        ],
+        "max_retry": 0,
+    })
+    sid = "s-extract-result"
+    try:
+        sops.base.start_sop(sid, sop_id, "x")
+        state = sops.base.get_sop_state(sid)
+        _assert_eq(state["slots"].get("a"), "A", "done 写槽位")
+        _assert_eq(state["slots"].get("candidates"), ["x"], "done 合并 extra")
+        _assert_eq(state["slots"].get("choice_prompt"), "选", "extra 原子写入")
+
+        sops.base.continue_sop(sid, "随便")
+        state = sops.base.get_sop_state(sid)
+        _assert_eq(state["slots"].get("b"), None, "skip 写 None")
+        _assert_eq((state.get("slot_status") or {}).get("b"), "skipped", "skip 记 skipped")
+
+        result = sops.base.continue_sop(sid, "还是不对")
+        _assert(result.done, "fail 超过 max_retry 后推进到 reply")
+        finished = sops.base.pop_finished(sid)
+        _assert("c" not in (finished.get("slots") or {}), "dropped 槽位不放进 slots")
+        _assert_eq((finished.get("slot_status") or {}).get("c"), "dropped",
+                   "fail 超限记 dropped")
+    finally:
+        sops.base.end_sop(sid)
+        sops.base.SOPS.pop(sop_id, None)
+        _cleanup()
+
+
+def test_action_non_dict_is_explicit_error():
+    """action 返回非 dict 不能静默当空结果；要报错并结束会话。"""
+    sop_id = "sop_action_bad_shape"
+    sops.base.register({
+        "id": sop_id,
+        "steps": [
+            {"id": "do", "type": "action", "action": lambda slots: ["not", "dict"]},
+            {"id": "reply", "type": "reply", "template": "ok"},
+        ],
+    })
+    sid = "s-action-bad"
+    try:
+        _assert_raises(ValueError, lambda: sops.base.start_sop(sid, sop_id, "x"),
+                       "action 非 dict 显式报错")
+        _assert(not sops.base.has_active_sop(sid), "异常后结束会话")
+    finally:
+        sops.base.end_sop(sid)
+        sops.base.SOPS.pop(sop_id, None)
+        _cleanup()
+
+
+def test_non_model_action_has_no_n_models():
+    """#14：只有 action 结果含 models 才写 n_models；repair/网点这类不能伪装成 0 款。"""
+    sop_id = "sop_non_model_action"
+    sops.base.register({
+        "id": sop_id,
+        "steps": [
+            {"id": "do", "type": "action", "action": lambda slots: {"answer": "ok"}},
+            {"id": "reply", "type": "reply", "template": "$answer"},
+        ],
+    })
+    sid = "s-non-model-action"
+    try:
+        reset_trace(sid)
+        trace_store.begin_turn(sid, "x")
+        sops.base.start_sop(sid, sop_id, "x")
+        trace_store.end_turn()
+        row = trace_reader.load(trace_store._path(sid))[-1]
+        flow = (row.get("sop") or {}).get("flow") or []
+        action = next((f for f in flow if f.get("type") == "action"), {})
+        _assert("n_models" not in action, "非型号 action 不写 n_models")
+    finally:
+        sops.base.end_sop(sid)
+        sops.base.SOPS.pop(sop_id, None)
+        _cleanup()
+
+
+def test_reenter_hint_key_uses_word_dict():
+    """SOP 定义只声明 key，固定话术仍从词表取。"""
+    from config.word_dict_config import SOP_REENTER_HINT
+
+    sop = {
+        "id": "sop_hint_probe",
+        "name": "提示测试",
+        "reenter_hint_key": "model_query",
+        "steps": [{"id": "r", "type": "reply", "template": "ok"}],
+    }
+    sops.base.register(sop)
+    try:
+        _assert_eq(sops.base.enter_decline_hint("sop_hint_probe"),
+                   SOP_REENTER_HINT["model_query"], "按 reenter_hint_key 取词表话术")
+    finally:
+        sops.base.SOPS.pop("sop_hint_probe", None)
+
+
 def test_model_query_trigger_and_guards():
     # 合并后通用选购入口由 model_query 承接
     _assert_eq(sops.base.match_sop("帮我推荐一款扫地机器人"), "model_query", "推荐→选购 SOP")
@@ -193,11 +347,12 @@ def test_full_flow():
 
 def test_extract_budget_bare_number():
     from sops.model_query import _extract_budget
-    _assert_eq(_extract_budget("800块以内", {}), (None, 800), "带量词照旧走通用解析")
-    _assert(_extract_budget("2000左右", {}) is not None, "区间照旧走通用解析")
-    _assert_eq(_extract_budget("800", {}), (None, 800), "纯数字短答按上限收（BC-20261015-03）")
-    _assert_eq(_extract_budget("预算 5000 元", {}), (None, 5000), "带「预算」照旧")
-    _assert_eq(_extract_budget("不知道", {}), None, "非预算表达→None")
+    _assert_eq(_extract_budget("800块以内", {}).value, (None, 800), "带量词照旧走通用解析")
+    _assert_eq(_extract_budget("2000左右", {}).kind, "done", "区间照旧走通用解析")
+    _assert_eq(_extract_budget("800", {}).value, (None, 800), "纯数字短答按上限收（BC-20261015-03）")
+    _assert_eq(_extract_budget("预算 5000 元", {}).value, (None, 5000), "带「预算」照旧")
+    _assert_eq(_extract_budget("不知道", {}).kind, "fail", "非预算表达→fail")
+    _assert_eq(_extract_budget("跳过", {}).kind, "skip", "显式跳过→skip")
 
 
 def test_result_reply():
@@ -496,6 +651,12 @@ def test_model_query_sop_full_flow():
 
 TESTS = [
     test_register_and_match,
+    test_sop_name_from_definition,
+    test_register_validation,
+    test_extract_done_skip_and_drop_are_distinct,
+    test_action_non_dict_is_explicit_error,
+    test_non_model_action_has_no_n_models,
+    test_reenter_hint_key_uses_word_dict,
     test_model_query_trigger_and_guards,
     test_start_and_continue,
     test_continue_no_session,

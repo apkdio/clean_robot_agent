@@ -6,6 +6,7 @@ import re
 
 from config.word_dict_config import SERVICE_POINT_CONSULT_WORDS, SERVICE_POINT_WORDS
 from sops.base import register
+from tools.dto.sop import ExtractResult
 from tools.log_tool import get_logger
 
 logger = get_logger(name="sops_service_point")
@@ -53,25 +54,28 @@ def _extract_city_by_llm(text: str) -> list:
     return []
 
 
-def _extract_city(text: str, slots: dict):
-    """识城市；重名时把候选与选择话术写进 slots，供下一步的 when 与话术占位用。"""
+def _extract_city(text: str, _slots: dict):
+    """识城市；重名候选放 extra，由 base 在 done 时原子写入 slots。"""
     from function_tools.service_point_tool import geocode_city
     candidates = geocode_city(text) or _extract_city_by_llm(text)
     if not candidates:
-        return None
-    slots["candidates"] = candidates
+        return ExtractResult("fail", reason="no_city")
+    extra = {"candidates": candidates}
     if len(candidates) > 1:
-        slots["choice_prompt"] = _choice_prompt(candidates)
-    return candidates[0].get("cn_name") or candidates[0].get("name")
+        extra["choice_prompt"] = _choice_prompt(candidates)
+    city = candidates[0].get("cn_name") or candidates[0].get("name")
+    return ExtractResult("done", city, extra=extra)
 
 
 def _extract_pick(text: str, slots: dict):
     """答序号 → 候选下标（从 0 起）。"""
     m = re.search(r"[1-9]", text or "")
     if not m:
-        return None
+        return ExtractResult("fail", reason="no_pick")
     idx = int(m.group()) - 1
-    return idx if 0 <= idx < len(slots.get("candidates") or []) else None
+    if not 0 <= idx < len(slots.get("candidates") or []):
+        return ExtractResult("fail", reason="out_of_range")
+    return ExtractResult("done", idx)
 
 
 def format_nearest(coord: dict) -> str:
@@ -94,6 +98,7 @@ def _search_points(slots: dict):
 # 槽位形如 {"city": xxx, "candidates": [xxx], "choice_prompt": xxx, "pick": xxx}（后两个仅重名时有）；action 返回 {"points": xxx}
 SERVICE_POINT_SOP = {
     "id": "service_point",
+    "name": "售后网点查询",
     "trigger": SERVICE_POINT_WORDS,
     "enter_confirm": "always",
     "guards": [{"check": _is_consult}],

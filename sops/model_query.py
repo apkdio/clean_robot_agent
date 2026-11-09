@@ -1,7 +1,8 @@
 """选购/型号查询 SOP：预算 / 系列 / 发布时间 / 标签补槽，最后调用 find_models。"""
 from __future__ import annotations
 
-from sops.base import SKIP, is_aftersales, is_brand, is_consulting, register
+from sops.base import is_aftersales, is_brand, is_consulting, register
+from tools.dto.sop import ExtractResult
 from config.word_dict_config import (
     BARE_BUDGET_RE,
     MODEL_QUERY_CONSTRAINT_RETRY_REPLY,
@@ -29,34 +30,41 @@ def _skip_text(text: str) -> bool:
 
 def _extract_budget(text: str, _slots: dict):
     if _skip_text(text):
-        return SKIP
+        return ExtractResult("skip", reason="user_skip")
     parsed = extract_price_constraint(text)
     if parsed:
-        return parsed
+        return ExtractResult("done", parsed)
     m = BARE_BUDGET_RE.match(text or "")
-    return (None, int(m.group(1))) if m else None
+    if not m:
+        return ExtractResult("fail", reason="no_budget")
+    return ExtractResult("done", (None, int(m.group(1))))
 
 
 def _extract_series(text: str, _slots: dict):
     if _skip_text(text):
-        return SKIP
-    return extract_series(text) or None
+        return ExtractResult("skip", reason="user_skip")
+    value = extract_series(text)
+    if not value:
+        return ExtractResult("fail", reason="no_series")
+    return ExtractResult("done", value)
 
 
 def _extract_publish(text: str, _slots: dict):
     if _skip_text(text):
-        return SKIP
+        return ExtractResult("skip", reason="user_skip")
     rng = parse_publish(text)
-    return (rng.start, rng.end) if rng else None
+    if not rng:
+        return ExtractResult("fail", reason="no_publish")
+    return ExtractResult("done", (rng.start, rng.end))
 
 
 def _extract_tags(text: str, _slots: dict):
     kind, nums = parse_multi_select(text, len(TAG_ORDER))
     if kind == "skip":
-        return SKIP
+        return ExtractResult("skip", reason="user_skip")
     if kind != "ok":
-        return None
-    return [TAG_ORDER[i - 1] for i in nums]
+        return ExtractResult("fail", reason="no_tag")
+    return ExtractResult("done", [TAG_ORDER[i - 1] for i in nums])
 
 
 def _tag_ask(_ctx: dict) -> str:
@@ -158,6 +166,7 @@ def _make_reply(templates: dict):
 
 MODEL_QUERY_SOP = {
     "id": "model_query",
+    "name": "选购推荐",
     "trigger": MODEL_QUERY_TRIGGER,
     "enter_confirm": "always",
     "weak_trigger": MODEL_QUERY_WEAK_TRIGGER,

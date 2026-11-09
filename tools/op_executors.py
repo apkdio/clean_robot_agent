@@ -53,7 +53,7 @@ def _resolve_model_query(session_id: str, query: str):
 
 
 def exec_followup(ctx: TurnContext) -> ExecOutcome:
-    from sops import handle_followup
+    from tools.followup import handle_followup
 
     reply = handle_followup(ctx.session_id, ctx.q)
     if reply:

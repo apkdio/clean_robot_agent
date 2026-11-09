@@ -76,14 +76,14 @@ def _rollback_user(session_id: str) -> None:
 def _finish_turn(session_id: str, query: str, answer: str) -> dict:
     """正常收尾：assistant 落盘、首轮生成标题、返回 meta。"""
     from tools.context_store import (
-        append_message, generate_session_title, get_session_title, set_session_title,
+        append_message, generate_session_title, get_last_models,
+        get_session_title, set_session_title,
     )
-    from sops.base import get_last_recommend
     from sops import has_active_sop
     from tools import trace_store
 
     append_message(session_id, "assistant", answer,
-                   models=get_last_recommend(session_id))
+                   models=get_last_models(session_id))
     sop_active = bool(has_active_sop(session_id))
     meta = {"branch": "", "sop_active": sop_active, "anchor": None}
     try:

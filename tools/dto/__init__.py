@@ -10,7 +10,7 @@ from tools.dto.executor import ExecOutcome, NotMine, Reply
 from tools.dto.model_query import (FindModelsResult, ModelQueryConstraints, ModelQueryResult,
                                    ParamFilter, PriceRange, PublishRange)
 from tools.dto.request import ChatRequest
-from tools.dto.sop import SopStepResult
+from tools.dto.sop import ExtractResult, SopStepResult
 from tools.dto.stage import Continue, Finish, StageOutcome
 from tools.dto.transport import TurnEvent
 
@@ -22,6 +22,6 @@ __all__ = [
     "ModelQueryResult", "FindModelsResult", "ModelQueryConstraints",
     "PriceRange", "PublishRange", "ParamFilter",
     "ChatRequest",
-    "SopStepResult",
+    "ExtractResult", "SopStepResult",
     "TurnEvent",
 ]

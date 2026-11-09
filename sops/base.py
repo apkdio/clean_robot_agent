@@ -5,21 +5,18 @@
 """
 import hashlib
 import json
-import re
 import time
 
-from function_tools.date_tool import publish_int
 from tools import trace_store
-from tools.dto.sop import SopStepResult
+from tools.dto.sop import ExtractResult, SopStepResult
 from tools.log_tool import get_logger
 from tools.prompts_tool import render
 from tools.safety import with_safety_hint
 from tools.state_store import StateStore
 from config.word_dict_config import (
     AFTERSALES_WORDS,BUY_WORDS, CONSULT_WORDS, BRAND_WORDS,
-    ENTER_CONFIRM, LATEST_WORDS, RECENT_VAGUE_WORDS, CHEAPER_WORDS, PRICIER_WORDS, NEWER_WORDS, OLDER_WORDS,
-    REL_LABEL as _REL_LABEL, REL_SUPER as _REL_SUPER,
-    SOP_NAMES, SOP_REENTER_HINT, SOP_REENTER_HINT_DEFAULT,
+    ENTER_CONFIRM,
+    SOP_REENTER_HINT, SOP_REENTER_HINT_DEFAULT,
     SOP_ASK_FALLBACK, SOP_EMPTY_REPLY_FALLBACK,
 )
 
@@ -27,8 +24,12 @@ logger = get_logger(name="sops_base")
 SOPS = {}  # sop_id → sop 定义
 # 可选槽位的显式“跳过”返回值；与 None（提取失败）区分
 SKIP = object()
-# 定义形如 {"id": xxx, "trigger": [xxx], "guards": [xxx], "intro": xxx, "max_retry": xxx, "steps": [xxx]}
+# 定义形如 {"id": xxx, "name": xxx, "trigger": [xxx], "guards": [xxx], "intro": xxx,
+#           "max_retry": xxx, "steps": [xxx]}；name 缺省回 id。
+# register() 在落表前校验必填字段、step 唯一性、回调可调用与枚举值。
 # ask 步：{"id": xxx, "type": "ask", "slot": xxx, "ask": str|fn, "retry": str|fn, "extract": fn}
+#          fn 返回 ExtractResult(skip/done/fail)；done 的 extra 由 base 合并进 slots，
+#          extra["trace"] 由 base 统一写节点。旧 extractor 的裸返回值仍兼容。
 # action 步：{"id": xxx, "type": "action", "action": fn}；fn 唯一入参是 slots 副本：
 #            原件仍是 session["slots"]，fn 对副本的修改不回写；
 #            副本带内部 "_slot_status": {slot: filled|skipped|dropped}，仅供 fn 读取，
@@ -68,22 +69,114 @@ def _def_ver(sop: dict) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
 
 
+ENTER_CONFIRM_DEFAULT = "always"          # 所有 SOP 默认「进入前先问」
+ENTER_CONFIRM_MODES = ("always", "weak", "never")
+
+
+def _sop_error(sop: dict, message: str, step: dict = None):
+    sid = (sop or {}).get("id") or "?"
+    if step is None:
+        raise ValueError("[SOP] %s: %s" % (sid, message))
+    raise ValueError("[SOP] %s step %s: %s" % (sid, step.get("id") or "?", message))
+
+
+def _validate_sop(sop: dict) -> None:
+    """注册前校验定义形状；错误带 SOP / step 定位，避免运行到一半才 KeyError。"""
+    if not isinstance(sop, dict):
+        raise ValueError("[SOP] 定义必须是 dict")
+    sid = str(sop.get("id") or "").strip()
+    if not sid:
+        _sop_error(sop, "id 不能为空")
+    sop["id"] = sid
+
+    raw_name = sop.get("name")
+    if raw_name is None:
+        name = sid
+    elif not isinstance(raw_name, str):
+        _sop_error(sop, "name 必须是字符串")
+    else:
+        name = raw_name.strip() or sid
+    sop["name"] = name
+
+    steps = sop.get("steps")
+    if not isinstance(steps, (list, tuple)) or not steps:
+        _sop_error(sop, "steps 必须是非空列表")
+    seen = set()
+    for step in steps:
+        if not isinstance(step, dict):
+            _sop_error(sop, "step 必须是 dict")
+        step_id = str(step.get("id") or "").strip()
+        if not step_id:
+            _sop_error(sop, "step id 不能为空", step)
+        if step_id in seen:
+            _sop_error(sop, "step id 重复", step)
+        seen.add(step_id)
+        kind = step.get("type")
+        if kind not in ("ask", "action", "reply"):
+            _sop_error(sop, "type 必须是 ask/action/reply", step)
+        if step.get("when") is not None and not callable(step["when"]):
+            _sop_error(sop, "when 必须可调用", step)
+
+        if kind == "ask":
+            slot = step.get("slot")
+            if not isinstance(slot, str) or not slot.strip():
+                _sop_error(sop, "ask 步骤需要非空 slot", step)
+            for key in ("ask", "retry"):
+                value = step.get(key)
+                if key == "ask" and value is None:
+                    _sop_error(sop, "ask 步骤需要 ask 文案", step)
+                if value is not None and not isinstance(value, str) and not callable(value):
+                    _sop_error(sop, "%s 必须是字符串或函数" % key, step)
+            if not callable(step.get("extract")):
+                _sop_error(sop, "ask 步骤需要可调用的 extract", step)
+        elif kind == "action":
+            if not callable(step.get("action")):
+                _sop_error(sop, "action 步骤需要可调用的 action", step)
+        else:
+            tpl = step.get("template")
+            if tpl is None:
+                _sop_error(sop, "reply 步骤需要 template", step)
+            if not isinstance(tpl, str) and not callable(tpl):
+                _sop_error(sop, "reply template 必须是字符串或函数", step)
+            fallback = step.get("fallback")
+            if fallback is not None and not isinstance(fallback, str):
+                _sop_error(sop, "reply fallback 必须是字符串", step)
+
+    guards = sop.get("guards")
+    if guards is not None:
+        if not isinstance(guards, (list, tuple)):
+            _sop_error(sop, "guards 必须是列表")
+        for guard in guards:
+            if not isinstance(guard, dict) or not callable(guard.get("check")):
+                _sop_error(sop, "guard 必须是含可调用 check 的 dict")
+
+    max_retry = sop.get("max_retry", 2)
+    if isinstance(max_retry, bool) or not isinstance(max_retry, int) or max_retry < 0:
+        _sop_error(sop, "max_retry 必须是非负整数")
+
+    mode = sop.get("enter_confirm")
+    if mode is not None and str(mode).strip().lower() not in ENTER_CONFIRM_MODES:
+        _sop_error(sop, "enter_confirm 必须是 always/weak/never")
+
+    hint_key = sop.get("reenter_hint_key")
+    if hint_key is not None and not isinstance(hint_key, str):
+        _sop_error(sop, "reenter_hint_key 必须是字符串")
+
+
 def register(sop: dict) -> None:
     """注册一个 SOP 定义，并算好它的定义指纹（供 Redis 里的半截状态对账）。"""
+    _validate_sop(sop)
+    sid = sop["id"]
+    if sid in SOPS and SOPS[sid] is not sop:
+        logger.warning("[SOP] 重复注册 id=%s，覆盖旧定义", sid)
     sop["def_ver"] = _def_ver(sop)
-    SOPS[sop["id"]] = sop
+    SOPS[sid] = sop
 
 
 def save_recommend(session_id: str, models) -> None:
     """保存指定会话的上一轮推荐结果到 meta（供追问使用，跨重启有效）。"""
     from tools.context_store import set_last_models
     set_last_models(session_id, models)
-
-
-def get_last_recommend(session_id: str):
-    """读取上一轮推荐结果（从 meta，跨重启有效）。"""
-    from tools.context_store import get_last_models
-    return get_last_models(session_id)
 
 
 # 当前活跃会话，按 session_id 隔离；Redis + 本地双写由 StateStore 统一处理
@@ -108,10 +201,12 @@ def make_session(sop_id: str, step: int = 0, slots: dict = None, retry_count: in
             "step": int(step), "slots": dict(slots or {}), "retry_count": int(retry_count)}
 
 
-def _advance(session: dict) -> None:
-    """推进到下一步；retry_count 只属于当前 step，跨 step 必须清零。"""
-    session["step"] = int(session.get("step", 0)) + 1
+def _advance(session: dict) -> int:
+    """推进到下一步并返回旧下标；retry_count 只属于当前 step，跨 step 必须清零。"""
+    old = int(session.get("step", 0))
+    session["step"] = old + 1
     session["retry_count"] = 0
+    return old
 
 
 def _same_def(session: dict) -> bool:
@@ -241,12 +336,12 @@ def match_sop(query: str, sop_id: str = None, log: bool = True):
     return None
 
 
-ENTER_CONFIRM_DEFAULT = "always"          # 所有 SOP 默认「进入前先问」
-ENTER_CONFIRM_MODES = ("always", "weak", "never")
-
-
 def sop_name(sop_id: str) -> str:
-    return SOP_NAMES.get(sop_id, "当前")
+    """SOP 中文名取自定义；未知 id 原样返回，避免把「当前」当成真实流程名。"""
+    if not sop_id:
+        return "当前"
+    sop = SOPS.get(sop_id) or {}
+    return str(sop.get("name") or sop_id)
 
 
 def enter_confirm_mode(sop_id: str) -> str:
@@ -298,7 +393,10 @@ def mark_enter_declined(session_id: str, sop_id: str) -> None:
 
 
 def enter_decline_hint(sop_id: str) -> str:
-    return SOP_REENTER_HINT.get(sop_id, SOP_REENTER_HINT_DEFAULT)
+    """固定话术留在词表；SOP 定义可用 reenter_hint_key 指定，缺省按 sop_id 取。"""
+    sop = SOPS.get(sop_id) or {}
+    key = sop.get("reenter_hint_key") or sop_id
+    return SOP_REENTER_HINT.get(key, SOP_REENTER_HINT_DEFAULT)
 
 
 def _step_text(value, ctx: dict) -> str:
@@ -337,6 +435,38 @@ def _close_step(span_id, status: str, out: dict) -> None:
         trace_store.end_span(span_id, status=status, out=out)
 
 
+def _normalize_extract(value) -> ExtractResult:
+    """兼容旧 extractor 的裸返回值；生产 extractor 一律返回 ExtractResult。"""
+    if isinstance(value, ExtractResult):
+        return value
+    if value is SKIP:
+        return ExtractResult("skip")
+    if value is None:
+        return ExtractResult("fail")
+    return ExtractResult("done", value)
+
+
+def _write_extract_trace(result: ExtractResult) -> None:
+    """extractor 不直接写 trace；需要留痕时把事实放在 extra["trace"]，由这里统一写。"""
+    fact = (result.extra or {}).get("trace")
+    if not fact:
+        return
+    if not isinstance(fact, dict) or not fact.get("node"):
+        logger.warning("[SOP] extract trace 缺 node，忽略：%r", fact)
+        return
+    trace_store.node(
+        str(fact["node"]),
+        status=str(fact.get("status") or "ok"),
+        in_=fact.get("in"),
+        out=fact.get("out"),
+    )
+
+
+def _extract_slot_extra(result: ExtractResult) -> dict:
+    """只有 done 才把 extra 写进 slots；trace 是记录指令，不是槽位。"""
+    return {k: v for k, v in (result.extra or {}).items() if k != "trace"}
+
+
 def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResult:
     """执行/推进指定会话的 SOP；session 可传入本轮已加载的快照。"""
     if session is None:
@@ -365,8 +495,8 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
 
             # 针对网点的结果，如果结果只有一个，跳过反问澄清环节
             if step.get("when") and not step["when"](ctx):
-                _record({"i": session["step"], "type": step["type"], "outcome": "skipped"})
-                _advance(session)
+                old_i = _advance(session)
+                _record({"i": old_i, "type": step["type"], "outcome": "skipped"})
                 _close_step(step_span, "skipped", step_out)
                 step_span = None
                 continue
@@ -375,9 +505,9 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
                 slot = step.get("slot")
                 # 预填槽：不重复问；进入下一槽/动作
                 if slot and session["slots"].get(slot) is not None:
-                    _record({"i": session["step"], "type": "ask", "slot": slot,
+                    old_i = _advance(session)
+                    _record({"i": old_i, "type": "ask", "slot": slot,
                              "outcome": "skipped", "by": "prefill"})
-                    _advance(session)
                     user_input = None
                     _close_step(step_span, "skipped", step_out)
                     step_span = None
@@ -391,35 +521,39 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
                     step_span = None
                     return SopStepResult("ask", _ask_text(
                         step, "ask", ctx, sop["id"], step.get("id")))
-                value = step["extract"](user_input, session["slots"])
-                if value is SKIP:
+                result = _normalize_extract(step["extract"](user_input, session["slots"]))
+                _write_extract_trace(result)
+                if result.kind == "skip":
                     # 显式留空：不重试，直接跳过该槽
                     session["slots"][slot] = None
                     session.setdefault("slot_status", {})[slot] = "skipped"
-                    _advance(session)
+                    old_i = _advance(session)
                     user_input = None
-                    _record({"i": session["step"] - 1, "type": "ask",
+                    _record({"i": old_i, "type": "ask",
                              "slot": slot, "outcome": "skipped"})
                     _close_step(step_span, "skipped", step_out)
                     step_span = None
                     continue
-                if value is None:
-                    # 提取失败：累加重试次数，超过上限则放弃该槽位（记 None 跳过）
+                if result.kind == "fail":
+                    # 提取失败：累加重试次数，超过上限则放弃该槽位
                     session["retry_count"] = session.get("retry_count", 0) + 1
                     if session["retry_count"] > sop.get("max_retry", 2):
-                        session["slots"][step["slot"]] = None
+                        # 放弃的槽位不放进 slots，避免随 ctx 进入模板；状态单独记 dropped
+                        session["slots"].pop(step["slot"], None)
                         session.setdefault("slot_status", {})[step["slot"]] = "dropped"
-                        _advance(session)
+                        old_i = _advance(session)
                         user_input = None
-                        logger.warning("[SOP] %s slot %s abandoned after retries", sop["id"], step["slot"])
-                        _record({"i": session["step"] - 1, "type": "ask",
+                        logger.warning("[SOP] %s slot %s abandoned after retries (reason=%s)",
+                                       sop["id"], step["slot"], result.reason or "-")
+                        _record({"i": old_i, "type": "ask",
                                  "slot": step.get("slot"), "outcome": "abandoned"})
                         _close_step(step_span, "skipped", step_out)
                         step_span = None
                         continue
                     # 首轮提取失败（retry_count==1）→ 用 ask 话术（还没问过用户）
                     # 后续提取失败（retry_count≥2）→ 用 retry 话术（重问）
-                    logger.info("[SOP] %s slot %s extract failed (retry=%d)", sop["id"], step["slot"], session["retry_count"])
+                    logger.info("[SOP] %s slot %s extract failed (retry=%d, reason=%s)",
+                                sop["id"], step["slot"], session["retry_count"], result.reason or "-")
                     if session["retry_count"] == 1:
                         _record({"i": session["step"], "type": "ask",
                                  "slot": step.get("slot"), "outcome": "asked"})
@@ -435,33 +569,38 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
                     return SopStepResult("ask", with_safety_hint(
                         _ask_text(step, "retry", ctx, sop["id"], step.get("id")),
                         session_id, by="sop", sop=sop["id"]))
-                # 提取成功，重置重试计数
-                session["slots"][step["slot"]] = value
+                # 提取成功：先合并 extra（如网点候选），再写槽位本身，最后推进
+                session["slots"].update(_extract_slot_extra(result))
+                session["slots"][step["slot"]] = result.value
                 session.setdefault("slot_status", {})[step["slot"]] = "filled"
-                _advance(session)
+                old_i = _advance(session)
                 user_input = None
-                logger.info("[SOP] %s slot %s = %s", sop["id"], step["slot"], value)
-                _record({"i": session["step"] - 1, "type": "ask", "slot": step.get("slot"),
+                logger.info("[SOP] %s slot %s = %s", sop["id"], step["slot"], result.value)
+                _record({"i": old_i, "type": "ask", "slot": step.get("slot"),
                          "outcome": "filled",
-                         "value": value if len(str(value)) <= 40 else str(value)[:40] + "…"})
+                         "value": result.value if len(str(result.value)) <= 40
+                         else str(result.value)[:40] + "…"})
                 _close_step(step_span, "ok", step_out)
                 step_span = None
                 continue
 
             elif step["type"] == "action":
-                # 执行 skill，结果存入 result；若含结构化型号列表则保存供追问
+                # 执行 skill，结果存入 result；只有含结构化型号列表时才写 n_models
                 action_slots = dict(session["slots"])
                 action_slots["_slot_status"] = dict(session.get("slot_status") or {})
                 result = step["action"](action_slots)
+                if not isinstance(result, dict):
+                    _sop_error(sop, "action 必须返回 dict，实际 %s" % type(result).__name__, step)
                 session["result"] = result
-                n_models = len(result.get("models") or []) if isinstance(result, dict) else 0
-                _record({"i": session["step"], "type": "action", "outcome": "ok",
-                         "n_models": n_models})
-                if isinstance(result, dict) and "models" in result:
+                entry = {"i": session["step"], "type": "action", "outcome": "ok"}
+                if "models" in result:
+                    n_models = len(result.get("models") or [])
+                    entry["n_models"] = n_models
                     save_recommend(session_id, result["models"])
                     logger.info("[SOP] %s action executed (%d models)", sop["id"], n_models)
                 else:
-                    logger.info("[SOP] %s action executed",sop["id"])
+                    logger.info("[SOP] %s action executed", sop["id"])
+                _record(entry)
                 _advance(session)
                 _close_step(step_span, "ok", step_out)
                 step_span = None
@@ -518,121 +657,3 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
         # 会话未结束（停在 ask 等下一轮）→ 保存最新状态
         if not ended:
             _save_session(session_id, session)
-
-
-# 相对上一轮展示范围：rel -> (取值字段, 边界函数, 比较方向, 降序?)
-_REL_SPEC = {
-    "cheaper": ("price", min, "lt", True),
-    "pricier": ("price", max, "gt", False),
-    "newer": ("publish", max, "gt", False),
-    "older": ("publish", min, "lt", True),
-}
-# 追问维度的话术（_REL_LABEL / _REL_SUPER）见 config/word_dict_config.py
-
-
-def _rel_header(rels: list) -> str:
-    """相对追问的回复头（多维度时并列）。"""
-    return "比刚才那几款%s的有：" % "、".join(_REL_LABEL[r] for r in rels)
-
-
-def _rel_none_msg(rels: list) -> str:
-    """越过门槛的型号一个都没有时的回复；多维度要点名组合，避免误读成单维度已到顶。"""
-    if len(rels) == 1:
-        return "刚才推荐的那几款已经是目前%s的了～" % _REL_SUPER[rels[0]]
-    return "比刚才那几款%s的型号暂时没有～" % "、".join(_REL_LABEL[r] for r in rels)
-
-
-def _publish_key(model: dict) -> int:
-    """型号发布时间 → int YYYYMMDD（统一走 date_tool.publish_int）。"""
-    return publish_int(model.get("publish_date"))
-
-
-def _relative_filter(prev: list, models: list, rel: str) -> list:
-    """按单个相对维度过滤出越过上一轮展示边界的型号（不排序、不截断）。"""
-    field, pick, op, _desc = _REL_SPEC[rel]
-
-    def value(m: dict) -> int:
-        return int(m.get("price") or 0) if field == "price" else _publish_key(m)
-
-    edges = [value(m) for m in prev if value(m)]
-    if not edges:
-        return []
-    edge = pick(edges)
-    return [m for m in models if value(m) and (value(m) < edge if op == "lt" else value(m) > edge)]
-
-
-def _relative_slice(prev: list, models: list, rels: list) -> list:
-    """按一个或多个相对维度过滤（同时满足），最接近门槛的在前，最多 3 条。"""
-    for rel in rels:
-        models = _relative_filter(prev, models, rel)
-    if not models:
-        return []
-    field, _pick, _op, desc = _REL_SPEC[rels[0]]
-
-    def value(m: dict) -> int:
-        return int(m.get("price") or 0) if field == "price" else _publish_key(m)
-
-    return sorted(models, key=value, reverse=desc)[:3]
-
-
-def handle_followup(session_id: str, query: str):
-    """回答追问。返回回复文本或 None。
-
-    全局类（最近发布 / 最贵 / 最便宜）不依赖上一轮；相对类（更便宜 / 更贵 / 更新 / 更旧）
-    以上一轮展示过的边界为门槛，在全库取越过边界、最接近边界的几款。
-    """
-    from tools.metadata_extractor import format_models
-    # 最近发布类：全局检索（不依赖上一轮上下文）
-    latest_hit = any(w in query for w in LATEST_WORDS)
-    vague_recent = (
-            "最近" in query
-            and not re.search(r"最近(?:半|几|[0-9一二两三四五六七八九十]|个?[月年周天])", query)
-            and any(w in query for w in RECENT_VAGUE_WORDS)
-    )
-    if latest_hit or vague_recent:
-        models = _search_global("publish_date", True, "publish_date")[:5]
-        save_recommend(session_id, models)
-        return format_models(models, "最近发布的机器人有这几款：")
-
-    # 全局价格极值：最贵/最便宜 → 全局按价格排序取极值（不依赖上一轮）
-    if "最贵" in query or "价格最高" in query:
-        models = _search_global("price")
-        if models:
-            save_recommend(session_id, models[-1:])
-            return format_models(models[-1:], "目前最贵的是这一款：")
-    if "最便宜" in query or "价格最低" in query:
-        models = _search_global("price")
-        if models:
-            save_recommend(session_id, models[:1])
-            return format_models(models[:1], "目前最便宜的是这一款：")
-
-    # 相对上一轮展示范围的追问：更便宜 / 更贵 / 更新 / 更旧
-    # 找到第一个命中四个"更加"域的词
-    # 多个相对维度可并列（「更新更便宜的」= 更新 且 更便宜），逐个收窄；
-    # 裸「更新」不进球表（与「固件更新」撞），但「更X更Y」结构无歧义，用 regex 兜
-    newer_hit = any(w in query for w in NEWER_WORDS) or bool(re.search(r"更新更(?:便宜|贵|新|旧)", query))
-    rels = [k for k, hit in (("cheaper", any(w in query for w in CHEAPER_WORDS)),
-                             ("pricier", any(w in query for w in PRICIER_WORDS)),
-                             ("newer", newer_hit),
-                             ("older", any(w in query for w in OLDER_WORDS))) if hit]
-    if rels:
-        prev = get_last_recommend(session_id)
-        if not prev:
-            return None
-        field = "publish_date" if _REL_SPEC[rels[0]][0] == "publish" else "price"
-        got = _relative_slice(prev, _search_global(field, False, field), rels)
-        if not got:
-            return _rel_none_msg(rels)
-        save_recommend(session_id, got)
-        return format_models(got, _rel_header(rels))
-
-    return None
-
-
-def _search_global(sort_key: str = "price", reverse: bool = False, require_field: str = "price"):
-    """全局枚举所有型号并按指定字段排序（价格升序 / 发布时间倒序等）。"""
-    from tools.metadata_extractor import enumerate_models
-    models = enumerate_models({"file_name": {"$ne": "__never__"}}, require_field=require_field)
-    default = "" if sort_key == "publish_date" else 0
-    models.sort(key=lambda m: m.get(sort_key) or default, reverse=reverse)
-    return models

@@ -163,9 +163,9 @@ FIND_MODELS_TOOL_SCHEMA = {
                 },
                 "scope": {
                     "type": "array",
-                    "items": {"type": "string", "enum": ["prev", "cheaper", "pricier", "newer", "older"]},
+                    "items": {"type": "string", "enum": ["cheaper", "pricier", "newer", "older"]},
                     "description": (
-                        "筛选范围（默认全库，填空数组）：prev=只在上一轮推荐结果内；"
+                        "相对上一轮推荐结果的筛选（默认全库，填空数组）："
                         "cheaper/pricier=比上一轮最便宜/最贵的还便宜/还贵；newer/older=比上一轮最新/最旧的还新/还旧。"
                         "相对维度**可多选，同时满足**（「更新更便宜的」→ [\"newer\",\"cheaper\"]）；排序由系统固定。"
                     ),
@@ -196,12 +196,13 @@ def _param_num_of(record: Dict, key: str):
     return record.get(f"param_{key}_num")
 
 
-# 相对上一轮展示边界的筛选：scope -> (取值字段, 边界函数, 比较方向, 固定排序键, 降序?)
-_SCOPE_RELATIVE = {
-    "cheaper": ("price", min, "lt", "参考价", "desc"),
-    "pricier": ("price", max, "gt", "参考价", "asc"),
-    "newer": ("publish", max, "gt", "发布时间", "asc"),
-    "older": ("publish", min, "lt", "发布时间", "desc"),
+# 相对上一轮展示边界：scope -> (记录字段, 边界函数, 比较方向, 展示名, 降序?)
+# field 用真实记录字段，followup / find_models / 格式化共用一套语义。
+RELATIVE_SPEC = {
+    "cheaper": ("price", min, "lt", "参考价", True),
+    "pricier": ("price", max, "gt", "参考价", False),
+    "newer": ("publish_date", max, "gt", "发布时间", False),
+    "older": ("publish_date", min, "lt", "发布时间", True),
 }
 
 
@@ -212,7 +213,7 @@ def _bound_value(record: Dict, field: str) -> int:
 
 def _filter_relative(models: List[Dict], prev_models, scope: str) -> List[Dict]:
     """按 scope 过滤出越过上一轮展示边界的型号（更便宜/更贵/更新/更旧）。"""
-    field, pick, op, _key, _desc = _SCOPE_RELATIVE[scope]
+    field, pick, op, _label, _desc = RELATIVE_SPEC[scope]
     edges = [_bound_value(m, field) for m in (prev_models or [])]
     edges = [e for e in edges if e]
     if not edges:
@@ -221,6 +222,20 @@ def _filter_relative(models: List[Dict], prev_models, scope: str) -> List[Dict]:
     return [m for m in models
             if _bound_value(m, field) and
             (_bound_value(m, field) < edge if op == "lt" else _bound_value(m, field) > edge)]
+
+
+def filter_by_relative(models: List[Dict], prev_models, rels) -> List[Dict]:
+    """按相对维度过滤并排序：先同时满足所有维度，再按第一个维度取“离边界最近”。
+
+    followup 和 find_models 共用这里；调用方只负责把 rels 解析成有序列表。
+    """
+    rels = [r for r in (rels or []) if r in RELATIVE_SPEC]
+    for rel in rels:
+        models = _filter_relative(models, prev_models, rel)
+    if not rels or not models:
+        return []
+    field, _pick, _op, _label, desc = RELATIVE_SPEC[rels[0]]
+    return sorted(models, key=lambda m: _bound_value(m, field), reverse=desc)
 
 
 def _scope_list(scope) -> List[str]:
@@ -234,7 +249,7 @@ def _scope_list(scope) -> List[str]:
 
 def _relative_scopes(scope) -> List[str]:
     """scope 里的相对维度（可多选，同时满足）。"""
-    return [s for s in _scope_list(scope) if s in _SCOPE_RELATIVE]
+    return [s for s in _scope_list(scope) if s in RELATIVE_SPEC]
 
 
 def _sort_value_of(record: Dict, sort_by: str) -> float:
@@ -329,7 +344,7 @@ def build_constraints(args: Dict, query: str = "") -> tuple:
     raw_scopes = _scope_list(args.get("scope"))
     scopes = []
     for scope in raw_scopes:
-        if scope in _SCOPE_RELATIVE or scope in ("prev", "last"):
+        if scope in RELATIVE_SPEC:
             scopes.append(scope)
         else:
             _drop(dropped, notes, "scope", "unknown %r" % (scope,))
@@ -454,16 +469,10 @@ def find_models(constraints: ModelQueryConstraints,
     """按已校验的 ModelQueryConstraints 执行筛选 → 排序 → limit。"""
     models = all_records()
 
-    scopes = list(constraints.scope)
-    rels = [s for s in scopes if s in _SCOPE_RELATIVE]
+    rels = [s for s in constraints.scope if s in RELATIVE_SPEC]
     if rels:
         # 多维度同时满足：「更新更便宜的」= 比上一轮更新 且 更便宜
-        for rel in rels:
-            models = _filter_relative(models, prev_models, rel)
-    elif any(s in ("prev", "last") for s in scopes):
-        # 只在上一轮结果内；上一轮可能来自规则路径（记录不带 param_*）→ 按型号名回填完整记录
-        by_name = {m.get("name"): m for m in models}
-        models = [by_name.get(m.get("name"), m) for m in (prev_models or [])]
+        models = filter_by_relative(models, prev_models, rels)
 
     if constraints.budget is not None:
         if constraints.budget.min is not None:
@@ -602,7 +611,8 @@ def validate_find_models_args(query: str, args: Dict) -> tuple:
     # 相对维度（更便宜/更贵/更新/更旧）的排序由规则固定：最接近上一轮边界的优先；多维度取第一个
     _rels = _relative_scopes(args.get("scope"))
     if _rels:
-        want_key, want_order = _SCOPE_RELATIVE[_rels[0]][3], _SCOPE_RELATIVE[_rels[0]][4]
+        spec = RELATIVE_SPEC[_rels[0]]
+        want_key, want_order = spec[3], "desc" if spec[4] else "asc"
         if (args.get("sort_by") or want_key) != want_key or (args.get("order") or want_order) != want_order:
             notes.append("scope=%s：排序已按「%s + %s」处理" % ("+".join(_rels), want_key, want_order))
         args["sort_by"], args["order"] = want_key, want_order
@@ -625,11 +635,3 @@ def _is_number(value: str) -> bool:
         return True
     except (TypeError, ValueError):
         return False
-
-
-def run_find_models(query: str, args: Dict, prev_models: "List[Dict] | None" = None) -> tuple:
-    """工具层入口：先按原话校验纠正，再执行。返回 (型号列表, 说明)。
-    """
-    fresh, notes = validate_find_models_args(query, args)
-    result = find_models_result(fresh, prev_models)
-    return result.models, notes + result.notes

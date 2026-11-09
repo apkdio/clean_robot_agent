@@ -3,6 +3,7 @@
 from sops.base import register, is_aftersales
 from config.word_dict_config import SYMPTOM_MAP, REPAIR_TRIGGER, REPAIR_WEAK_TRIGGER
 
+from tools.dto.sop import ExtractResult
 from tools.llm_tool import get_small_model_name
 from tools.log_tool import get_logger
 from tools import trace_store
@@ -10,18 +11,21 @@ from tools import trace_store
 # 故障现象兜底用的小模型（默认 3b 更快；精度不够可在 agent.yaml 调 llm.small_model）
 logger = get_logger(name="repair_sop")
 
-def _extract_symptom(text: str, slots: dict):
+def _extract_symptom(text: str, _slots: dict):
     """从用户描述提取故障现象，映射成标准检索 query。
 
     规则（关键词）优先；规则 miss 时用 3b function calling 兜底归类口语故障。
+    trace 只以 extra["trace"] 描述，由 base 统一写入。
     """
     # 1. 关键词规则
     for kw, query in SYMPTOM_MAP.items():
         if kw in text:
             logger.info(f"[Repair] symptom {kw}: {query}")
-            trace_store.node("sop.symptom", in_={"text": text[:40]},
-                             out={"query": query, "via": "rule", "kw": kw})
-            return query
+            return ExtractResult("done", query, extra={"trace": {
+                "node": "sop.symptom",
+                "in": {"text": text[:40]},
+                "out": {"query": query, "via": "rule", "kw": kw},
+            }})
     logger.warning("[Repair] Keyword match failed! Using LLM to match!")
 
     # 2. LLM function calling 兜底
@@ -41,21 +45,24 @@ def _extract_symptom(text: str, slots: dict):
             query = symptom_id_to_query(args)
             if query:
                 logger.info(f"[Repair] LLM modify query: {query}")
-                trace_store.node("sop.symptom", in_={"text": text[:40]},
-                                 out={"query": query, "via": "llm",
-                                      "symptom_id": (args or {}).get("symptom_id")})
-                return query
+                return ExtractResult("done", query, extra={"trace": {
+                    "node": "sop.symptom",
+                    "in": {"text": text[:40]},
+                    "out": {"query": query, "via": "llm",
+                            "symptom_id": (args or {}).get("symptom_id")},
+                }})
             logger.warning("[Repair] LLM modify query failed!")
     except Exception as e:
         logger.warning("[Repair] symptom tool calling failed: %s", e)
     # 两条路都没命中：也留一条，便于区分「词表没覆盖」与「模型归类错」
-    trace_store.node("sop.symptom", status="miss", in_={"text": text[:40]})
-    return None
+    return ExtractResult("fail", reason="no_symptom", extra={"trace": {
+        "node": "sop.symptom", "status": "miss", "in": {"text": text[:40]},
+    }})
 
 
 def _search_and_generate(slots: dict):
     """按现象检索故障条目，交给 LLM 生成排查步骤。"""
-    query = str(slots.get("symptom"))
+    query = str(slots.get("symptom") or "").strip()
     if not query:
         return {"answer": "抱歉，没识别出具体故障现象，你可以换个说法再描述一下～"}
 
@@ -94,6 +101,7 @@ def _search_and_generate(slots: dict):
 # 槽位形如 {"symptom": xxx}（检索用的标准说法）；action 返回 {"answer": xxx}
 REPAIR_SOP = {
     "id": "repair",
+    "name": "故障排查",
     "trigger": REPAIR_TRIGGER,
     "enter_confirm": "always",
     # 只说「维修/故障/坏了」这类泛问时，先进「进入确认门」问一句（与选购 SOP 同一机制）

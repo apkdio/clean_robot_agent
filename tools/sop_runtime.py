@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from config.word_dict_config import EXIT_WORDS, SOP_NAMES
+from config.word_dict_config import EXIT_WORDS
 from tools import pending_store, trace_store
 from tools.log_tool import get_logger
 from tools.turn_recorder import log_behavior
@@ -14,7 +14,9 @@ _EXIT_RESIDUE_RE = re.compile(r"[\s，,。.、！!？?~～…·「」【】（�
 
 
 def sop_name(sop_id: str) -> str:
-    return SOP_NAMES.get(sop_id, "当前")
+    """薄转发到 sops.base，避免运行时和 SOP 定义各维护一份名称表。"""
+    from sops.base import sop_name as _sop_name
+    return _sop_name(sop_id)
 
 
 def is_symbols_only(query: str) -> bool:

@@ -203,8 +203,7 @@ def format_constraints(constraints: ModelQueryConstraints) -> str:
     for cond in constraints.params:
         parts.append("%s %s %s" % (cond.key, cond.op, cond.value))
     if constraints.scope:
-        labels = {"cheaper": "更便宜", "pricier": "更贵", "newer": "更新",
-                  "older": "更旧", "prev": "上一轮结果", "last": "上一轮结果"}
+        labels = {"cheaper": "更便宜", "pricier": "更贵", "newer": "更新", "older": "更旧"}
         parts.extend(labels.get(s, s) for s in constraints.scope)
     if constraints.tags:
         parts.extend((TAG_CATALOG.get(t) or {}).get("label", t) for t in constraints.tags)

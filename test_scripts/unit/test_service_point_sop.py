@@ -146,6 +146,28 @@ def test_garbage_then_retry_then_city():
 # 引擎新增能力：条件步骤（when）+ 话术占位
 # ──────────────────────────────────────────────────────────────
 
+def test_extract_city_is_pure_and_failure_writes_nothing():
+    """城市 extractor 不碰 slots：成功时候选只放 extra，失败时不留半截状态。"""
+    _cleanup()
+    restore = _stub_geo({"上海": _SHANGHAI})
+    sp._extract_city_by_llm = lambda text: []
+    try:
+        slots = {}
+        result = sp._extract_city("上海", slots)
+        _assert_eq(result.kind, "done", "识别成功")
+        _assert_eq(result.value, "上海市", "返回城市名")
+        _assert_eq(slots, {}, "extractor 不直接写 slots")
+        _assert_eq((result.extra or {}).get("candidates"), _SHANGHAI, "候选放在 extra")
+
+        slots = {}
+        failed = sp._extract_city("不知道", slots)
+        _assert_eq(failed.kind, "fail", "识别失败")
+        _assert_eq(slots, {}, "失败不写半截候选")
+    finally:
+        restore()
+        _cleanup()
+
+
 def test_when_skips_step_and_formats_ask():
     _cleanup()
     sops.base.register({
@@ -198,6 +220,7 @@ TESTS = [
     test_unique_city_one_turn,
     test_ambiguous_then_pick,
     test_garbage_then_retry_then_city,
+    test_extract_city_is_pure_and_failure_writes_nothing,
     test_when_skips_step_and_formats_ask,
     test_guard_only_vetoes_its_own_sop,
 ]
