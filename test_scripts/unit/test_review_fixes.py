@@ -44,7 +44,7 @@ def test_redis_missing_package_degrades():
 
 def test_date_gate_needs_select_signal():
     from config.word_dict_config import DATE_SELECT_HINT_RE
-    from function_tools.date_tool import build_date_filter
+    from tools.date_rules import build_date_filter
     from tools.model_query import resolve_date_range
 
     def _resolve_date_filter(query):

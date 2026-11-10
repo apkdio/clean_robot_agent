@@ -136,13 +136,13 @@ def test_repair_empty_reply_falls_back():
 def test_symptom_maps_in_sync():
     """两张症状表 + 工具 description 必须同步（v2.4 加「水痕/水印」时漏过一次）。"""
     from config.word_dict_config import SYMPTOM_MAP, SYMPTOM_QUERY_MAP
-    from function_tools.symptom_tool import SYMPTOM_TOOL_SCHEMA
+    from function_tools.schemas import EXTRACT_SYMPTOM_SCHEMA
     a, b = set(SYMPTOM_MAP.values()), set(SYMPTOM_QUERY_MAP.values())
     _assert_eq(sorted(a - b), [], "这些标准问句只在口语词表里 → LLM 兜底永远选不到")
     _assert_eq(sorted(b - a), [], "这些标准问句只在工具闭集里 → 规则侧没有对应口语词")
     ids = sorted(SYMPTOM_QUERY_MAP)
     _assert_eq(ids, list(range(1, len(ids) + 1)), "闭集 id 从 1 连续编号")
-    desc = SYMPTOM_TOOL_SCHEMA["function"]["description"]
+    desc = EXTRACT_SYMPTOM_SCHEMA["function"]["description"]
     missing = [i for i in ids if ("%d=" % i) not in desc]
     _assert_eq(missing, [], "这些编号没写进工具 description → 模型看不见这个选项")
 

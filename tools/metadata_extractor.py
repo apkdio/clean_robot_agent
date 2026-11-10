@@ -23,7 +23,7 @@ from config.word_dict_config import (
     SPEC_SKIP_KEYS as _SPEC_SKIP_KEYS,
     TAG_CATALOG as _TAG_CATALOG,
 )
-from function_tools.date_tool import publish_int
+from tools.date_rules import publish_int
 from tools.llm_tool import get_small_model_name
 from tools.log_tool import get_logger
 
@@ -444,6 +444,25 @@ def _range_to_filter(low: Optional[int], high: Optional[int]) -> Optional[Dict]:
     return conditions[0] if len(conditions) == 1 else {"$and": conditions}
 
 
+def budget_args_to_range(args: Dict) -> Optional[tuple]:
+    """把 LLM 返回的 {budget_max} 转成 (None, max)；无效预算返回 None。"""
+    if not args:
+        return None
+
+    max_val = args.get("budget_max")
+    if max_val is None:
+        return None
+
+    try:
+        max_val = int(max_val)
+    except (TypeError, ValueError):
+        return None
+
+    if max_val <= 0:
+        return None
+    return None, max_val
+
+
 def resolve_budget_range(query: str, allow_llm: bool = True) -> Optional[tuple]:
     """预算表达 → (min, max)；规则优先，必要时 LLM 兜底。"""
     c = extract_price_constraint(query)
@@ -451,27 +470,9 @@ def resolve_budget_range(query: str, allow_llm: bool = True) -> Optional[tuple]:
         return c
     if not allow_llm or not _BUDGET_HINT_RE.search(query):
         return None
+    from tools.llm_extract import extract_budget_range
 
-    try:
-        from function_tools.budget_tool import BUDGET_TOOL_SCHEMA, budget_args_to_range
-        from tools.llm_tool import chat_with_tools
-        from langchain_core.messages import HumanMessage
-        resp = chat_with_tools(
-            [HumanMessage(content=query)],
-            [BUDGET_TOOL_SCHEMA],
-            model=get_small_model_name(),
-        )
-        tool_calls = getattr(resp, "tool_calls", None) or []
-        if tool_calls:
-            tc = tool_calls[0]
-            args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
-            rng = budget_args_to_range(args)
-            if rng is not None:
-                logger.info("[Budget] resolved via LLM tool: %s", args)
-                return rng
-    except Exception as e:
-        logger.warning("[Budget] tool calling failed: %s", e)
-    return None
+    return extract_budget_range(query)
 
 
 def resolve_budget_filter(query: str, allow_llm: bool = True) -> Optional[Dict]:

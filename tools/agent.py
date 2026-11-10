@@ -49,7 +49,6 @@ from tools.domain_router import (
     domain_filter as _domain_filter,
     route_domain as _route_domain,
 )
-from tools import turn_recorder
 from tools.dto.executor import NotMine, Reply
 from tools.dto.request import ChatRequest
 from tools.dto.stage import Continue, Finish, StageOutcome
@@ -120,7 +119,7 @@ def _ctx_cfg() -> dict:
 
 def _resolve_date_filter(query: str) -> dict | None:
     """兼容读侧/评测的日期 filter 适配器；日期解析与守卫在 model_query。"""
-    from function_tools.date_tool import build_date_filter
+    from tools.date_rules import build_date_filter
     from tools.model_query import resolve_date_range
 
     r = resolve_date_range(query)
@@ -450,7 +449,6 @@ def _stage_retrieve(ctx: TurnContext) -> StageOutcome:
         return Finish(text="")
     hr = _get_retriever()
     search_query = (handoff.query or ctx.q) if handoff else ctx.q
-    turn_recorder.shadow_probe(search_query, ctx.session_id, "kb_search", "RAG 检索")
 
     t0 = time.perf_counter()
     if handoff:

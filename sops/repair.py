@@ -10,7 +10,6 @@ from config.word_dict_config import (
 
 from tools.dto.handoff import Handoff
 from tools.dto.sop import ExtractResult
-from tools.llm_tool import get_small_model_name
 from tools.log_tool import get_logger
 
 # 故障现象兜底用的小模型（默认 3b 更快；精度不够可在 agent.yaml 调 llm.small_model）
@@ -35,28 +34,17 @@ def _extract_symptom(text: str, _slots: dict):
 
     # 2. LLM function calling 兜底
     try:
-        from function_tools.symptom_tool import SYMPTOM_TOOL_SCHEMA, symptom_id_to_query
-        from tools.llm_tool import chat_with_tools
-        from langchain_core.messages import HumanMessage
-        resp = chat_with_tools(
-            [HumanMessage(content=text)],
-            [SYMPTOM_TOOL_SCHEMA],
-            model=get_small_model_name(),
-        )
-        tool_calls = getattr(resp, "tool_calls", None) or []
-        if tool_calls:
-            tc = tool_calls[0]
-            args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
-            query = symptom_id_to_query(args)
-            if query:
-                logger.info(f"[Repair] LLM modify query: {query}")
-                return ExtractResult("done", query, extra={"trace": {
-                    "node": "sop.symptom",
-                    "in": {"text": text[:40]},
-                    "out": {"query": query, "via": "llm",
-                            "symptom_id": (args or {}).get("symptom_id")},
-                }})
-            logger.warning("[Repair] LLM modify query failed!")
+        from tools.llm_extract import classify_symptom
+
+        query = classify_symptom(text)
+        if query:
+            logger.info(f"[Repair] LLM modify query: {query}")
+            return ExtractResult("done", query, extra={"trace": {
+                "node": "sop.symptom",
+                "in": {"text": text[:40]},
+                "out": {"query": query, "via": "llm"},
+            }})
+        logger.warning("[Repair] LLM modify query failed!")
     except Exception as e:
         logger.warning("[Repair] symptom tool calling failed: %s", e)
     # 两条路都没命中：也留一条，便于区分「词表没覆盖」与「模型归类错」

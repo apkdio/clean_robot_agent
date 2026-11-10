@@ -187,30 +187,6 @@ def calc_date_range(expression: str) -> dict:
     return {"start_date": r[0], "end_date": r[1], "expression": expression}
 
 
-DATE_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "calc_date_range",
-        "description": (
-            "把用户话里的日期表达换算成具体日期范围。"
-            "支持绝对日期（「2025年三月」「2025年3月」「2025年」）和相对日期"
-            "（「最近半年」「近三个月」「今年」「去年」）。"
-            "只应在用户询问某时间段内发布/上市的产品时调用。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "expression": {
-                    "type": "string",
-                    "description": "用户话里的日期表达，如：2025年三月、2025年3月、最近半年、今年、去年",
-                }
-            },
-            "required": ["expression"],
-        },
-    },
-}
-
-
 def publish_int(value) -> int:
     """任意日期表达 → int YYYYMMDD；无法解析返回 0。
 

@@ -100,20 +100,6 @@ def test_accepted_branches_cover_mapping():
         _assert_in(beh, ctx_eval._ACCEPTED_BRANCHES.get(beh, set()), f"{tag} → {beh} 自我接受")
 
 
-def test_disable_shadow_restores():
-    """评测隔离：跑用例期间影子探针被替掉，跑完能原样放回（否则污染同进程的后继模块）。"""
-    from tools import op_executors, turn_recorder
-
-    _assert(not hasattr(op_executors, "shadow_probe"),
-            "执行体走 turn_recorder.shadow_probe 模块调用，不持有直接绑定")
-    original = turn_recorder.shadow_probe
-    restore = disable_shadow()
-    _assert_true(turn_recorder.shadow_probe is not original, "关闭后探针被替换成空操作")
-    _assert(turn_recorder.shadow_probe("q", "sid", "kb_search") is None, "被替换的探针不做事")
-    restore()
-    _assert_true(turn_recorder.shadow_probe is original, "复原回调把原探针放回去")
-
-
 def test_isolation_and_import_convention():
     """导入侧的隐性坑：测试隔离目录真的生效、项目模块不再出现裸名实例。"""
     import tools.context_store as tc
@@ -425,7 +411,7 @@ def test_trace_nesting():
         trace_store.note_behavior("retrieve_answer", {"hits": 2})
 
     rec = run("tracetest-layer-a", fill_answer)
-    for block in ("route", "path", "retrieval", "sop", "sop_gate", "shadow", "answer"):
+    for block in ("route", "path", "retrieval", "sop", "sop_gate", "answer"):
         _assert_in(block, rec, f"分层块「{block}」在（读侧按存在性取）")
     _assert_true(isinstance(rec["path"], list) and isinstance(rec["route"], dict),
                  "route 是 dict、path 是有序列表")
@@ -465,7 +451,7 @@ def test_trace_nesting():
         elif isinstance(obj, str):
             yield path, obj
 
-    nested = {k: rec[k] for k in ("route", "path", "retrieval", "sop", "sop_gate", "shadow", "answer")}
+    nested = {k: rec[k] for k in ("route", "path", "retrieval", "sop", "sop_gate", "answer")}
     prose = [(p, s[:20]) for p, s in strings(nested)
              if len(s) > 200 and not p.endswith((".query", ".effective_query"))]
     _assert_eq(prose, [], "分层块里没有长文本：散文不进记录，人话由读侧渲染")
@@ -942,7 +928,6 @@ TESTS = [
     test_check_case_ignores_text_asserts,
     test_check_case_soft_branch_hint,
     test_accepted_branches_cover_mapping,
-    test_disable_shadow_restores,
     test_isolation_and_import_convention,
     test_trace_record_schema,
     test_trace_nested_facts_are_json_strings,

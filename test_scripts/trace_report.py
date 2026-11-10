@@ -719,7 +719,8 @@ def main() -> None:
     ap.add_argument("--session", help="会话 id（= logs/trace 下的目录名，如 abc12345-……）")
     ap.add_argument("--list", action="store_true", help="列出该日期下有 trace 的会话")
     ap.add_argument("--chunks", action="store_true", help="看该会话每轮召回的片段全文（.<kind>.chunks.jsonl）")
-    ap.add_argument("--shadow", action="store_true", help="看该会话的影子决策对照（.shadow.jsonl）")
+    ap.add_argument("--shadow", action="store_true",
+                    help="看历史影子决策对照（.shadow.jsonl，主链已不再产生）")
     ap.add_argument("--feedback", action="store_true", help="看该会话的用户评价（.feedback.jsonl）")
     ap.add_argument("--date", default=None,
                     help="只看某天（YYYY-MM-DD）；默认：--list 看今天，--session 看全部")

@@ -868,16 +868,9 @@ def run():
         _assert(True, f"子集命中用例：{subset_desc}")
         print(f"  [子集] {subset_desc}")
 
-    # 影子探针在这条轨上是纯开销：多跑一次 FC（实测每轮 +75~125s），且它只落日志、不改被测行为。
-    # 跑用例期间关掉，算力让给被测主链路；跑完即恢复（run_tests 同进程还会跑后面的模块）。
-    restore_shadow = disable_shadow()
-    print("  [隔离] 影子探针已关闭：算力让给被测主链路（见 _runner.disable_shadow）")
     results = []
-    try:
-        for row in rows:
-            results.extend(_run_row(row))
-    finally:
-        restore_shadow()
+    for row in rows:
+        results.extend(_run_row(row))
 
     _print_detail(results)
 

@@ -11,35 +11,7 @@ import json
 from math import atan2, cos, radians, sin, sqrt
 from typing import Dict, List, Optional, Tuple
 
-from tools.llm_tool import get_chat_model_name
-
-# 提取城市/地点跟随主生成模型（string 参数 + 口语地点，3b 不稳定，同 model_tool）
-def service_point_tool_model() -> str:
-    return get_chat_model_name()
-
 _SERVICE_POINTS_FILE = "data/service_point/service_points.json"
-
-
-SERVICE_POINT_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "find_nearest_service_point",
-        "description": (
-            "从用户话里提取城市或区名（如「上海」「北京」「浦东」），用于查询附近售后网点。"
-            "没有明确地点时返回空字符串。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "location": {
-                    "type": "string",
-                    "description": "城市或区名（如「上海」「浦东」）；无地点返回空字符串",
-                },
-            },
-            "required": ["location"],
-        },
-    },
-}
 
 
 def haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:

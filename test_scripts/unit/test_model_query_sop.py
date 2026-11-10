@@ -346,7 +346,7 @@ def test_full_flow():
 # ──────────────────────────────────────────────────────────────
 
 def test_extract_budget_bare_number():
-    from sops.model_query import _extract_budget
+    from sops.model_query_sop import _extract_budget
     _assert_eq(_extract_budget("800块以内", {}).value, (None, 800), "带量词照旧走通用解析")
     _assert_eq(_extract_budget("2000左右", {}).kind, "done", "区间照旧走通用解析")
     _assert_eq(_extract_budget("800", {}).value, (None, 800), "纯数字短答按上限收（BC-20261015-03）")
@@ -357,7 +357,7 @@ def test_extract_budget_bare_number():
 
 def test_result_reply():
     from config.word_dict_config import MODEL_QUERY_EMPTY_REPLIES
-    from sops.model_query import MODEL_QUERY_SOP
+    from sops.model_query_sop import MODEL_QUERY_SOP
     reply = MODEL_QUERY_SOP["steps"][-1]["template"]
     full = reply({"count": 2, "list": "- A\n- B"})
     _assert("在您选择的条件内" in full and "对比其中两款" in full, "有结果时给出列表并追问对比")
@@ -369,7 +369,7 @@ def test_result_reply():
 
 def test_search_rejects_malformed_slots():
     """预算/时间槽形状不对或重试耗尽时，不能静默按无条件筛选。"""
-    import sops.model_query as mq
+    import sops.model_query_sop as mq
     from config.word_dict_config import MODEL_QUERY_CONSTRAINT_RETRY_REPLY
 
     from tools.dto.model_query import FindModelsResult, ModelQueryConstraints

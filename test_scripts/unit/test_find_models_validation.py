@@ -18,7 +18,7 @@ _FAKE = [
 
 
 def _with_fake(fn):
-    import function_tools.model_tool as mt
+    import tools.model_catalog as mt
     orig = mt.all_records
     mt.all_records = lambda: _FAKE
     try:
@@ -28,12 +28,12 @@ def _with_fake(fn):
 
 
 def _run(args):
-    import function_tools.model_tool as mt
+    import tools.model_catalog as mt
     return _with_fake(lambda: mt.find_models_result(args))
 
 
 def test_valid_and_compat_entry():
-    import function_tools.model_tool as mt
+    import tools.model_catalog as mt
     result = _run({"budget_min": 1500, "budget_max": 2000})
     _assert_eq([m["name"] for m in result.models], ["B"], "合法预算正常筛选")
     _assert_eq(result.dropped, [], "合法参数无 dropped")

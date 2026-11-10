@@ -80,7 +80,7 @@ def test_build_records_skips_non_models_and_sorts():
 def test_warm_cache_does_not_touch_chroma():
     from tools import models_repo as mr
     import tools.vector_store as vs
-    from function_tools.model_tool import find_models_by_args
+    from tools.model_catalog import find_models_by_args
 
     saved_cache = dict(mr._cache)
     saved_search = vs.search_by_filter

@@ -13,7 +13,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
 from test_scripts._runner import *
 import sops  # 触发各 SOP 注册
 import sops.base
-import function_tools.service_point_tool as spt
+import tools.service_point as spt
 from sops import service_point as sp
 
 _CAND = [

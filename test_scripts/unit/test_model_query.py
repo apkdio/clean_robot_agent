@@ -10,7 +10,7 @@ from test_scripts._runner import *
 from tools.model_query import (ModelQueryResult, format_model_query, parse_budget, parse_publish,
                                resolve_model_constraints, resolve_model_query)
 from tools.dto.model_query import ModelQueryConstraints
-from function_tools.date_tool import publish_int
+from tools.date_rules import publish_int
 
 
 def _publish_int(model):
@@ -81,7 +81,7 @@ def test_no_match_falls_back():
 
 
 def test_internal_publish_range():
-    from function_tools.model_tool import find_models_by_args
+    from tools.model_catalog import find_models_by_args
     models = find_models_by_args({"publish_start": "2025-01-01",
                                   "publish_end": "2025-12-31", "limit": 50})
     _assert(models, "内部日期区间可用")

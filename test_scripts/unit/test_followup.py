@@ -8,8 +8,8 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
 
 from test_scripts._runner import *
 
-import function_tools.model_tool as mt
-from function_tools.model_tool import filter_by_relative
+import tools.model_catalog as mt
+from tools.model_catalog import filter_by_relative
 from tools import followup as f
 
 _FAKE = [

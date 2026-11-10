@@ -21,7 +21,7 @@ logger = get_logger(name="trace_store")
 TRACE_VERSION = 4
 # 轮次记录（主干）的 schema 版本；落盘字段名仍是 v，靠所在文件区分是谁的版本。结构见 notes/TRACE.md。
 # 本轮记录 = 稳定核 {v, ts, session_id, turn_index, query, retry, tag, tags, detail, aborted, error}
-#   + 事实块 {route, branch, path, retrieval, sop, sop_gate, shadow, answer} + ms
+#   + 事实块 {route, branch, path, retrieval, sop, sop_gate, answer} + ms
 
 _local = threading.local()   # 当前线程正在处理的那一轮（ask_stream 的 wrapper 开/收）
 _t0 = threading.local()      # 本轮起点，只用于算 ms.total
@@ -140,7 +140,6 @@ def begin_turn(session_id: str, query: str, retry: bool = None) -> None:
             "retrieval": {},
             "sop": {},
             "sop_gate": {},
-            "shadow": {},
             "answer": {},
             "span_seq": 0,
             "span_stack": [],
@@ -156,7 +155,7 @@ def begin_turn(session_id: str, query: str, retry: bool = None) -> None:
 
 
 # step() 的已知环节；新增 key 必须在这里登记，否则只能留下散字段。
-_STEP_NAMES = {"intent", "rewrite", "retrieve", "generate", "sop", "sop_gate", "shadow"}
+_STEP_NAMES = {"intent", "rewrite", "retrieve", "generate", "sop", "sop_gate"}
 
 
 def _apply_step(turn: dict, name: str, fields: dict) -> None:
@@ -197,9 +196,6 @@ def _apply_step(turn: dict, name: str, fields: dict) -> None:
         turn["sop_gate"].update(_scalars(fields))
         node("sop.gate", status="skipped", by=fields.get("skipped"),
              in_={"sop": fields.get("sop")})
-    elif name == "shadow":
-        turn["shadow"] = {"chain": fields.get("chain"),
-                          "evidence": {"file": fields.get("log")}}
     else:
         logger.warning("[Trace] step '%s' 未登记：只记事件，不写事实块", name)
 
@@ -574,5 +570,3 @@ def _finalize(turn: dict, reply: str) -> None:
                                  "parent": _current_parent(turn),
                                  "node": "retrieve", "kind": "step",
                                  "status": "skipped", "by": turn["branch"]})
-        if not turn.get("shadow"):
-            turn["shadow"] = {"status": "skipped", "by": turn["branch"]}

@@ -63,25 +63,19 @@ clean_robot_agent/
 ├── prompts/                     # Prompt 完整模板（主系统提示 + 各链路模板）
 ├── repo/trace/                  # trace 存储实现（paths / write / read / sidecar）
 ├── tools/                       # 核心工具模块（详见下节）
-├── function_tools/              # LLM 工具调用（function calling）工具
-│   ├── date_tool.py             # 日期计算工具（绝对/相对日期 → 日期范围）
-│   ├── budget_tool.py           # 预算提取工具（规则 miss 时 function calling 兜底）
-│   ├── symptom_tool.py          # 故障现象分类工具（规则 miss 时 function calling 兜底）
-│   ├── model_tool.py            # 型号工具：提取型号名 + find_models 按预算/参数/排序筛选型号
-│   ├── kb_tool.py               # 知识库检索工具（search_kb：自足检索式 + 可选知识域）
-│   ├── service_point_tool.py    # 售后网点工具（geonamescache 离线解析城市 + Haversine 距离）
-│   └── registry.py              # 工具注册中心（对外暴露的工具白名单 + 编排开关读取）
+├── function_tools/              # 只放 tool schema
+│   └── schemas.py               # 主链单次抽取 schema（型号名/日期/预算/症状/城市）
 ├── sops/                        # SOP 标准操作流程（多轮引导）
 │   ├── base.py                  # 会话状态（按 session_id 隔离，带定义指纹）+ 执行器 + 注册/匹配/进入门
 │   ├── sop_gate.py              # SOP 进入/退出确认门：注册澄清 handler
-│   ├── model_query.py           # 选购/型号查询 SOP（预算/系列/时间/标签补槽，承接推荐/买/预算入口）
+│   ├── model_query_sop.py       # 选购/型号查询 SOP（预算/系列/时间/标签补槽，承接推荐/买/预算入口）
 │   ├── repair.py                # 故障排查 SOP（症状确认 → handoff 到主链 retrieve，domain=repair）
 │   └── service_point.py         # 售后网点 SOP（问城市 → 重名选序号）
 ├── test_scripts/                # 测试与评测（run_tests.py 只聚合 eval/ 评测轨；unit/ 功能测试可单独运行）
 │   ├── run_tests.py             # 评测入口：python run_tests.py --e2e
 │   ├── _runner.py               # 共享断言/汇总/e2e 门控/测试数据隔离
 │   ├── trace_reader.py          # trace 读取层（文本视图与 HTML 报告共用）
-│   ├── trace_report.py          # 读 trace：按会话列出每轮走向（--list/--session/--chunks/--shadow/--feedback）；--html 出 HTML 报告（落 reports/<日期>/）
+│   ├── trace_report.py          # 读 trace：按会话列出每轮走向（--list/--session/--chunks/--feedback）；--html 出 HTML 报告（落 reports/<日期>/）
 │   ├── version_tool.py          # 版本中台：show/check/register-eval/bump-eval/diff-eval/archive-eval/export
 │   ├── migrate_baselines_v2.py  # 旧基线迁移：补 pinned / 升级 per_id
 │   ├── unit/                    # 功能测试（不进评测入口，文件可单独运行）
@@ -148,7 +142,6 @@ clean_robot_agent/
 | `operations.py` | 操作判别器：把"这一轮算哪个操作"（追问 / 型号详情 / 售后网点 / SOP 触发 / 型号筛选）从编排的 if 链里抽出来，变成可断言、可留痕的一次判定。6 个操作各配一组**关键句**，用稠密 + BM25 双路打分，主链路按**三段过滤**派发：分数过 `floor` → 词表/结构判据命中 → 前两名分差小于 `gap` 时问用户选哪个；判定与分数落 trace 的 `route.ops` |
 | `intent_router.py` | 意图分类：本地分类头（bge-m3 + Linear）判 robot/casual/other/unknown |
 | `query_normalizer.py` | query 入口归一化（纯规则、幂等）：标点 / 空格 / 全半角 / 同义词映射 |
-| `orchestrator.py` | 工具编排：让模型在工具白名单里做一次决策（选工具 + 填参数），**只出决策、不执行工具**；影子模式用于与现有链路对照并打日志 |
 | `hybrid_retriever.py` | 召回编排：dense + sparse → RRF 融合 → 精排 →（域内 top1 不过阈值时）撤域过滤二次全库召回 + 两池限额合并 → 截断 |
 | `vector_store.py` | Chroma 稠密检索、入库、metadata 过滤、稀疏索引构建 |
 | `sparse_retriever.py` | BM25 关键词检索（含 pickle 持久化缓存） |
@@ -157,8 +150,13 @@ clean_robot_agent/
 | `metadata_extractor.py` | 结构化元数据：价格提取、预算解析、发布时间提取、型号信息/标签抽取 |
 | `models_repo.py` | 型号记录唯一缓存：基础字段 + `param_*` + `tag_*`，去重合并与懒重建 |
 | `selection.py` | 序号解析：`parse_index` 统一「第/选/个/项/号」、中文数字、整串匹配与越界；`parse_multi_select` 建在它上面，只认序号与固定跳过命令 |
-| `model_query.py` | 模型查询业务：预算/日期/系列约束 → `find_models` → 结构化直出（不处理型号详情/追问） |
-| `followup.py` | 追问业务：全局最新/价格极值；相对上一轮边界（更便宜/更贵/更新/更旧）解析与筛选，过滤排序复用 `function_tools.model_tool.filter_by_relative` |
+| `model_query.py` | 模型查询业务：约束解析 → `find_models` → 结构化直出（不处理型号详情/追问） |
+| `llm_extract.py` | 主链单次 FC 抽取：日期 / 预算 / 型号名 / 症状 / 城市；只取 args，不承担流程 |
+| `model_catalog.py` | 型号目录能力：`find_models` 筛选/排序、参数校验、型号名检索 |
+| `date_rules.py` | 日期纯规则：解析、`publish_int`、Chroma 日期 filter |
+| `service_point.py` | 网点能力：城市解析、距离排序、格式化 |
+| `symptom_rules.py` | 故障编号 → 标准检索 query |
+| `followup.py` | 追问业务：全局最新/价格极值；相对上一轮边界（更便宜/更贵/更新/更旧）解析与筛选，过滤排序复用 `model_catalog.filter_by_relative` |
 | `answer_checker.py` | 答案校验：从 RAG 答案抽已知型号、带货币单位的金额、保修语境下的时长，到最终召回片段里做字面核对；用户原话里的实体豁免，目录外/带虚构后缀的型号记 `unchecked`；结果只记日志与 trace，不拦截流式输出 |
 | `entry_splitter.py` | 编号条目分块器（每个问答/型号一个 chunk） |
 | `hot_ingest.py` | 知识库热更新：定时扫描 + 增量入库 |
@@ -170,23 +168,24 @@ clean_robot_agent/
 | `redis_store.py` | Redis 连接封装 + 互斥锁（SET NX）+ 降级回退：无 Redis 时自动回退本地内存 |
 | `pending_store.py` | 统一澄清状态（SOP 进入/退出确认、操作澄清共用）：Redis `clarify:{sid}` + `clarify_ttl`（≥ `sop_ttl`），记录 `{biz, retry, state, data}`（`state` = 业务快照，如 SOP 的 step/slots），业务 id 隔离（`sop.enter` / `sop.exit` / `ops.clarify`），无 Redis 降级内存并校验时间戳；只存状态，不解析回答 |
 | `test_hooks.py` | **仅供测试/评测**的状态注入助手（danger 窗口 / 连续承接计数 / 活跃 SOP / 澄清状态）|
-| `trace_store.py` | 会话级 trace 的公共薄壳（实现拆在 `repo/trace/`）：每轮落一条结构化记录（`logs/trace/<日期>/<会话ID>_<日期>_<时间>/<同名>.jsonl`，先按日期分目录再按会话，best-effort 不影响对话，`TRACE_DIR` 可改落点）；记录与执行同构：进门判断、本轮唯一出口、有序节点（`stage.*` 阶段 span + 业务节点，含状态/耗时/进出事实）、两遍召回与各遍计数、最终候选的来源分布、SOP 动作链；同一会话目录下另有四份旁路文件：召回片段全文、影子决策、用户评价、执行事件流（`events.jsonl`，逐条追加用于崩溃复原） |
+| `trace_store.py` | 会话级 trace 的公共薄壳（实现拆在 `repo/trace/`）：每轮落一条结构化记录（`logs/trace/<日期>/<会话ID>_<日期>_<时间>/<同名>.jsonl`，先按日期分目录再按会话，best-effort 不影响对话，`TRACE_DIR` 可改落点）；记录与执行同构：进门判断、本轮唯一出口、有序节点（`stage.*` 阶段 span + 业务节点，含状态/耗时/进出事实）、两遍召回与各遍计数、最终候选的来源分布、SOP 动作链；同一会话目录下另有三份旁路文件：召回片段全文、用户评价、执行事件流（`events.jsonl`，逐条追加用于崩溃复原） |
 | `version_store.py` | 评测版本中台：代码/环境指纹、评测集账本（登记/升版/归档/快照）、`run_id`、run manifest 与 `diff-eval`；正式基线要求干净工作区 |
 
-> trace 读侧是一个脚本 `test_scripts/trace_report.py`：文本视图按会话列出每轮走向（`--chunks/--shadow/--feedback` 看旁路证据）；
+> trace 读侧是一个脚本 `test_scripts/trace_report.py`：文本视图按会话列出每轮走向（`--chunks/--feedback` 看旁路证据）；
 > 加 `--html` 则把某天渲染成一份自包含 HTML 报告（落 `reports/<日期>/`，`--out-dir` 换根目录、`--out` 给整路径）。
 
 ## 工具调用模块（function_tools/）
 
+`function_tools/` 只放 schema；LLM 调用、校验和纯规则都归主链对应模块。
+
 | 模块 | 职责 |
 |------|------|
-| `date_tool.py` | 日期计算工具：`calc_date_range` 把"最近半年""2025年三月"等表达换算成日期范围 |
-| `budget_tool.py` | 预算提取工具：规则 miss 时用 3b function calling 提取预算上限（"一千来块"等） |
-| `symptom_tool.py` | 故障分类工具：规则 miss 时用 3b function calling 归类口语故障（"奇怪的声音"等） |
-| `model_tool.py` | 型号工具：7b function calling 提取型号名（含上下文指代）后精准检索详情；`find_models` 支持按预算（传原话，规则解析方向与浮动）/ 规格参数 / 排序（规格、「参考价」、「发布时间」）/ **相对上一轮边界（更便宜·更贵·更新·更旧，可组合）** 筛选型号，并带参数校验（按用户原话纠正方向、剔除无效条件） |
-| `service_point_tool.py` | 售后网点工具：geonamescache 离线解析城市经纬度（中文名/重名候选）+ Haversine 距离排序 + 网点格式化 |
-| `kb_tool.py` | 知识库检索工具：`search_kb` 接自足检索式 + 可选知识域（域为软约束，域内置信度低时检索器会撤过滤并合并全库结果） |
-| `registry.py` | 工具注册中心：收敛对外暴露的工具白名单（型号筛选 / 知识库检索 / 售后网点），未知工具名直接报错 |
+| `function_tools/schemas.py` | 5 个主链抽取契约：`extract_models` / `calc_date_range` / `extract_budget` / `classify_symptom` / `extract_location` |
+| `tools/llm_extract.py` | 单次 FC 抽取：日期 / 预算 / 型号名 / 症状 / 城市，统一走 `llm_tool.call_tool_args()` |
+| `tools/date_rules.py` | 日期纯能力：`calc_date_range`、`publish_int`、`build_date_filter` |
+| `tools/service_point.py` | 网点能力：geonamescache 城市解析 + Haversine 距离排序 + 格式化 |
+| `tools/symptom_rules.py` | 故障编号 → 标准检索 query |
+| `tools/model_catalog.py` | 型号能力：`find_models` 筛选/排序、参数校验、型号名检索 |
 
 ## SOP 模块（sops/）
 
@@ -194,7 +193,7 @@ clean_robot_agent/
 |------|------|
 | `base.py` | SOP 基础设施：会话状态 + 执行器（ask/action/reply 三步式状态机）+ 注册/匹配/进入门。**会话状态带定义指纹**：代码改过 SOP 定义后，Redis 里的旧会话读时自动作废（不会拿旧下标续跑）；无 Redis 降级的内存态同样按 TTL 过期 |
 | `sop_gate.py` | SOP 进入/退出确认门：注册 `sop.enter` / `sop.exit` 澄清 handler；缺 `sop` 或状态对不上时显式作废，不默认进某条流程 |
-| `model_query.py` | 选购/型号查询 SOP：承接「推荐/买/预算」入口（含进入确认门与选购/售后/品牌 guards），收集预算、系列、发布时间与标签（养宠/静音/防缠绕等）→ `find_models` → 列表；标签只认序号与固定跳过命令 |
+| `model_query_sop.py` | 选购/型号查询 SOP：承接「推荐/买/预算」入口（含进入确认门与选购/售后/品牌 guards），收集预算、系列、发布时间与标签（养宠/静音/防缠绕等）→ `find_models` → 列表；标签只认序号与固定跳过命令 |
 | `repair.py` | 故障排查 SOP：问现象 → 症状归一 → handoff 到主链 `retrieve`（domain=repair）→ `generate`；生成、history、stop_check、answer.verify、fallback 全在主链 |
 
 ## 快速开始
@@ -426,7 +425,7 @@ python intent_classifier_training/train_intent_classifier.py
 
 | 配置 | 关键项 |
 |------|--------|
-| `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关）、`behavior.verbose_log`（文件日志是否降到 DEBUG）、`behavior.query_normalize`（query 入口归一化 + 判可疑时二次判意图的总开关）、`tools.orchestration`（工具编排：`"off"` 走现有分支 / `"shadow"` 只记对照日志不执行；**`"on"` 尚未接线**，取值需带引号）、`tools.shadow_sample`（影子采样率） |
+| `agent.yaml` | `llm.model`（主生成模型）、`llm.small_model`（轻量兜底模型）、`behavior.retrieval_only`（纯检索模式开关）、`behavior.verbose_log`（文件日志是否降到 DEBUG）、`behavior.query_normalize`（query 入口归一化 + 判可疑时二次判意图的总开关） |
 | `rag.yaml` | `chunk.chunk_size`、`retrieval.dense_top_k/sparse_top_k/final_top_k/score_threshold`、`retrieval.domain_margin`（域路由 margin 门控，0 关闭）、`rrf.*`、`rerank.*`（精排开关/模型/候选宽度/阈值）、`data_dir`（知识库源目录） |
 | `chroma.yaml` | `persist_dir`、`collection_name`、`embedding.model` |
 | `context.yaml` | `intent.low_conf_margin`（低置信降级阈值，0 关闭）、`intent.high_conf_margin`（安全告警窗口内的放行阀，0 关闭）、`context.topic_window`（回看多少条会话记录判定话题与安全告警）、`context.safety_carry_max`（同一告警最多硬承接几次，0 关闭；澄清/SOP 软提醒不计入）、`context.rewrite.*`（改写开关/模式/选轮相似度阈值） |

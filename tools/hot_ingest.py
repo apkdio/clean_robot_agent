@@ -321,7 +321,7 @@ def invalidate_runtime_caches() -> None:
     _agent._hybrid_retriever = None
     try:
         from tools import models_repo
-        from function_tools import service_point_tool as _spt
+        from tools import service_point as _spt
         models_repo.invalidate()
         _spt._points_cache = None
     except Exception:  # noqa: BLE001

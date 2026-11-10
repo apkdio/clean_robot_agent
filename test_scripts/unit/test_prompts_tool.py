@@ -20,7 +20,7 @@ def test_prompt_paths_declared():
     paths = pt.prompt_paths()
     _assert_true("prompts/main_prompts.md" in paths, "主提示词在配置里")
     for name in ("rag_answer_rules", "repair_steps", "casual_guard",
-                 "orchestrator_system", "rewrite_system", "session_title"):
+                 "rewrite_system", "session_title"):
         _assert_true(any(p.endswith("/%s.md" % name) for p in paths),
                      "%s 已在 prompts.yaml 声明" % name)
     _assert_true("无尘糕手" in pt.load("main"), "主提示词可读取")
@@ -28,7 +28,6 @@ def test_prompt_paths_declared():
         "rag_answer_rules": {"history_block": "H", "chunk_texts": "C", "query": "Q"},
         "repair_steps": {"context": "C", "query": "Q"},
         "casual_guard": {"query": "Q"},
-        "orchestrator_system": {"today": "2026-11-05", "extra": ""},
         "rewrite_system": {"max_chars": 80, "history": "H", "query": "Q"},
         "session_title": {"query": "Q", "answer": "A"},
     }
@@ -36,8 +35,7 @@ def test_prompt_paths_declared():
         text = pt.load(name)
         _assert_true("$" in text, "%s 是带占位符的完整模板" % name)
         rendered = pt.render(name, **ctx)
-        needle = "2026-11-05" if name == "orchestrator_system" else "Q"
-        _assert_true(rendered and needle in rendered and "$" not in rendered,
+        _assert_true(rendered and "Q" in rendered and "$" not in rendered,
                      "%s 可由 render 一次性填充" % name)
 
 
@@ -141,32 +139,6 @@ def test_rag_stream_uses_full_template():
         _assert_in(part, human, "完整模板包含 %s" % part)
 
 
-def test_orchestrator_uses_full_template():
-    from tools import orchestrator
-    from tools import llm_tool
-
-    captured = []
-
-    class _Resp:
-        tool_calls = []
-
-    def fake_chat(messages, tools, model="", temperature=0.0):
-        captured.extend(messages)
-        return _Resp()
-
-    old = llm_tool.chat_with_tools
-    llm_tool.chat_with_tools = fake_chat
-    try:
-        decision = orchestrator.decide("你好")
-    finally:
-        llm_tool.chat_with_tools = old
-    _assert_eq(decision.category, "no_tool", "无工具调用时弃权")
-    system = captured[0].content
-    _assert_in("今天日期：", system, "日期骨架仍在代码里拼")
-    _assert_in("只在给定工具里选", system, "静态规则来自 prompt 文件")
-    _assert_not_in("$today", system, "不把模板占位符发给模型")
-
-
 def test_prompts_meta_tracks_prompt_files():
     from tools import version_store as vs
 
@@ -185,7 +157,6 @@ TESTS = [test_prompt_paths_declared, test_load_cache_and_reset,
          test_render_and_placeholder_checks, test_template_syntax,
          test_casual_stream_uses_full_template,
          test_rag_stream_uses_full_template,
-         test_orchestrator_uses_full_template,
          test_prompts_meta_tracks_prompt_files]
 
 

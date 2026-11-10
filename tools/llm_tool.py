@@ -137,6 +137,22 @@ def stream_chat(messages: list, model: str = "", temperature: float = 0.3) -> an
             yield chunk.content
 
 
+def call_tool_args(messages: list, schema: dict, model: str = "",
+                   temperature: float = 0.1) -> dict | None:
+    """调用一次 function calling，取第一个工具调用的 args。
+
+    主链抽取器只需要“发一次、取一个参数”；工具选择、参数校验和业务门控
+    留在各自适配器，不在这个薄壳里做。
+    """
+    resp = chat_with_tools(messages, [schema], model=model, temperature=temperature)
+    calls = getattr(resp, "tool_calls", None) or []
+    if not calls:
+        return None
+    call = calls[0]
+    args = call.get("args") if isinstance(call, dict) else getattr(call, "args", {})
+    return args if isinstance(args, dict) else None
+
+
 def chat_with_tools(messages: list, tools: list, model: str = "", temperature: float = 0.1):
     """带工具定义的 LLM 调用（function calling），返回 AIMessage（.tool_calls 查看决定）。"""
 

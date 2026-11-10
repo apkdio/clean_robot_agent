@@ -1,6 +1,7 @@
-"""trace 旁路证据：事件、召回片段、影子决策与用户评价。
+"""trace 旁路证据：事件、召回片段与用户评价。
 
 旁路文件与主 trace 同目录；写入 best-effort，读不到返回空。
+`shadow` 仅保留历史文件只读兼容，主链自 2026-11-10 起不再写入。
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ from repo.trace import facts as fact_utils
 from repo.trace import paths
 
 SIDE_VERSION = 1
-# 三份旁路证据（chunks / shadow / feedback）共用的 schema 版本，字段名同为 v
+# 旁路证据（chunks / feedback，及历史 shadow）共用的 schema 版本，字段名同为 v
 CHUNK_KIND = "chunks"
 SHADOW_KIND = "shadow"
 FEEDBACK_KIND = "feedback"
@@ -85,7 +86,7 @@ def events_of(session_id: str, day: str = "") -> list:
 
 
 def shadow_turn(ctx: dict, record: dict) -> None:
-    """影子决策落盘。"""
+    """历史 shadow 决策落盘；主链已不再调用，仅供旧文件/读侧兼容。"""
     sid = (ctx or {}).get("session_id")
     if not sid:
         return

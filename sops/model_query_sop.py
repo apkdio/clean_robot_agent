@@ -13,7 +13,7 @@ from config.word_dict_config import (
     TAG_CATALOG,
     TAG_ORDER,
 )
-from function_tools.model_tool import find_models_result
+from tools.model_catalog import find_models_result
 from tools import trace_store
 from tools.log_tool import get_logger
 from tools.metadata_extractor import extract_price_constraint, extract_series, format_model_line

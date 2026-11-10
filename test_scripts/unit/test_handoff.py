@@ -68,16 +68,13 @@ def test_retrieve_uses_handoff_domain_and_query():
 
     fake = _FakeRetriever()
     saved_get = agent_mod._get_retriever
-    saved_shadow = agent_mod.turn_recorder.shadow_probe
     agent_mod._get_retriever = lambda: fake
-    agent_mod.turn_recorder.shadow_probe = lambda *a, **k: None
     ctx = _ctx()
     ctx.handoff = Handoff("retrieve", "机器人不移动怎么办", "repair")
     try:
         _stage_retrieve(ctx)
     finally:
         agent_mod._get_retriever = saved_get
-        agent_mod.turn_recorder.shadow_probe = saved_shadow
     _assert_eq(fake.filters, [{"file_name": domain_filter("repair")}],
                "handoff 的 query/domain 进入 retrieve")
 

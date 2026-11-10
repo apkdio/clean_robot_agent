@@ -32,31 +32,15 @@ def _choice_prompt(candidates: list) -> str:
 
 def _extract_city_by_llm(text: str) -> list:
     """整句没识出城市 → 让 LLM 按网点工具的 schema 抽一次（沿用原有兜底）。"""
-    from langchain_core.messages import HumanMessage
-    from tools.llm_tool import chat_with_tools
-    from function_tools.service_point_tool import (
-        geocode_city, SERVICE_POINT_TOOL_SCHEMA, service_point_tool_model,
-    )
-    try:
-        resp = chat_with_tools(
-            [HumanMessage(content=text)],
-            [SERVICE_POINT_TOOL_SCHEMA],
-            model=service_point_tool_model(),
-        )
-        tool_calls = getattr(resp, "tool_calls", None) or []
-        if tool_calls:
-            tc = tool_calls[0]
-            args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
-            return geocode_city((args.get("location") or "").strip())
-    except Exception as e:  # noqa: BLE001
-        # 抽城市失败=槽位收不到，下一步会重问；留一行才好区分"模型抽不出"与"没有城市"
-        logger.warning("[ServicePoint] LLM 抽城市失败，按未识别处理：%s", e)
-    return []
+    from tools.llm_extract import extract_city_candidates
+
+    # 抽城市失败=槽位收不到，下一步会重问；适配器内部已记 WARNING
+    return extract_city_candidates(text)
 
 
 def _extract_city(text: str, _slots: dict):
     """识城市；重名候选放 extra，由 base 在 done 时原子写入 slots。"""
-    from function_tools.service_point_tool import geocode_city
+    from tools.service_point import geocode_city
     candidates = geocode_city(text) or _extract_city_by_llm(text)
     if not candidates:
         return ExtractResult("fail", reason="no_city")
@@ -80,7 +64,7 @@ def _extract_pick(text: str, slots: dict):
 
 def format_nearest(coord: dict) -> str:
     """按城市坐标算最近网点并格式化。"""
-    from function_tools.service_point_tool import search_service_points, format_service_points
+    from tools.service_point import search_service_points, format_service_points
     points, _ = search_service_points(lng=coord["lng"], lat=coord["lat"])
     return format_service_points(points, coord.get("cn_name") or coord.get("name", ""))
 

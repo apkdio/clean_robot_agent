@@ -6,7 +6,7 @@ import sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))   # 项目根
 
-from test_scripts._runner import E2E, disable_shadow  # noqa: E402
+from test_scripts._runner import E2E  # noqa: E402
 from tools import version_store as vs  # noqa: E402
 
 # ── tag 契约自检（纯规则，先跑：判据错了后面的评测跑得再久也没意义）──────
@@ -53,9 +53,6 @@ def _print_version(resolved):
 
 
 def main():
-    # 评测隔离：影子探针只落日志、不参与被测行为，却要额外跑一次 FC（实测每轮 +75~125s）。
-    # 整个评测进程关掉，算力让给被测主链路；进程结束即失效，不影响正常运行时的影子观测。
-    disable_shadow()
     strict = "--strict-versions" in sys.argv
     resolved = None
     try:

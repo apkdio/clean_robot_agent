@@ -476,9 +476,6 @@ def test_clarify_open_trace():
         _assert_eq((n.get("in") or {}).get("options"), "followup/find_models", "记选项")
         _assert_eq((n.get("in") or {}).get("retry"), 0, "记 retry")
         _assert_eq((n.get("out") or {}).get("replaces"), "-", "没覆盖别人")
-        _assert_eq((row.get("shadow") or {}).get("status"), "skipped",
-                   "澄清轮不采样 shadow，显式标 skipped")
-        _assert_eq((row.get("shadow") or {}).get("by"), "clarify", "标出是谁让它跳过")
 
         pending_store.close(sid)
         pending_store.ask(sid, pending_store.BIZ_SOP_EXIT, state={"sop_id": "model_query"})

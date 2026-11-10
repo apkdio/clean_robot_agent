@@ -1,8 +1,8 @@
 """型号搜索工具：让模型自主决策要查哪个型号，再按型号名精准检索型号详情。
 
 用于「型号详情咨询 / 上下文对比」兜底（处理指代「这两个/它」、对比「区别」）。
-与 budget_tool/symptom_tool 不同，这里用主生成模型（默认 7b）——型号名是 string
-参数且需理解上下文指代，3b 对 string 参数会原样返回 query、不做提取。
+型号名提取走 `tools.llm_extract`（主生成模型）；本模块只负责筛选、
+排序、参数校验等确定性能力，不直接发起 LLM 调用。
 """
 
 from __future__ import annotations
@@ -18,42 +18,13 @@ from config.word_dict_config import (
     PUBLISH_KEYS as _PUBLISH_KEYS,
     TAG_CATALOG as _TAG_CATALOG,
 )
-from function_tools.date_tool import publish_int
+from tools.date_rules import publish_int
 from tools.dto.model_query import (FindModelsResult, ModelQueryConstraints,
                                    ParamFilter, PriceRange, PublishRange)
-from tools.llm_tool import get_chat_model_name
 from tools.log_tool import get_logger
 from tools.models_repo import all_records, match_key
 
 logger = get_logger(name="model_tool")
-
-# 型号提取跟随主生成模型（string 参数 + 上下文指代理解，3b 不稳定）
-def model_tool_model() -> str:
-    return get_chat_model_name()
-
-
-MODEL_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "extract_models",
-        "description": (
-            "从用户的话和对话上下文里，提取用户想查询的扫地机器人具体型号名"
-            "（如「云顶 X2」「净白 S1」）。用户可能用指代词（「这两个」「它」）指代上文提到的具体型号，"
-            "或直接说型号名。多个型号用逗号分隔。不要提取系列名（如「云顶 X 系列」）。"
-            "没有明确型号时返回空字符串。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "model_names": {
-                    "type": "string",
-                    "description": "要查询的型号名，多个用逗号分隔（如「云顶 X2」或「云顶 X2,净白 S1」）；无明确型号返回空字符串",
-                },
-            },
-            "required": ["model_names"],
-        },
-    },
-}
 
 
 def _enumerate_model_infos() -> List[Dict]:
@@ -101,85 +72,6 @@ def model_name_in_query(query: str) -> bool:
     return False
 
 
-# ── find_models：一次调用填完所有结构化约束（工具编排形态）───────────────
-# 与 extract_models（只提取型号名）不同，这个工具承担"型号筛选 + 排序 + 枚举直出"，
-# 参数名与知识库结构化元数据对齐：金额 → min_price/max_price，发布区间 → publish_date，
-# 参数 → param_<键>（由 extract_spec_metadata 通用解析出来，新增规格键不用改代码）。
-FIND_MODELS_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "find_models",
-        "description": (
-            "按条件筛选/排序扫地机器人型号，直接拿到型号清单（含价格与规格）。"
-            "适用：预算推荐、参数筛选（「有没有 LDS 导航的」「有没有红外避障的」）、"
-            "排序枚举（「大吸力的几款」「续航最长的」「吸力最强的」）、发布时间区间、系列/型号枚举。"
-            "**“大吸力”“最强”“续航长”这类没有具体数字的说法不要自己去定阀值，改写 `sort_by`；"
-            "只有在用户说了具体数字时才用 `params` 里的 `>=` / `<=`。"
-            "**不要把用户的自然语言直接写进 params 的值里**：值应该是知识库里出现的规格值（如「LDS激光」「红外」）；"
-            "不确定有哪些值时，只填 sort_by。"
-            "对时间范围，填用户原话（如「最近半年」「2025年」），系统会自己换算。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "budget": {
-                    "type": "string",
-                    "description": (
-                        "预算相关**一律填用户原话**（如「5000元以上」「2000-3000元内」「1500左右」「三千以内」），"
-                        "由系统解析方向（以上/以内）、单位与浮动；没有预算填空字符串。"
-                        "**不要自己折算成上下限**——「以上」还是「以内」由系统看原话判断。"
-                    ),
-                },
-                "budget_min": {
-                    "type": "integer",
-                    "description": "预算下限（元）：**仅当用户用中文数字/口语、给不出原话时**（如「预算五千」）才填，否则填 0",
-                },
-                "budget_max": {
-                    "type": "integer",
-                    "description": "预算上限（元）：同样仅在给不出原话时才填，否则填 0",
-                },
-                "publish_range": {
-                    "type": "string",
-                    "description": "发布时间范围的**原话**（如「最近半年」「2025年三月」「2026年」），由系统换算成区间；没有填空字符串",
-                },
-                "model": {"type": "string", "description": "型号名（如「云顶 X2」「净界 P2」），多个用逗号分隔；没有填空字符串"},
-                "series": {"type": "string", "description": "系列名（如「云顶 X」「净界 P」）；没有填空字符串"},
-                "params": {
-                    "type": "array",
-                    "description": (
-                        "规格参数筛选条件，多个条件同时满足。key 用知识库里的规格名（吸力/导航/避障/续航/水箱/基站…）；"
-                        "op：含（包含即算命中，如 避障 含 结构光 → 含 3D结构光）、=（完全相等）、>=、<=（数值比较）。"
-                        "例：「有没有 LDS 导航的」→ [{\"key\":\"导航\",\"op\":\"含\",\"value\":\"LDS\"}]"
-                    ),
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "key": {"type": "string", "description": "规格名，如 吸力/导航/避障/续航"},
-                            "op": {"type": "string", "enum": ["含", "=", ">=", "<="]},
-                            "value": {"type": "string", "description": "规格值或数值，如 LDS / 红外 / 6000"},
-                        },
-                        "required": ["key", "op", "value"],
-                    },
-                },
-                "scope": {
-                    "type": "array",
-                    "items": {"type": "string", "enum": ["cheaper", "pricier", "newer", "older"]},
-                    "description": (
-                        "相对上一轮推荐结果的筛选（默认全库，填空数组）："
-                        "cheaper/pricier=比上一轮最便宜/最贵的还便宜/还贵；newer/older=比上一轮最新/最旧的还新/还旧。"
-                        "相对维度**可多选，同时满足**（「更新更便宜的」→ [\"newer\",\"cheaper\"]）；排序由系统固定。"
-                    ),
-                },
-                "sort_by": {
-                    "type": "string",
-                    "description": "排序依据（规格名，如「吸力」「续航」；或「参考价」「发布时间」）；不排序填空字符串",
-                },                "order": {"type": "string", "enum": ["desc", "asc"], "description": "排序方向，默认 desc"},
-                "limit": {"type": "integer", "description": "最多返回几条，默认 5"},
-            },
-            "required": [],
-        },
-    },
-}
 
 
 def _param_of(record: Dict, key: str) -> str:
@@ -262,7 +154,7 @@ def _sort_value_of(record: Dict, sort_by: str) -> float:
 
 
 def _publish_int(record: Dict) -> int:
-    """型号记录的发布时间 → int YYYYMMDD（统一走 date_tool.publish_int）。"""
+    """型号记录的发布时间 → int YYYYMMDD（统一走 capability.date.publish_int）。"""
     return publish_int(record.get("publish_date"))
 
 
@@ -314,7 +206,7 @@ def _publish_bounds(args: Dict, dropped: List[str], notes: List[str]):
     if end not in (None, ""):
         _drop(dropped, notes, "publish_end", "end without start")
     if rng:
-        from function_tools.date_tool import calc_date_range
+        from tools.date_rules import calc_date_range
 
         parsed = calc_date_range(rng)
         if "start_date" not in parsed:
@@ -532,6 +424,13 @@ def find_models_result(args: Dict, prev_models: "List[Dict] | None" = None) -> F
 def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> List[Dict]:
     """兼容旧调用方：只返回型号列表；需要 dropped/notes 时用 find_models_result()。"""
     return find_models_result(args, prev_models).models
+
+
+def _spec_values_of(key: str) -> List[str]:
+    """取某规格键在型号缓存里的全部取值（用于校验 LLM 填的键/值）。"""
+    field = "param_%s" % key
+    return [str(record.get(field)) for record in all_records()
+            if record.get(field) not in (None, "")]
 
 
 def validate_find_models_args(query: str, args: Dict) -> tuple:

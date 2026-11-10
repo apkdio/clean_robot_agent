@@ -5,6 +5,5 @@ prompt_files:
   rag_answer_rules: prompts/rag_answer_rules.md
   repair_steps: prompts/repair_steps.md
   casual_guard: prompts/casual_guard.md
-  orchestrator_system: prompts/orchestrator_system.md
   rewrite_system: prompts/rewrite_system.md
   session_title: prompts/session_title.md

@@ -168,14 +168,14 @@ def _expect_ref(entry):
 
 
 def _compute(entries, hr):
-    from function_tools.date_tool import build_date_filter
+    from tools.date_rules import build_date_filter
     from tools.domain_router import domain_filter as _domain_filter, route_domain as _route_domain
     from tools.metadata_extractor import enumerate_models, resolve_budget_filter
     from tools.model_query import resolve_date_range
     from tools.query_rewrite import normalize_enabled as _normalize_enabled
 
     def _date_filter(query):
-        """日期解析在 model_query，filter 组装在 date_tool（与线上同口径）。"""
+        """日期解析在 tools.model_query，filter 组装在 tools.date_rules（与线上同口径）。"""
         r = resolve_date_range(query)
         return build_date_filter(r[0], r[1]) if r else None
 
