@@ -10,7 +10,7 @@ from dataclasses import asdict
 
 from tools import trace_store
 from tools.dto.model_query import (FindModelsResult, ModelQueryConstraints,
-                                   ModelQueryResult, PriceRange, PublishRange)
+                                   PriceRange, PublishRange)
 from tools.log_tool import get_logger
 from tools.metadata_extractor import extract_series, format_model_line, resolve_budget_range
 from tools.prompts_tool import render
@@ -200,7 +200,7 @@ def resolve_model_query(query: str):
                             constraints=constraints, kind=kind)
 
 
-def format_model_query(result: ModelQueryResult) -> str:
+def format_model_query(result: FindModelsResult) -> str:
     """统一条件前缀 + 型号列表；条件只来自实际生效的 constraints。"""
     n = len(result.models)
     constraint_text = format_constraints(result.constraints or ModelQueryConstraints())

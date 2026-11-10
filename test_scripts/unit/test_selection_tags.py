@@ -49,11 +49,11 @@ def test_model_tags_mapping():
 
 
 def test_find_models_tags_filter_and_boost():
-    from tools.model_catalog import find_models_by_args
-    filtered = find_models_by_args({"tags": ["pet_friendly"], "limit": 50})
+    from tools.model_catalog import find_models_result
+    filtered = find_models_result({"tags": ["pet_friendly"], "limit": 50}).models
     _assert(filtered, "pet_friendly 能筛出型号")
     _assert(all(m.get("tag_pet_friendly") is True for m in filtered), "只返回带标签型号")
-    boost = find_models_by_args({"tags": ["quiet"], "limit": 50})
+    boost = find_models_result({"tags": ["quiet"], "limit": 50}).models
     _assert(boost and boost[0].get("tag_quiet") is True, "boost 标签排前")
 
 

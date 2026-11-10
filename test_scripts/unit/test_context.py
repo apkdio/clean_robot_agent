@@ -176,23 +176,6 @@ def test_session_filename_has_created_ts():
     ctx.delete_session(sid)
 
 
-def test_legacy_filename_compat():
-    """历史命名 <session_id>.jsonl（无时间戳）仍可读写与列出。"""
-    import os
-    sid = _new_sid()
-    legacy = os.path.join(ctx._CONTEXT_DIR, f"{sid}.jsonl")
-    os.makedirs(ctx._CONTEXT_DIR, exist_ok=True)
-    with open(legacy, "w", encoding="utf-8") as f:
-        f.write('{"role": "user", "content": "老会话", "ts": "2026-09-01T10:00:00"}\n')
-    try:
-        _assert_eq(len(ctx.get_recent(sid)), 1, "历史文件可回读")
-        entry = next((s for s in ctx.list_sessions() if s["session_id"] == sid), None)
-        _assert(entry is not None, "历史会话出现在列表中")
-        _assert_eq(entry["created_at"], "", "历史文件无创建时间")
-    finally:
-        ctx.delete_session(sid)
-
-
 # ──────────────────────────────────────────────────────────────
 # 5. 会话标题生成（LLM 失败 fallback）
 # ──────────────────────────────────────────────────────────────
@@ -225,7 +208,6 @@ TESTS = [
     test_ensure_session_id,
     test_list_sessions,
     test_session_filename_has_created_ts,
-    test_legacy_filename_compat,
     test_generate_session_title_fallback,
 ]
 

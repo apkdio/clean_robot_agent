@@ -1,7 +1,6 @@
 """trace 旁路证据：事件、召回片段与用户评价。
 
 旁路文件与主 trace 同目录；写入 best-effort，读不到返回空。
-`shadow` 仅保留历史文件只读兼容，主链自 2026-11-10 起不再写入。
 """
 from __future__ import annotations
 
@@ -13,9 +12,8 @@ from repo.trace import facts as fact_utils
 from repo.trace import paths
 
 SIDE_VERSION = 1
-# 旁路证据（chunks / feedback，及历史 shadow）共用的 schema 版本，字段名同为 v
+# 旁路证据（chunks / feedback）共用的 schema 版本，字段名同为 v
 CHUNK_KIND = "chunks"
-SHADOW_KIND = "shadow"
 FEEDBACK_KIND = "feedback"
 EVENT_KIND = "events"
 CHUNK_MAX_CHARS = 4000       # 单片正文上限（防极端长条目把旁路文件撑爆）
@@ -83,17 +81,6 @@ def events_of(session_id: str, day: str = "") -> list:
     except OSError:
         pass
     return out
-
-
-def shadow_turn(ctx: dict, record: dict) -> None:
-    """历史 shadow 决策落盘；主链已不再调用，仅供旧文件/读侧兼容。"""
-    sid = (ctx or {}).get("session_id")
-    if not sid:
-        return
-    rec = {"v": SIDE_VERSION, "ts": datetime.now().isoformat(timespec="seconds"),
-           "session_id": sid, "turn_index": (ctx or {}).get("turn_index")}
-    rec.update(record or {})
-    _append(paths._path(sid, SHADOW_KIND, create=True), rec)
 
 
 def feedback_turn(ctx: dict, rating: str, reason: str = "", note: str = "") -> None:

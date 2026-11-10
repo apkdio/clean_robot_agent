@@ -156,7 +156,7 @@ def test_find_models_invalid_args_do_not_clear_results():
             {"publish_start": "2025"},
         ]
         for args in cases:
-            _assert_eq(len(mt.find_models_by_args(args)), 2,
+            _assert_eq(len(mt.find_models_result(args).models), 2,
                        "非法条件 %r 不应清空结果" % args)
     finally:
         mt.all_records = orig

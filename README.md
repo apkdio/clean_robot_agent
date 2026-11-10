@@ -130,7 +130,7 @@ clean_robot_agent/
 | `agent.py` | 阶段化主链编排：硬规则 → 归一化 → 澄清 → 活跃 SOP → 意图 → 安全承接 → 操作派发 → 检索 / 生成；阶段返回 `Continue / Finish`，顺序即优先级；`_run_stages` 统一为每个阶段落 `stage.*` span |
 | `dto/` | 跨层返回体契约（叶子包）：`stage.py` 控制流、`executor.py` 执行体结果、`clarify.py` 澄清结果、`sop.py` SOP 步骤、`model_query.py` 型号查询结果、`request.py` 一轮请求体、`transport.py` 会话事件 |
 | `turn_context.py` | 本轮状态单：`TurnContext` 内聚 `ChatRequest`（session / lng / lat / retry），保留可变的 `query / q`；阶段返回体从 `tools/dto/stage.py` 兼容导出 |
-| `turn_recorder.py` | 旁路记录门面：行为标签、trace 节点、影子探针；不存第二份 trace 状态 |
+| `turn_recorder.py` | 旁路记录门面：行为标签与 trace 节点；不存第二份 trace 状态 |
 | `domain_router.py` | 知识域打分与检索 filter：top1 单域 / top2 双域 / 无域全库兜底 |
 | `query_rewrite.py` | 上下文承接与改写：历史挑选、规则拼接、LLM 改写与忠实性校验 |
 | `sop_runtime.py` | SOP 运行时：进出 SOP、重答重开、SOP 进度记录 |
@@ -356,7 +356,7 @@ python intent_classifier_training/train_intent_classifier.py
 
 | 模块 | 覆盖范围 | 需 `--e2e` |
 |------|---------|:---------:|
-| `eval/test_behavior_tags.py` | 行为观测点 tag 契约自检（采集 / 映射 / 判定四态 / 影子隔离） | |
+| `eval/test_behavior_tags.py` | 行为观测点 tag 契约自检（采集 / 映射 / 判定四态 / 节点登记） | |
 | `eval/test_retrieval_eval.py` | 检索质量评测（hit@k / MRR / 无召回率 / 结构化直出命中率） | ✓ |
 | `eval/test_context_eval.py` | 多轮行为评测（按行为观测 tag 判出口行为 + 回归门禁 + 软行为复核清单） | ✓ |
 | `eval/test_sop_eval.py` | SOP 行为轨（确定性状态机 / 槽位 / flow / 重试；不依赖 LLM） | |

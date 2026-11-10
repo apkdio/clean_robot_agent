@@ -17,8 +17,17 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools.agent import ask_stream
+from tools.agent import ask_stream as _ask_prod
+from tools.dto.request import ChatRequest
 import tools.agent as agent_mod
+
+
+def ask_stream(query, session_id="default", lng=None, lat=None,
+               retry=False, stop_check=None):
+    """测试入口：把字符串 query 包成 ChatRequest 后走真实主链。"""
+    request = ChatRequest(query=query, session_id=session_id,
+                          lng=lng, lat=lat, retry=retry)
+    return _ask_prod(request, stop_check=stop_check)
 
 
 def _reply(query):

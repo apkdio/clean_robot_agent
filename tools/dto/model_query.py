@@ -49,7 +49,3 @@ class FindModelsResult:
     notes: list = field(default_factory=list)
     constraints: ModelQueryConstraints | None = None
     kind: str = ""
-
-
-# 兼容旧导入；直出层现在直接使用 FindModelsResult。
-ModelQueryResult = FindModelsResult

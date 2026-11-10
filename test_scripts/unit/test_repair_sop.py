@@ -87,7 +87,8 @@ def test_repair_sop_flow():
 def test_repair_sop_ask_fallback():
     _cleanup()
     orig = sops.repair.REPAIR_SOP["steps"][0]["extract"]
-    sops.repair.REPAIR_SOP["steps"][0]["extract"] = lambda text, slots: None
+    from tools.dto.sop import ExtractResult
+    sops.repair.REPAIR_SOP["steps"][0]["extract"] = lambda text, slots: ExtractResult("fail")
     try:
         reply, done = _pair(sops.base.start_sop("r2", "repair", "机器人不动了怎么办"))
         _assert(not done, "提取失败未结束")

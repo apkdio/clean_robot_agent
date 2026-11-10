@@ -11,7 +11,7 @@ import os
 
 from tools import trace_store
 
-SIDE_KINDS = ("chunks", "shadow", "feedback")
+SIDE_KINDS = ("chunks", "feedback")
 
 
 def root_dir(arg_dir: str = "") -> str:

@@ -9,9 +9,8 @@ trace 由 tools/trace_store.py 落盘（默认 logs/trace/<YYYYMMDD>/<session_id
     python test_scripts/trace_report.py --list
     # 看某个会话每一轮（默认跨天全看，按天分段）
     python test_scripts/trace_report.py --session <session_id>
-    # 看该会话每轮召回的片段全文 / 影子决策 / 用户评价（旁路文件）
+    # 看该会话每轮召回的片段全文 / 用户评价（旁路文件）
     python test_scripts/trace_report.py --session <session_id> --chunks
-    python test_scripts/trace_report.py --session <session_id> --shadow
     python test_scripts/trace_report.py --session <session_id> --feedback
     # 只看某一天 / 指定目录（评测跑出来的 trace 在 temp/trace_test）
     python test_scripts/trace_report.py --session abc12345 --date 2026-09-29 --dir temp/trace_test
@@ -216,10 +215,6 @@ def _turn_lines_nested(rec: dict, labels: dict) -> list:
     if ans:
         out.append("      出口: %s ｜ 模型 %s ｜ %s 字" % (
             ans.get("kind") or "-", ans.get("model") or "-", ans.get("chars")))
-    shadow = rec.get("shadow") or {}
-    if shadow:
-        out.append("      影子: chain=%s ｜ 证据=%s" % (
-            shadow.get("chain") or "-", (shadow.get("evidence") or {}).get("file") or "-"))
     flags = _flags(rec)
     if flags:
         out.append("      ⚠ " + "、".join(flags))
@@ -263,7 +258,7 @@ def _print_session(session_id: str, paths: list, flat: bool = False) -> None:
 def _hint_sides(session_id: str, session_dir: str) -> None:
     """提示会话目录下的旁路证据（存在才提）。"""
     sides = []
-    for kind, flag in ((trace_store.CHUNK_KIND, "--chunks"), (trace_store.SHADOW_KIND, "--shadow"),
+    for kind, flag in ((trace_store.CHUNK_KIND, "--chunks"),
                        (trace_store.FEEDBACK_KIND, "--feedback")):
         try:
             hit = any(fn.endswith(".%s.jsonl" % kind) for fn in os.listdir(session_dir))
@@ -312,25 +307,6 @@ def _print_chunks(session_id: str, path: str) -> None:
                 c.get("dense_rank"), c.get("sparse_rank"), c.get("file"), c.get("chars")))
             for line in (c.get("text") or "").split("\n"):
                 print("        %s" % line)
-
-
-def _print_shadow(session_id: str, path: str) -> None:
-    rows = _load(path)
-    print("=" * 72)
-    print("会话 %s  |  %d 条影子决策  |  %s" % (session_id, len(rows), path))
-    print("=" * 72)
-    for rec in rows:
-        print("\n#%s  %s" % (rec.get("turn_index"), rec.get("query") or ""))
-        print("   chain=%s(%s)  fc=%s  agree=%s  fc_ms=%s%s" % (
-            rec.get("chain"), rec.get("chain_detail") or "-", rec.get("tool") or "-",
-            rec.get("agree"), rec.get("ms"),
-            "  error=%s" % rec["error"] if rec.get("error") else ""))
-        if rec.get("args"):
-            print("   fc_args=%s" % json.dumps(rec["args"], ensure_ascii=False))
-        if rec.get("extra"):
-            print("   fc_extra=%s" % rec.get("extra"))
-        if rec.get("notes"):
-            print("   notes=%s" % rec.get("notes"))
 
 
 def _print_feedback(session_id: str, path: str) -> None:
@@ -412,7 +388,6 @@ def turn_view(rec: dict, chunks: list, feedback: dict, max_chunk: int) -> dict:
     ret = rec.get("retrieval") or {}
     rewrite = ret.get("rewrite") or {}
     domain = ret.get("domain") or {}
-    shadow = rec.get("shadow") or {}
     ms = rec.get("ms") or {}
     branch = rec.get("branch") or "未记"
     views = []
@@ -432,12 +407,11 @@ def turn_view(rec: dict, chunks: list, feedback: dict, max_chunk: int) -> dict:
         "flags": flags, "domain": domain.get("value"), "domain_via": domain.get("via"),
         "rewrite": rewrite, "passes": ret.get("passes") or [], "merge": ret.get("merge") or {},
         "twice": ret.get("twice_retrieval") or {},
-        "sop": rec.get("sop") or {}, "sop_gate": rec.get("sop_gate") or {}, "shadow": shadow,
+        "sop": rec.get("sop") or {}, "sop_gate": rec.get("sop_gate") or {},
         "ops": (rec.get("route") or {}).get("ops") or {},
         "path": rec.get("path") or [], "answer": rec.get("answer") or {}, "ms": ms,
         "chunks": views, "feedback": feedback, "slow": (ms.get("total") or 0) >= _SLOW_MS,
         "norm": bool((rewrite.get("normalize") or {}).get("changed")),
-        "shadow_mismatch": shadow.get("agree") is False,
         "no_recall": branch == "no_answer_fallback",
         "total_ms": ms.get("total"),
     }
@@ -530,7 +504,6 @@ TEMPLATE = """{% macro kvtable(title, d) -%}
     <span class="chip" data-f="useless">有👎</span>
     <span class="chip" data-f="no_recall">0 召回</span>
     <span class="chip" data-f="norm">归一化改过</span>
-    <span class="chip" data-f="shadow">影子不一致</span>
     <span class="chip" data-f="bad">error / aborted</span>
     <span class="chip" data-f="slow">慢（≥30s）</span>
     <span class="meta">·</span>
@@ -545,7 +518,7 @@ TEMPLATE = """{% macro kvtable(title, d) -%}
     {% for t in s.turns %}
     <article class="turn" data-branch="{{ t.branch }}" data-useless="{{ 1 if (t.feedback or {}).get('rating')=='useless' else 0 }}"
              data-no_recall="{{ 1 if t.no_recall else 0 }}" data-norm="{{ 1 if t.norm else 0 }}"
-             data-shadow="{{ 1 if t.shadow_mismatch else 0 }}" data-bad="{{ 1 if (t.error or t.aborted) else 0 }}"
+             data-bad="{{ 1 if (t.error or t.aborted) else 0 }}"
              data-slow="{{ 1 if t.slow else 0 }}" data-q="{{ t.query }}">
       <div class="row1">
         <span class="k">#{{ t.i }}</span><span class="k">{{ t.ts }}</span>
@@ -573,7 +546,7 @@ TEMPLATE = """{% macro kvtable(title, d) -%}
         {% if t.sop %}<span>SOP {{ t.sop.id }} · step {{ t.sop.step }}{% if t.sop.slots %} · {{ t.sop.slots }}{% endif %}</span>{% endif %}
         {% if t.ms %}<span>耗时 retrieve {{ t.ms.get('retrieve') }}ms / 合计 {{ t.ms.get('total') }}ms</span>{% endif %}
       </div>
-      <details><summary>链路与检索（path · 检索各遍 · rewrite / merge / 影子）</summary>
+      <details><summary>链路与检索（path · 检索各遍 · rewrite / merge）</summary>
         {% if t.path %}
         <table><caption>有序路径</caption><tr><th>节点</th><th>状态</th><th>by</th><th>ms</th><th>out</th></tr>
         {% for n in t.path %}<tr><td>{{ n.node }}</td><td>{{ n.status }}</td><td>{{ n.by or '' }}</td>
@@ -602,7 +575,6 @@ TEMPLATE = """{% macro kvtable(title, d) -%}
         {% endif %}
         {% if t.merge %}{{ kvtable('merge · 两路合并', t.merge) }}{% endif %}
         {% if t.twice and t.twice.active %}{{ kvtable('twice_retrieval · 撤域二次召回', t.twice) }}{% endif %}
-        {% if t.shadow %}{{ kvtable('shadow · 影子决策', t.shadow) }}{% endif %}
         {% if t.sop_gate %}{{ kvtable('sop_gate · SOP 门', t.sop_gate) }}{% endif %}
         {% if t.ops %}{{ kvtable('route.ops · 操作判别', t.ops) }}{% endif %}
       </details>
@@ -645,7 +617,6 @@ function apply() {
     if (on.has('useless') && d.useless !== '1') ok = false;
     if (on.has('no_recall') && d.no_recall !== '1') ok = false;
     if (on.has('norm') && d.norm !== '1') ok = false;
-    if (on.has('shadow') && d.shadow !== '1') ok = false;
     if (on.has('bad') && d.bad !== '1') ok = false;
     if (on.has('slow') && d.slow !== '1') ok = false;
     if (bs.length && !bs.includes(d.branch)) ok = false;
@@ -719,8 +690,6 @@ def main() -> None:
     ap.add_argument("--session", help="会话 id（= logs/trace 下的目录名，如 abc12345-……）")
     ap.add_argument("--list", action="store_true", help="列出该日期下有 trace 的会话")
     ap.add_argument("--chunks", action="store_true", help="看该会话每轮召回的片段全文（.<kind>.chunks.jsonl）")
-    ap.add_argument("--shadow", action="store_true",
-                    help="看历史影子决策对照（.shadow.jsonl，主链已不再产生）")
     ap.add_argument("--feedback", action="store_true", help="看该会话的用户评价（.feedback.jsonl）")
     ap.add_argument("--date", default=None,
                     help="只看某天（YYYY-MM-DD）；默认：--list 看今天，--session 看全部")
@@ -740,18 +709,16 @@ def main() -> None:
         print("已生成 %s（%d 会话 / %d 轮，%.0f KB）"
               % (path, n_sessions, n_turns, os.path.getsize(path) / 1024))
         return
-    if args.chunks or args.shadow or args.feedback:
+    if args.chunks or args.feedback:
         if not args.session:
-            print("--chunks / --shadow / --feedback 需要配合 --session")
+            print("--chunks / --feedback 需要配合 --session")
             sys.exit(1)
-        kind = trace_store.CHUNK_KIND if args.chunks else (
-            trace_store.SHADOW_KIND if args.shadow else trace_store.FEEDBACK_KIND)
+        kind = trace_store.CHUNK_KIND if args.chunks else trace_store.FEEDBACK_KIND
         paths = _session_files(root, args.session, kind=kind, date=args.date or "")
         if not paths:
             print("没有该文件：%s/%s 下无 .%s.jsonl" % (root, args.session, kind))
             sys.exit(1)
         _printers = {trace_store.CHUNK_KIND: _print_chunks,
-                     trace_store.SHADOW_KIND: _print_shadow,
                      trace_store.FEEDBACK_KIND: _print_feedback}
         for path in paths:
             _printers[kind](args.session, path)

@@ -47,11 +47,11 @@ def test_date_gate_needs_select_signal():
     from tools.date_rules import build_date_filter
     from tools.model_query import resolve_date_range
 
-    def _resolve_date_filter(query):
+    def _date_filter(query):
         r = resolve_date_range(query)
         return build_date_filter(r[0], r[1]) if r else None
 
-    _assert(_resolve_date_filter("今年买的有保修吗") is not None, "问保修句的时间词本就可解析（闸门要挡的就是它）")
+    _assert(_date_filter("今年买的有保修吗") is not None, "问保修句的时间词本就可解析（闸门要挡的就是它）")
     _assert(not DATE_SELECT_HINT_RE.search("今年买的有保修吗"), "问保修句无选型信号 → 不直出")
     _assert(not DATE_SELECT_HINT_RE.search("最近半年拖布有异味怎么办"), "问故障句无选型信号 → 不直出")
     _assert(DATE_SELECT_HINT_RE.search("今年出的新款有哪些"), "选型问句有信号 → 照常直出")
@@ -298,13 +298,15 @@ def _ask_with_stubs(query, sid, retry=False):
     import tools.intent_router as ir
     from tools import agent as agent_mod
     from tools.agent import ask_stream
+    from tools.dto.request import ChatRequest
 
     saved = (ir.route_intent_with_margin, agent_mod._get_retriever, agent_mod.stream_chat)
     ir.route_intent_with_margin = lambda q: ("robot", 0.9)
     agent_mod._get_retriever = lambda: _StubRetriever()
     agent_mod.stream_chat = lambda messages, model="", temperature=0.3, **kw: iter(["答案"])
     try:
-        return "".join(ask_stream(query, sid, retry=retry)).strip()
+        return "".join(ask_stream(ChatRequest(query=query, session_id=sid,
+                                              retry=retry))).strip()
     finally:
         ir.route_intent_with_margin, agent_mod._get_retriever, agent_mod.stream_chat = saved
 
@@ -387,10 +389,11 @@ def test_stopped_turn_marks_aborted():
     saved_end = am.trace_store.end_turn
     am.trace_store.end_turn = lambda aborted=False, reply="": seen.update(aborted=aborted)
     try:
-        list(am.ask_stream("x", "t-abort", stop_check=lambda: True))
+        from tools.dto.request import ChatRequest
+        list(am.ask_stream(ChatRequest("x", "t-abort"), stop_check=lambda: True))
         _assert(seen.get("aborted") is True, "被停的轮 → aborted=true")
         seen.clear()
-        list(am.ask_stream("x", "t-abort", stop_check=lambda: False))
+        list(am.ask_stream(ChatRequest("x", "t-abort"), stop_check=lambda: False))
         _assert(seen.get("aborted") is False, "正常轮仍为 false")
     finally:
         am.trace_store.end_turn = saved_end

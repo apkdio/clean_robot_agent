@@ -80,7 +80,7 @@ def test_build_records_skips_non_models_and_sorts():
 def test_warm_cache_does_not_touch_chroma():
     from tools import models_repo as mr
     import tools.vector_store as vs
-    from tools.model_catalog import find_models_by_args
+    from tools.model_catalog import find_models_result
 
     saved_cache = dict(mr._cache)
     saved_search = vs.search_by_filter
@@ -91,7 +91,7 @@ def test_warm_cache_does_not_touch_chroma():
     vs.store_fingerprint = lambda: (_ for _ in ()).throw(AssertionError("不应校验指纹"))
     try:
         _assert(mr.all_records() is mr._cache["records"], "warm 直接返回内存缓存")
-        _assert_eq([m["name"] for m in find_models_by_args({"limit": 5})], ["A"],
+        _assert_eq([m["name"] for m in find_models_result({"limit": 5}).models], ["A"],
                    "warm find_models 不触发 Chroma")
     finally:
         mr._cache.clear()

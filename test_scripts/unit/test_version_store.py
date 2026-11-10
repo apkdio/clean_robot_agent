@@ -158,12 +158,19 @@ def test_run_manifest_paths_unique():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_agent_track_removed():
+    """agent/shadow 决策已撤销：评测轨不得再注册 agent。"""
+    _assert_not_in("agent", vs.TRACKS, "TRACKS 不含 agent")
+    _assert_not_in("agent", vs.ACTIVE_TRACKS, "ACTIVE_TRACKS 不含 agent")
+    _assert_not_in("agent", vs.EVAL_PATHS, "EVAL_PATHS 不含 agent")
+
+
 TESTS = [test_register_snapshot_and_bump, test_diff_reads_snapshots,
          test_trigger_ver_covers_selection_definition, test_migrate_old_per_id,
          test_context_can_be_reactivated, test_missing_git_is_explicit,
          test_dataset_prefers_active_when_sha_shared,
          test_pin_env_carries_sop_trigger_ver,
-         test_run_manifest_paths_unique]
+         test_run_manifest_paths_unique, test_agent_track_removed]
 
 
 def run():

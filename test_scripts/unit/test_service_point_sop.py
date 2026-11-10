@@ -15,6 +15,7 @@ import sops  # 触发各 SOP 注册
 import sops.base
 import tools.service_point as spt
 from sops import service_point as sp
+from tools.dto.sop import ExtractResult
 
 _CAND = [
     {"name": "Chaoyang", "cn_name": "朝阳（辽宁）", "lng": 120.45, "lat": 41.57, "population": 400000},
@@ -175,10 +176,14 @@ def test_when_skips_step_and_formats_ask():
         "trigger": ["zzz-when-probe"],
         "steps": [
             {"id": "ask_n", "type": "ask", "slot": "n", "ask": "给个数字",
-             "extract": lambda text, slots: int(re.search(r"\d", text).group()) if re.search(r"\d", text) else None},
+             "extract": lambda text, slots: ExtractResult(
+                 "done", int(re.search(r"\d", text).group())) if re.search(r"\d", text)
+             else ExtractResult("fail")},
             {"id": "ask_pick", "type": "ask", "slot": "pick", "when": lambda ctx: ctx.get("n", 0) > 1,
              "ask": "$n 大于 1，请再给个序号",
-             "extract": lambda text, slots: int(re.search(r"\d", text).group()) if re.search(r"\d", text) else None},
+             "extract": lambda text, slots: ExtractResult(
+                 "done", int(re.search(r"\d", text).group())) if re.search(r"\d", text)
+             else ExtractResult("fail")},
             {"id": "reply", "type": "reply", "template": "$n"},
         ],
     })

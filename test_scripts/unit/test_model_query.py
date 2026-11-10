@@ -7,9 +7,9 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools.model_query import (ModelQueryResult, format_model_query, parse_budget, parse_publish,
+from tools.model_query import (format_model_query, parse_budget, parse_publish,
                                resolve_model_constraints, resolve_model_query)
-from tools.dto.model_query import ModelQueryConstraints
+from tools.dto.model_query import FindModelsResult, ModelQueryConstraints
 from tools.date_rules import publish_int
 
 
@@ -81,13 +81,13 @@ def test_no_match_falls_back():
 
 
 def test_internal_publish_range():
-    from tools.model_catalog import find_models_by_args
-    models = find_models_by_args({"publish_start": "2025-01-01",
-                                  "publish_end": "2025-12-31", "limit": 50})
+    from tools.model_catalog import find_models_result
+    models = find_models_result({"publish_start": "2025-01-01",
+                                 "publish_end": "2025-12-31", "limit": 50}).models
     _assert(models, "内部日期区间可用")
     _assert(all(20250101 <= _publish_int(m) <= 20251231 for m in models), "内部区间生效")
-    _assert_eq(len(find_models_by_args({"publish_start": "2025-01-01",
-                                        "publish_end": "2025-12-31", "limit": 1})), 1,
+    _assert_eq(len(find_models_result({"publish_start": "2025-01-01",
+                                       "publish_end": "2025-12-31", "limit": 1}).models), 1,
                "limit 生效")
 
 
@@ -102,7 +102,7 @@ def test_parse_constraint_dtos():
 
 
 def test_format_empty_result():
-    r = ModelQueryResult(models=[{"name": "X"}], kind="budget",
+    r = FindModelsResult(models=[{"name": "X"}], kind="budget",
                          constraints=ModelQueryConstraints())
     _assert_in("在您选择的条件内（全部型号）", format_model_query(r), "格式化不依赖 agent")
 

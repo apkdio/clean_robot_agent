@@ -22,14 +22,12 @@ from config.word_dict_config import (
 
 logger = get_logger(name="sops_base")
 SOPS = {}  # sop_id → sop 定义
-# 可选槽位的显式“跳过”返回值；与 None（提取失败）区分
-SKIP = object()
 # 定义形如 {"id": xxx, "name": xxx, "trigger": [xxx], "guards": [xxx], "intro": xxx,
 #           "max_retry": xxx, "steps": [xxx]}；name 缺省回 id。
 # register() 在落表前校验必填字段、step 唯一性、回调可调用与枚举值。
 # ask 步：{"id": xxx, "type": "ask", "slot": xxx, "ask": str|fn, "retry": str|fn, "extract": fn}
 #          fn 返回 ExtractResult(skip/done/fail)；done 的 extra 由 base 合并进 slots，
-#          extra["trace"] 由 base 统一写节点。旧 extractor 的裸返回值仍兼容。
+#          extra["trace"] 由 base 统一写节点。
 # action 步：{"id": xxx, "type": "action", "action": fn}；fn 唯一入参是 slots 副本：
 #            原件仍是 session["slots"]，fn 对副本的修改不回写；
 #            副本带内部 "_slot_status": {slot: filled|skipped|dropped}，仅供 fn 读取，
@@ -441,17 +439,6 @@ def _close_step(span_id, status: str, out: dict) -> None:
         trace_store.end_span(span_id, status=status, out=out)
 
 
-def _normalize_extract(value) -> ExtractResult:
-    """兼容旧 extractor 的裸返回值；生产 extractor 一律返回 ExtractResult。"""
-    if isinstance(value, ExtractResult):
-        return value
-    if value is SKIP:
-        return ExtractResult("skip")
-    if value is None:
-        return ExtractResult("fail")
-    return ExtractResult("done", value)
-
-
 def _write_extract_trace(result: ExtractResult) -> None:
     """extractor 不直接写 trace；需要留痕时把事实放在 extra["trace"]，由这里统一写。"""
     fact = (result.extra or {}).get("trace")
@@ -527,7 +514,7 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
                     step_span = None
                     return SopStepResult("ask", _ask_text(
                         step, "ask", ctx, sop["id"], step.get("id")))
-                result = _normalize_extract(step["extract"](user_input, session["slots"]))
+                result = step["extract"](user_input, session["slots"])
                 _write_extract_trace(result)
                 if result.kind == "skip":
                     # 显式留空：不重试，直接跳过该槽

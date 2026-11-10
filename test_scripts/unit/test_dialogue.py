@@ -28,12 +28,14 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
 from test_scripts._runner import *
 from tools.agent import ask_stream
 from tools.context_store import append_message
+from tools.dto.request import ChatRequest
 
 
 def _chat(query, sid, lng=None, lat=None):
     """模拟一轮对话：收集流式回答，并写 assistant 消息维持历史。"""
     parts = []
-    for chunk in ask_stream(query, sid, lng, lat):
+    for chunk in ask_stream(ChatRequest(query=query, session_id=sid,
+                                        lng=lng, lat=lat)):
         parts.append(chunk)
     ans = "".join(parts).strip()
     if ans:

@@ -117,15 +117,6 @@ def _ctx_cfg() -> dict:
     return cfg()
 
 
-def _resolve_date_filter(query: str) -> dict | None:
-    """兼容读侧/评测的日期 filter 适配器；日期解析与守卫在 model_query。"""
-    from tools.date_rules import build_date_filter
-    from tools.model_query import resolve_date_range
-
-    r = resolve_date_range(query)
-    return build_date_filter(r[0], r[1]) if r else None
-
-
 # ── 阶段实现 ────────────────────────────────────────────────────
 
 def _stage_normalize(ctx: TurnContext) -> StageOutcome:
@@ -678,25 +669,9 @@ def _run_stages(ctx: TurnContext) -> Iterator[str]:
         raise error
 
 
-def _ask_stream(query: str, session_id: str = "default", lng=None, lat=None,
-                retry: bool = False, stop_check=None):
-    """旧主链入口：保留给测试与低层调用，行为与 ask_stream 相同。"""
-    request = ChatRequest(query=query, session_id=session_id,
-                          lng=lng, lat=lat, retry=retry)
-    yield from _run_stages(TurnContext.from_request(request, stop_check))
-
-
-def ask_stream(request: ChatRequest | str, session_id: str = "default",
-               lng=None, lat=None, retry: bool = False, stop_check=None):
-    """流式问答入口：开一轮 trace，交给阶段序列，收尾时落盘。
-
-    request 传 ChatRequest 时其余参数忽略；传字符串时按旧签名构造请求。
-    """
-    if isinstance(request, ChatRequest):
-        req = request
-    else:
-        req = ChatRequest(query=request, session_id=session_id,
-                          lng=lng, lat=lat, retry=retry)
+def ask_stream(request: ChatRequest, stop_check=None):
+    """流式问答入口：开一轮 trace，交给阶段序列，收尾时落盘。"""
+    req = request
     trace_store.begin_turn(req.session_id, req.query,
                            retry=True if req.retry else None)
     set_log_session(req.session_id)

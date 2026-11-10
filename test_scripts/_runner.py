@@ -199,8 +199,10 @@ def reset_trace(session_id: str) -> None:
         session_dir = trace_store._session_dir(session_id)
         if session_dir and os.path.isdir(session_dir) and not os.listdir(session_dir):
             os.rmdir(session_dir)          # 文件删空就连目录收掉：别留空壳（读数器会按目录名解析日期）
+        from repo.trace import write as trace_write
+
         trace_store.reset_sequence(session_id)
-        trace_store._last.pop(session_id, None)
+        trace_write._last.pop(session_id, None)
     except Exception:  # noqa: BLE001
         pass
 

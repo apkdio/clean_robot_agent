@@ -5,7 +5,6 @@
 
 from sops.base import (  # noqa: F401
     SOPS,
-    SKIP,
     register,
     start_sop,
     continue_sop,

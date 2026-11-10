@@ -22,6 +22,7 @@ import sops  # 触发 repair/model_query SOP 注册
 import sops.base
 from test_scripts import trace_reader
 from tools import trace_store
+from tools.dto.sop import ExtractResult
 
 
 def _pair(result):
@@ -55,15 +56,16 @@ def _cleanup():
 
 def _extract_budget(text, _slots):
     from tools.metadata_extractor import extract_price_constraint
-    return extract_price_constraint(text)
+    parsed = extract_price_constraint(text)
+    return ExtractResult("done", parsed) if parsed is not None else ExtractResult("fail")
 
 
 def _extract_has_pet(text, _slots):
     if re.search(r"没|无|不养|没有|没养", text):
-        return False
+        return ExtractResult("done", False)
     if re.search(r"有|养|猫|狗|宠物", text):
-        return True
-    return None
+        return ExtractResult("done", True)
+    return ExtractResult("fail")
 
 
 def _mock_search(slots):
@@ -101,7 +103,9 @@ _BAD_SOP = {
     "trigger": ["坏模板"],
     "steps": [
         {"id": "ask_name", "type": "ask", "slot": "name",
-         "ask": "叫什么？", "retry": "说名字。", "extract": lambda text, slots: text.strip() or None},
+         "ask": "叫什么？", "retry": "说名字。",
+         "extract": lambda text, slots: ExtractResult("done", text.strip())
+         if text.strip() else ExtractResult("fail")},
         {"id": "reply", "type": "reply",
          "template": "你好$name$missing_field", "fallback": "抱歉，出了点小问题。"},
     ],
@@ -463,7 +467,7 @@ def test_missing_ask_placeholder_uses_retry():
         "steps": [{
             "id": "ask_name", "type": "ask", "slot": "name",
             "ask": "$missing", "retry": "请再说一次名字～",
-            "extract": lambda text, slots: None,
+            "extract": lambda text, slots: ExtractResult("fail"),
         }],
     })
     try:

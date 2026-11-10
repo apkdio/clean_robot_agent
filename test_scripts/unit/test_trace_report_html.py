@@ -55,7 +55,7 @@ def _write(root, turns=None):
     stem = os.path.join(d, "%s_%s_1500" % (SID, DAY))
     with open(stem + ".jsonl", "w", encoding="utf-8") as f:
         for rec in (turns or (_turn(1, "保修期是多久", "answer"),
-                              _turn(2, "怎么设置定时清扫", "no_answer_fallback", shadow={"agree": False}))):
+                              _turn(2, "怎么设置定时清扫", "no_answer_fallback"))):
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     with open(stem + ".chunks.jsonl", "w", encoding="utf-8") as f:
         # 一轮一条记录，片段在嵌套列表里
@@ -90,7 +90,6 @@ def test_session_view_and_render():
         _assert_eq(view["n_turns"], 2, "两轮都在")
         _assert_eq(len(view["turns"][0]["chunks"]), 1, "第一轮有 1 片召回")
         _assert_eq(view["turns"][1]["chunks"], [], "第二轮无召回")
-        _assert(view["turns"][1]["shadow_mismatch"], "影子不一致被识别")
         _assert(view["turns"][1]["norm"], "归一化改过被识别")
 
         page = html_report.render([view], DATE, root)
@@ -116,7 +115,7 @@ def test_latest_date_and_empty_chunks():
 
 
 def test_details_render_as_tables():
-    """链路细节拆成表格：检索各遍逐列铺开，rewrite / merge / shadow 走键值表，不再吐原始 dict。"""
+    """链路细节拆成表格：检索各遍逐列铺开，rewrite / merge 走键值表，不再吐原始 dict。"""
     root = tempfile.mkdtemp(prefix="trace_html_")
     try:
         _write(root)
@@ -135,8 +134,6 @@ def test_details_render_as_tables():
         _assert_in("<caption>rewrite · 检索口径</caption>", page, "rewrite 是键值表")
         _assert_in("<th>normalize</th>", page, "归一化单独一行")
         _assert_in("<caption>merge · 两路合并</caption>", page, "merge 是键值表")
-        _assert_in("<caption>shadow · 影子决策</caption>", page, "shadow 是键值表")
-        _assert_in("<td>否</td>", page, "布尔值说人话（agree=False）")
         _assert_not_in("<p>rewrite: {", page, "不再输出原始 dict 串")
         _assert_not_in("<p>passes: [", page, "不再输出原始 dict 串")
         _assert_not_in("<caption>twice_retrieval · 撤域二次召回</caption>", page, "没触发二次召回的轮次不铺这张表")

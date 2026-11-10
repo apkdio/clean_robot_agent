@@ -8,7 +8,7 @@ from tools.dto.clarify import (
 )
 from tools.dto.executor import ExecOutcome, NotMine, Reply
 from tools.dto.handoff import Handoff
-from tools.dto.model_query import (FindModelsResult, ModelQueryConstraints, ModelQueryResult,
+from tools.dto.model_query import (FindModelsResult, ModelQueryConstraints,
                                    ParamFilter, PriceRange, PublishRange)
 from tools.dto.request import ChatRequest
 from tools.dto.sop import ExtractResult, SopStepResult
@@ -20,7 +20,7 @@ __all__ = [
     "Reply", "NotMine", "ExecOutcome", "Handoff",
     "ClarifyData", "ClarifyResult",
     "CLARIFY_DONE", "CLARIFY_RESUME", "CLARIFY_DROP", "CLARIFY_KINDS",
-    "ModelQueryResult", "FindModelsResult", "ModelQueryConstraints",
+    "FindModelsResult", "ModelQueryConstraints",
     "PriceRange", "PublishRange", "ParamFilter",
     "ChatRequest",
     "ExtractResult", "SopStepResult",

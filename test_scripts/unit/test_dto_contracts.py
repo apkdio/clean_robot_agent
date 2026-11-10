@@ -11,7 +11,7 @@ from test_scripts._runner import *
 from tools.dto.clarify import CLARIFY_DONE, CLARIFY_DROP, CLARIFY_RESUME, ClarifyResult
 from tools.dto.executor import NotMine, Reply
 from tools.dto.handoff import Handoff
-from tools.dto.model_query import ModelQueryConstraints, ModelQueryResult
+from tools.dto.model_query import FindModelsResult, ModelQueryConstraints
 from tools.dto.request import ChatRequest
 from tools.dto.sop import ExtractResult, SopStepResult
 from tools.dto.stage import Continue, Finish
@@ -104,7 +104,7 @@ def test_extract_result():
 
 
 def test_model_query_result():
-    r = ModelQueryResult(models=[{"name": "X"}], kind="budget",
+    r = FindModelsResult(models=[{"name": "X"}], kind="budget",
                          constraints=ModelQueryConstraints())
     _assert_eq(r.kind, "budget", "模型查询 kind")
     _assert_eq(len(r.models), 1, "模型查询结果")

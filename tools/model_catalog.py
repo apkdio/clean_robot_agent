@@ -421,11 +421,6 @@ def find_models_result(args: Dict, prev_models: "List[Dict] | None" = None) -> F
     return FindModelsResult(result.models, dropped, notes, constraints)
 
 
-def find_models_by_args(args: Dict, prev_models: "List[Dict] | None" = None) -> List[Dict]:
-    """兼容旧调用方：只返回型号列表；需要 dropped/notes 时用 find_models_result()。"""
-    return find_models_result(args, prev_models).models
-
-
 def _spec_values_of(key: str) -> List[str]:
     """取某规格键在型号缓存里的全部取值（用于校验 LLM 填的键/值）。"""
     field = "param_%s" % key

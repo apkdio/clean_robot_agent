@@ -8,8 +8,6 @@
   data/context_meta/<YYYYMMDD>/<session_id>_<YYYYMMDD_HHMM>.meta.json 标题 / 上一轮推荐
 
 日期取会话创建时间（文件名后缀），跨零点续聊仍留在创建当天的目录里。
-兼容历史布局：早期平铺在 data/context/ 下的文件（含无时间戳的 <session_id>.jsonl）仍可读写，
-新会话一律写入日期子目录。
 """
 
 import json
@@ -62,7 +60,7 @@ def _created_iso(created: str | None) -> str:
 
 
 def _scan_existing(session_id: str) -> tuple[str, str] | None:
-    """查找该会话已存在的文件（日期子目录、历史扁平命名、无时间戳命名都认）。"""
+    """查找该会话已存在的文件。"""
     for fp, stem, day in _iter_data_files():
         sid, _created = _split_created(stem)
         if sid != session_id:
@@ -72,27 +70,17 @@ def _scan_existing(session_id: str) -> tuple[str, str] | None:
     return None
 
 
-def _date_dir_of(stem: str) -> str | None:
-    """会话文件名对应的日期子目录名（YYYYMMDD）；无时间戳后缀则为 None。"""
-    _sid, created = _split_created(stem)
-    return created[:8] if created else None
-
-
 def _iter_data_files():
-    """遍历所有会话 jsonl，yield (完整路径, 文件名主干, 日期子目录名或 "")。
-
-    两种布局都扫：新的 data/context/<YYYYMMDD>/<stem>.jsonl，与历史的 data/context/<stem>.jsonl。
-    """
+    """遍历日期子目录下的会话 jsonl，yield (完整路径, 文件名主干, 日期子目录名)。"""
     if not os.path.isdir(_CONTEXT_DIR):
         return
     for entry in sorted(os.listdir(_CONTEXT_DIR)):
         full = os.path.join(_CONTEXT_DIR, entry)
-        if os.path.isdir(full):
-            for fn in sorted(os.listdir(full)):
-                if fn.endswith(".jsonl"):
-                    yield os.path.join(full, fn), fn[:-6], entry
-        elif entry.endswith(".jsonl"):
-            yield full, entry[:-6], ""
+        if not os.path.isdir(full):
+            continue
+        for fn in sorted(os.listdir(full)):
+            if fn.endswith(".jsonl"):
+                yield os.path.join(full, fn), fn[:-6], entry
 
 
 def _paths(session_id: str) -> tuple[str, str]:
@@ -216,7 +204,7 @@ def delete_session(session_id: str) -> bool:
             os.remove(meta_fp)
         except OSError:
             pass
-    # 日期目录空了就顺手收掉（历史扁平布局没有子目录，不会被误删）
+    # 日期目录空了就顺手收掉
     for p in (fp, meta_fp):
         parent = os.path.dirname(p)
         if parent not in (_CONTEXT_DIR, _CONTEXT_META_DATA_DIR):

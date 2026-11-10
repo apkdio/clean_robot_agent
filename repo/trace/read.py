@@ -23,7 +23,7 @@ def latest_turn(session_id: str) -> dict:
                 continue
             for name in os.listdir(d):
                 if not name.endswith(".jsonl") or re.search(
-                        r"\.(chunks|shadow|feedback|events)\.jsonl$", name):
+                        r"\.(chunks|feedback|events)\.jsonl$", name):
                     continue
                 p = os.path.join(d, name)
                 m = os.path.getmtime(p)

@@ -37,8 +37,9 @@ def test_valid_and_compat_entry():
     result = _run({"budget_min": 1500, "budget_max": 2000})
     _assert_eq([m["name"] for m in result.models], ["B"], "合法预算正常筛选")
     _assert_eq(result.dropped, [], "合法参数无 dropped")
-    names = _with_fake(lambda: [m["name"] for m in mt.find_models_by_args({"budget_max": 1000})])
-    _assert_eq(names, ["A"], "旧 list 入口仍兼容")
+    names = _with_fake(lambda: [m["name"] for m in mt.find_models_result(
+        {"budget_max": 1000}).models])
+    _assert_eq(names, ["A"], "预算上限正常筛选")
 
 
 def test_invalid_conditions_are_dropped_not_cleared():

@@ -593,7 +593,7 @@ def test_step_keys_registered():
     import ast
     import pathlib
 
-    from tools.trace_store import _STEP_NAMES
+    from repo.trace.write import _STEP_NAMES
 
     root = pathlib.Path(__file__).resolve().parents[2]
     found = {}

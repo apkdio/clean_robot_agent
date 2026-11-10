@@ -11,19 +11,11 @@ from tools import trace_store
 from repo.trace import paths, read, sidecar, write
 
 
-def test_single_authoritative_state():
-    _assert_true(trace_store._local is write._local, "trace_store._local 是同一实例")
-    _assert_true(trace_store._seq is write._seq, "_seq 是同一字典")
-    _assert_true(trace_store._last is write._last, "_last 是同一字典")
-    _assert_true(trace_store._dir_cache is paths._dir_cache, "目录缓存没有副本")
-    _assert_true(trace_store._stem_cache is paths._stem_cache, "文件名缓存没有副本")
-
-
-def test_public_entrypoints_are_reexports():
+def test_facade_reexports_public_api():
     _assert_true(trace_store._path is paths._path, "_path 来自 paths")
     _assert_true(trace_store.begin_turn is write.begin_turn, "begin_turn 来自 write")
     _assert_true(trace_store.latest_turn is read.latest_turn, "latest_turn 来自 read")
-    _assert_true(trace_store.shadow_turn is sidecar.shadow_turn, "shadow_turn 来自 sidecar")
+    _assert_true(trace_store.feedback_turn is sidecar.feedback_turn, "feedback_turn 来自 sidecar")
 
 
 def test_sop_span_contains_internal_node():
@@ -94,16 +86,16 @@ def test_turn_index_increments_and_resets():
             trace_store.begin_turn(sid, "第%d轮" % i)
             trace_store.note_behavior("chitchat")
             trace_store.end_turn(reply="ok")
-            seen.append(trace_store._last[sid].get("turn_index"))
+            seen.append(write._last[sid].get("turn_index"))
         _assert_eq(seen, list(range(1, 21)), "同一会话轮次号连续 1..20")
     finally:
         reset_trace(sid)
     trace_store.begin_turn(sid, "重置后")
     try:
-        _assert_eq(trace_store._last.get(sid, {}).get("turn_index"), None,
+        _assert_eq(write._last.get(sid, {}).get("turn_index"), None,
                    "重置后还没落盘")
         trace_store.end_turn(reply="ok")
-        _assert_eq(trace_store._last[sid].get("turn_index"), 1, "重置后从 1 开始")
+        _assert_eq(write._last[sid].get("turn_index"), 1, "重置后从 1 开始")
     finally:
         trace_store.end_turn()
         reset_trace(sid)
@@ -117,7 +109,7 @@ def test_trace_dir_isolation():
     _assert(isinstance(dirs, list), "session_dirs 仍公开且返回列表")
 
 
-TESTS = [test_single_authoritative_state, test_public_entrypoints_are_reexports,
+TESTS = [test_facade_reexports_public_api,
          test_sop_span_contains_internal_node, test_sop_step_spans_match_flow,
          test_turn_index_increments_and_resets, test_trace_dir_isolation]
 

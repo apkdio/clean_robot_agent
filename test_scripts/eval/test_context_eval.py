@@ -299,8 +299,9 @@ def _ask(sid: str, query: str):
     不再是两处证据。end_turn() 在本轮生成器消费完时落盘，所以返回时记录已在。
     """
     from tools.agent import ask_stream
+    from tools.dto.request import ChatRequest
 
-    reply = "".join(ask_stream(query, sid)).strip()
+    reply = "".join(ask_stream(ChatRequest(query=query, session_id=sid))).strip()
     return reply, read_last_turn(sid)
 
 
