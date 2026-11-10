@@ -1,0 +1,93 @@
+tools/trace_store.py
+  s_40681318f5a20b::t_0e18c61f79ef1a 3,35,48-59
+test_scripts/unit/test_selection_tags.py
+  s_40681318f5a20b::t_5676379e565d4e 52-53,56
+test_scripts/unit/test_model_query.py
+  s_40681318f5a20b::t_213fad1506b0cb 10
+tools/dto/__init__.py
+  s_40681318f5a20b::t_bd532796a77fbc 11
+  s_40681318f5a20b::t_f26481cfc7bb7b 23
+test_scripts/unit/test_version_store.py
+  s_321753db235424::t_373d6cf8c4a549 161-167,173
+test_scripts/unit/test_model_query_sop.py
+  s_40681318f5a20b::t_484ddf8d0c185e 59-60,65,67-68
+  s_40681318f5a20b::t_f710ae2c01017c 470
+  s_40681318f5a20b::t_8f993e8fe24f5a 106-108
+test_scripts/unit/test_trace_report_html.py
+  s_40681318f5a20b::t_3645e62bb2a9f9 58
+  s_40681318f5a20b::t_0da75c81c5c323 118
+test_scripts/eval/test_context_eval.py
+  s_40681318f5a20b::t_15e4d69d4e6ff4 302,304
+tools/context_store.py
+  s_40681318f5a20b::t_f12d250b52adca 74,79-83
+  s_40681318f5a20b::t_5a8732d5bdc29d 207
+  s_40681318f5a20b::t_aa92ab112b5f65 63
+test_scripts/unit/test_review_fixes.py
+  s_40681318f5a20b::t_79cfe7ebc7a096 50,54
+repo/trace/sidecar.py
+  s_40681318f5a20b::t_bfea054401a428 15
+tools/model_query.py
+  s_40681318f5a20b::t_9a6ec4a5e71ca9 13
+test_scripts/trace_report.py
+  s_40681318f5a20b::t_e5501d2452bcd9 549
+  s_40681318f5a20b::t_2bd472a396dc3d 261
+  s_40681318f5a20b::t_45989935c42d23 410
+  s_40681318f5a20b::t_3c82eaba182f66 12
+test_scripts/unit/test_dialogue.py
+  s_40681318f5a20b::t_5058628b2a26d3 31,37-38
+test_scripts/unit/test_service_point_sop.py
+  s_40681318f5a20b::t_a3ff7e15036378 18
+  s_40681318f5a20b::t_9cce4a10dd9036 179-181,184-186
+repo/trace/read.py
+  s_40681318f5a20b::t_0f233ade023a40 26
+test_scripts/unit/test_function_tools.py
+  s_40681318f5a20b::t_1cf2d91187bf88 159
+test_scripts/unit/test_trace_split.py
+  s_40681318f5a20b::t_f2af89687cede8 95,98
+  s_40681318f5a20b::t_68674962bf37f8 14,18
+  s_40681318f5a20b::t_4d47cf05246bfd 89
+test_scripts/trace_reader.py
+  s_40681318f5a20b::t_b9671927a192e8 14
+test_scripts/unit/test_find_models_validation.py
+  s_40681318f5a20b::t_069f9b942724aa 40-42
+test_scripts/unit/test_models_repo.py
+  s_40681318f5a20b::t_018317bdf27345 83
+  s_40681318f5a20b::t_dd9fb06f0d9686 94
+tools/agent.py
+  s_40681318f5a20b::t_6c1b5165c7950c 672-674
+README.md
+  s_40681318f5a20b::t_4ecc47d2c7953c 133
+  s_40681318f5a20b::t_45220870c957e7 359
+test_scripts/unit/test_repair_sop.py
+  s_40681318f5a20b::t_9ff93e76d09bdb 90-91
+test_scripts/unit/test_agent_guards.py
+  s_40681318f5a20b::t_2cfb028ddf18d2 20
+  s_40681318f5a20b::t_b8448e7d8950c8 21,25-29
+  s_40681318f5a20b::t_ad112d40a3562d 30
+test_scripts/_runner.py
+  s_40681318f5a20b::t_3ebb1adcde8ba0 202-203,205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.52-trip",
+  "base_commit_sha": "6e8522a132534c19216c32c7f708b9c24ca4b781",
+  "prompts": {},
+  "sessions": {
+    "s_321753db235424": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_vqwohz01c4pd",
+        "model": "auto(free)"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    },
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
