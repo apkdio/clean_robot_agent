@@ -1,0 +1,30 @@
+test_scripts/unit/test_dto_contracts.py
+  s_40681318f5a20b::t_d363e8b297f849 16
+  s_40681318f5a20b::t_1884808cbe600c 220
+  s_40681318f5a20b::t_8a8508a2280853 178-193
+webapp/app.py
+  s_40681318f5a20b::t_0c1a0c3d13c414 104
+  s_40681318f5a20b::t_2039e2c68773a9 158-160
+  s_40681318f5a20b::t_56bac460397d54 150-151
+service/knowledge_service.py
+  s_40681318f5a20b::t_74bac6eddad1f3 21-26
+  s_40681318f5a20b::t_da74ed1dc9375d 6
+  s_40681318f5a20b::t_d1f58f43732825 37-58
+  s_40681318f5a20b::t_0a0a45be3c447a 65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.52-trip",
+  "base_commit_sha": "6f8344f24b40802a63a7d72195def431f9702dff",
+  "prompts": {},
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
