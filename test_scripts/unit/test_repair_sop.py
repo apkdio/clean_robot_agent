@@ -15,7 +15,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
 from test_scripts._runner import *
 import sops  # 触发注册
 import sops.base
-import sops.repair
+import sops.repair_sop
 from test_scripts import trace_reader
 from tools import trace_store
 
@@ -28,7 +28,7 @@ def _cleanup():
     sops.base._sessions = {}
     # 会话状态已迁到 Redis，同时清空 Redis 里的 SOP 会话，避免测试间残留
     try:
-        from tools.redis_store import get_redis
+        from gateway.redis_store import get_redis
         r = get_redis()
         if r is not None:
             for k in r.keys("sop:session:*"):
@@ -42,7 +42,7 @@ def _cleanup():
 # ──────────────────────────────────────────────────────────────
 
 def test_extract_symptom_rule():
-    from sops.repair import _extract_symptom
+    from sops.repair_sop import _extract_symptom
     _assert_eq(_extract_symptom("机器人不动了", {}).value, "机器人不移动怎么办", "不动")
     _assert_eq(_extract_symptom("水箱漏水", {}).value, "水箱漏水怎么办", "漏水")
     _assert_eq(_extract_symptom("有异响", {}).value, "扫地机器人异响怎么办", "异响")
@@ -69,7 +69,7 @@ def test_repair_trigger():
 
 def test_repair_sop_flow():
     _cleanup()
-    steps = sops.repair.REPAIR_SOP["steps"]
+    steps = sops.repair_sop.REPAIR_SOP["steps"]
     orig_action = steps[1]["action"]
     steps[1]["action"] = lambda slots: {"query": "机器人不移动怎么办", "domain": "repair"}
     try:
@@ -86,41 +86,41 @@ def test_repair_sop_flow():
 
 def test_repair_sop_ask_fallback():
     _cleanup()
-    orig = sops.repair.REPAIR_SOP["steps"][0]["extract"]
+    orig = sops.repair_sop.REPAIR_SOP["steps"][0]["extract"]
     from tools.dto.sop import ExtractResult
-    sops.repair.REPAIR_SOP["steps"][0]["extract"] = lambda text, slots: ExtractResult("fail")
+    sops.repair_sop.REPAIR_SOP["steps"][0]["extract"] = lambda text, slots: ExtractResult("fail")
     try:
         reply, done = _pair(sops.base.start_sop("r2", "repair", "机器人不动了怎么办"))
         _assert(not done, "提取失败未结束")
         _assert_in("故障现象", reply, "返回 ask 反问现象")
         _assert(sops.base.has_active_sop("r2"), "会话保持活跃")
     finally:
-        sops.repair.REPAIR_SOP["steps"][0]["extract"] = orig
+        sops.repair_sop.REPAIR_SOP["steps"][0]["extract"] = orig
     _cleanup()
 
 
 def test_repair_dropped_symptom_does_not_search():
     """症状槽位被放弃后 slots 里没有该键，不能把 None 字符串拿去检索。"""
-    out = sops.repair._search_repair({"_slot_status": {"symptom": "dropped"}})
+    out = sops.repair_sop._search_repair({"_slot_status": {"symptom": "dropped"}})
     _assert_eq(out.get("query"), "", "dropped 槽位直接返回空 query")
 
 
 def test_repair_handoff_contract():
     """症状确认后只产出 handoff，不在 SOP 内检索/生成。"""
-    result = sops.repair._search_repair({"symptom": "机器人不移动"})
+    result = sops.repair_sop._search_repair({"symptom": "机器人不移动"})
     _assert_eq(result.get("query"), "机器人不移动", "action 只归一 query")
     _assert_eq(result.get("domain"), "repair", "action 标记 repair 域")
-    handoff = sops.repair._repair_handoff(result)
+    handoff = sops.repair_sop._repair_handoff(result)
     _assert_eq(handoff.target, "retrieve", "目标阶段 retrieve")
     _assert_eq(handoff.query, "机器人不移动", "query 透传")
     _assert_eq(handoff.domain, "repair", "domain 透传")
-    _assert_eq(sops.repair._repair_handoff({"query": ""}), None, "无 query 不 handoff")
+    _assert_eq(sops.repair_sop._repair_handoff({"query": ""}), None, "无 query 不 handoff")
 
 
 def test_repair_empty_reply_falls_back():
     """没有 query 时 handoff 返回 None，reply 用步骤级 fallback。"""
     _cleanup()
-    steps = sops.repair.REPAIR_SOP["steps"]
+    steps = sops.repair_sop.REPAIR_SOP["steps"]
     orig_action = steps[1]["action"]
     fallback = steps[2]["fallback"]
     steps[1]["action"] = lambda slots: {"query": "", "domain": "repair"}
@@ -160,10 +160,10 @@ def _path_of(sid, query, fn):
 
 def test_symptom_mapping_leaves_trace():
     """症状映射来源要落 trace：extractor 只返回 extra["trace"]，由 base 统一写。"""
-    import tools.llm_tool as lt
+    import gateway.llm_tool as lt
     real = lt.chat_with_tools
-    orig_action = sops.repair.REPAIR_SOP["steps"][1]["action"]
-    sops.repair.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"query": "", "domain": "repair"}
+    orig_action = sops.repair_sop.REPAIR_SOP["steps"][1]["action"]
+    sops.repair_sop.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"query": "", "domain": "repair"}
     try:
         lt.chat_with_tools = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm"))
         path = _path_of("sym1", "它不动了",
@@ -179,7 +179,7 @@ def test_symptom_mapping_leaves_trace():
         _assert_eq((node or {}).get("status"), "miss", "两条都没命中 → status=miss")
     finally:
         lt.chat_with_tools = real
-        sops.repair.REPAIR_SOP["steps"][1]["action"] = orig_action
+        sops.repair_sop.REPAIR_SOP["steps"][1]["action"] = orig_action
         sops.base.end_sop("sym1")
         sops.base.end_sop("sym2")
         sops.base._sessions = {}
@@ -200,7 +200,7 @@ TESTS = [
 
 def run():
     reset()
-    return run_tests("故障排查 SOP 测试（sops.repair）", TESTS)
+    return run_tests("故障排查 SOP 测试（sops.repair_sop）", TESTS)
 
 
 if __name__ == "__main__":

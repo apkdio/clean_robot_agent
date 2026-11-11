@@ -70,7 +70,7 @@ def _seed(session_id: str, key) -> None:
 
 def _next_turn_index(session_id: str, day: str, file_lines: int) -> int:
     """跨进程轮次号：Redis INCR，首次用文件行数做种子；Redis 不可用回退本地计数。"""
-    from tools import redis_store
+    from gateway import redis_store
 
     r = redis_store.get_redis()
     if r is not None:
@@ -92,7 +92,7 @@ def _next_turn_index(session_id: str, day: str, file_lines: int) -> int:
 
 def reset_sequence(session_id: str, day: str = "") -> None:
     """清掉某会话的轮次号（测试/重置用）；不清理则同 sid 会接着数。"""
-    from tools import redis_store
+    from gateway import redis_store
 
     day = day or paths._today()
     r = redis_store.get_redis()

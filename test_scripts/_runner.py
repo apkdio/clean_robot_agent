@@ -38,7 +38,7 @@ os.environ.setdefault("CONTEXT_META_DIR", "data/test_context_metadata")
 os.environ.setdefault("TRACE_DIR", "temp/trace_test")   # trace 也隔离，避免污染真实 logs/trace/
 
 # 上一段那句「_runner 总先于其它模块被导入」是隐含约定，破了会静默失效
-_EARLY_IMPORTED = [m for m in ("tools.context_store", "tools.vector_store") if m in sys.modules]
+_EARLY_IMPORTED = [m for m in ("repo.context_store", "tools.vector_store") if m in sys.modules]
 if _EARLY_IMPORTED:
     raise RuntimeError(
         "测试隔离未生效：%s 已在 _runner 之前被导入——测试会话会被写进真实数据目录。"

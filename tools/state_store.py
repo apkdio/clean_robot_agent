@@ -16,7 +16,7 @@ import time
 from typing import Callable
 
 from tools.log_tool import get_logger
-from tools import redis_store
+from gateway import redis_store
 
 logger = get_logger(name="state_store")
 

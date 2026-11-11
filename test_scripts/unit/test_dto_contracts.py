@@ -66,7 +66,7 @@ def test_turn_event():
 
 def test_ops_dispatch_rejects_unknown_outcome():
     """执行体返回非 Reply/NotMine 时，派发器要显式报契约错误。"""
-    import tools.agent as agent_mod
+    import service.agent as agent_mod
     from tools.turn_context import TurnContext
 
     saved_exec, saved_pipeline = agent_mod._OP_EXEC, agent_mod._PIPELINE_OPS
@@ -112,7 +112,7 @@ def test_model_query_result():
 
 def test_run_stages_rejects_unknown_outcome():
     """阶段返回体不认识时，主链要显式报错，不能当 Continue 继续跑。"""
-    import tools.agent as agent_mod
+    import service.agent as agent_mod
     from tools.turn_context import TurnContext
 
     saved = agent_mod._STAGES
@@ -150,7 +150,7 @@ def test_chat_request():
 def test_stage_registry():
     """阶段注册表：id/node 唯一、实现可调用、节点标签已登记。"""
     from config.word_dict_config import TRACE_NODE_LABELS
-    from tools.agent import _STAGES
+    from service.agent import _STAGES
 
     ids = [spec.id for spec in _STAGES]
     nodes = [spec.node for spec in _STAGES]

@@ -26,8 +26,8 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools.agent import ask_stream
-from tools.context_store import append_message
+from service.agent import ask_stream
+from repo.context_store import append_message
 from tools.dto.request import ChatRequest
 
 

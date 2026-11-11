@@ -22,7 +22,7 @@ import sops
 import sops.base
 from test_scripts import trace_reader
 from tools import pending_store, trace_store
-from tools.context_store import delete_session
+from repo.context_store import delete_session
 
 _ROOT = os.path.dirname(os.path.dirname(_SCRIPT_DIR))
 _GOLDEN_FILE = os.path.join(_ROOT, "data", "eval", "sop", "golden.jsonl")
@@ -70,7 +70,7 @@ def _load_dataset():
 
 def _apply_patches(names):
     """给依赖外部模型的路径打桩；返回可用于复原的 (对象, 属性, 原值) 列表。"""
-    import sops.service_point as sp
+    import sops.service_point_sop as sp
 
     saved = []
     if "llm_city" in names:

@@ -16,13 +16,13 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from tools.agent import ask_stream
-from tools.chat_service import (
+from service.agent import ask_stream
+from service.chat_service import (
     acquire_turn_lock, clear_stop, release_turn_lock, set_stop, stream_turn,
 )
 from tools.dto.request import ChatRequest
 from tools.config_tool import get_config
-from tools.context_store import ensure_session_id, list_sessions
+from repo.context_store import ensure_session_id, list_sessions
 from tools.log_tool import get_logger
 from tools.vector_store import (
     ingest_file,
@@ -145,7 +145,7 @@ def ingest():
 
     # 先拿锁再落盘：两个并发同名上传会互相覆盖/删掉对方正在摄入的源文件；
     # 锁拿不到时文件还没写盘，直接 409 不留垃圾
-    from tools.redis_store import acquire_lock, release_lock
+    from gateway.redis_store import acquire_lock, release_lock
     if not acquire_lock("lock:ingest"):
         return jsonify({"status": "busy", "message": "正在摄入知识库，请稍候"}), 409
 
@@ -180,7 +180,7 @@ def ingest():
 
 @app.route("/api/reset", methods=["POST"])
 def reset():
-    from tools.redis_store import acquire_lock, release_lock
+    from gateway.redis_store import acquire_lock, release_lock
     if not acquire_lock("lock:ingest"):
         return jsonify({"status": "busy", "message": "正在摄入知识库，请稍候"}), 409
     try:
@@ -260,7 +260,7 @@ def chat_stream():
             # 停止同一语义：回滚这轮的 user 消息，不留「问了没答」的上下文残局
             if not completed:
                 try:
-                    from tools.context_store import rollback_last_user_message
+                    from repo.context_store import rollback_last_user_message
 
                     rollback_last_user_message(session_id)
                 except Exception as e:  # noqa: BLE001
@@ -288,7 +288,7 @@ def sessions():
 @app.route("/api/sessions/<sid>/messages", methods=["GET"])
 def session_messages(sid):
     """返回指定会话的完整消息（供前端加载历史对话）。"""
-    from tools.context_store import get_recent
+    from repo.context_store import get_recent
     if sid != ensure_session_id(sid):
         return jsonify({"status": "error", "message": "Invalid session id."}), 400
     try:
@@ -302,7 +302,7 @@ def session_messages(sid):
 @app.route("/api/sessions/<sid>", methods=["DELETE"])
 def remove_session(sid):
     """删除指定会话。"""
-    from tools.context_store import delete_session as _del_session
+    from repo.context_store import delete_session as _del_session
     if sid != ensure_session_id(sid):
         return jsonify({"status": "error", "message": "Invalid session id."}), 400
     try:

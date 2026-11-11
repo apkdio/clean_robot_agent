@@ -10,7 +10,7 @@ from tools.log_tool import get_logger
 from tools.model_query import (format_model_query, is_model_detail_query,
                                resolve_model_query)
 from tools.query_rewrite import history_block
-from tools.sop_runtime import enter_sop_result
+from sops.runtime import enter_sop_result
 from tools.turn_context import TurnContext
 
 logger = get_logger(name="op_executors")

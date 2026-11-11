@@ -22,7 +22,7 @@ import time
 from typing import Dict, Optional
 
 from tools.log_tool import get_logger
-from tools.redis_store import clarify_ttl, get_redis, json_dumps
+from gateway.redis_store import clarify_ttl, get_redis, json_dumps
 from tools.state_store import StateStore
 
 logger = get_logger(name="pending_store")

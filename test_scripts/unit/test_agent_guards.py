@@ -17,9 +17,9 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools.agent import ask_stream as _ask_prod
+from service.agent import ask_stream as _ask_prod
 from tools.dto.request import ChatRequest
-import tools.agent as agent_mod
+import service.agent as agent_mod
 
 
 def ask_stream(query, session_id="default", lng=None, lat=None,
@@ -36,7 +36,7 @@ def _reply(query):
 
 
 def _reset_session(sid):
-    from tools.context_store import delete_session
+    from repo.context_store import delete_session
 
     delete_session(sid)
 
@@ -109,7 +109,7 @@ def test_enter_gate_timeout_is_not_decline():
     from tools import pending_store, trace_store
     from sops.sop_gate import _clarify_sop_enter
     from tools.clarify_service import CLARIFY_DONE, CLARIFY_RESUME
-    from tools.context_store import is_enter_declined
+    from repo.context_store import is_enter_declined
     from test_scripts import trace_reader
 
     sid = "t-enter-timeout"
@@ -255,7 +255,7 @@ def test_exit_with_residual_uses_trace_not_behavior():
     """退出但带诉求：中间退出只落 sop.exit，不污染 tags / branch。"""
     from sops import end_sop, start_sop
     from tools import pending_store, trace_store
-    from tools.agent import _stage_active_sop
+    from service.agent import _stage_active_sop
     from tools.dto.request import ChatRequest
     from tools.turn_context import TurnContext
     from test_scripts import trace_reader
@@ -286,7 +286,7 @@ def test_exit_with_residual_uses_trace_not_behavior():
 def test_stopped_before_retrieval_records_node():
     """停止发生在检索前：不伪造回答，但 trace 要能看出是 stopped。"""
     from tools import trace_store
-    from tools.agent import _stage_retrieve
+    from service.agent import _stage_retrieve
     from tools.dto.request import ChatRequest
     from tools.turn_context import TurnContext
     from test_scripts import trace_reader
@@ -311,9 +311,9 @@ def test_empty_sop_reply_still_has_branch():
     """SOP reply 被清空时，base 要兜底，agent 也要留下行为出口。"""
     from sops import end_sop
     from sops.base import _save_session, make_session
-    import sops.repair
+    import sops.repair_sop
     from tools import trace_store
-    from tools.agent import _stage_active_sop
+    from service.agent import _stage_active_sop
     from tools.dto.request import ChatRequest
     from tools.turn_context import TurnContext
     from test_scripts import trace_reader
@@ -321,7 +321,7 @@ def test_empty_sop_reply_still_has_branch():
     sid = "t-empty-sop-branch"
     end_sop(sid)
     _reset_session(sid)
-    steps = sops.repair.REPAIR_SOP["steps"]
+    steps = sops.repair_sop.REPAIR_SOP["steps"]
     orig_action = steps[1]["action"]
     fallback = steps[2]["fallback"]
     steps[1]["action"] = lambda slots: {"query": "", "domain": "repair"}
@@ -344,8 +344,8 @@ def test_active_sop_repair_hands_off_to_retrieve():
     """repair 的 handoff 必须由 agent 转成 Continue(handoff)，不应在 SOP 内生成。"""
     from sops import end_sop
     from sops.base import _save_session, make_session
-    import sops.repair
-    from tools.agent import _stage_active_sop
+    import sops.repair_sop
+    from service.agent import _stage_active_sop
     from tools.dto.request import ChatRequest
     from tools.dto.stage import Continue
     from tools.turn_context import TurnContext
@@ -353,7 +353,7 @@ def test_active_sop_repair_hands_off_to_retrieve():
     sid = "t-sop-handoff"
     end_sop(sid)
     _reset_session(sid)
-    steps = sops.repair.REPAIR_SOP["steps"]
+    steps = sops.repair_sop.REPAIR_SOP["steps"]
     orig_action = steps[1]["action"]
     steps[1]["action"] = lambda slots: {"query": "机器人不移动", "domain": "repair"}
     try:
@@ -375,7 +375,7 @@ def test_active_sop_reads_state_once():
     import sops.base
     from sops import end_sop, start_sop
     from tools import trace_store
-    from tools.agent import _stage_active_sop
+    from service.agent import _stage_active_sop
     from tools.dto.request import ChatRequest
     from tools.turn_context import TurnContext
 
@@ -682,7 +682,7 @@ def test_retrieved_inject_chunks_dropped():
 
 
 def test_is_symbols_only():
-    from tools.sop_runtime import is_symbols_only
+    from sops.runtime import is_symbols_only
 
     _assert(is_symbols_only("？？？"), "纯符号→True")
     _assert(is_symbols_only("。。。"), "纯标点→True")

@@ -14,7 +14,7 @@ from tools.clarify_service import (
 from tools.dto.clarify import ClarifyResult
 from tools.log_tool import get_logger
 from tools.safety import with_safety_hint
-from tools.sop_runtime import enter_sop_result, note_sop, sop_name
+from sops.runtime import enter_sop_result, note_sop, sop_name
 from tools.turn_recorder import log_behavior
 
 logger = get_logger(name="sop_gate")

@@ -25,8 +25,8 @@ from sops.base import (  # noqa: F401
 )
 
 # 导入各 SOP 模块，触发 register 注册（顺序＝ match_sop 的优先顺序）
-import sops.service_point  # noqa: F401
-import sops.repair  # noqa: F401
+import sops.service_point_sop  # noqa: F401
+import sops.repair_sop  # noqa: F401
 import sops.model_query_sop  # noqa: F401
 import sops.sop_gate  # noqa: F401  注册 SOP 进入/退出澄清 handler
 

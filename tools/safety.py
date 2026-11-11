@@ -63,7 +63,7 @@ def _enabled() -> bool:
 
 
 def _recent_messages(session_id: str) -> list:
-    from tools.context_store import get_recent
+    from repo.context_store import get_recent
 
     n = int((_cfg().get("context") or {}).get("topic_window", 8) or 8)
     return get_recent(session_id, n=n)

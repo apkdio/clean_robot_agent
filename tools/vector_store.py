@@ -14,7 +14,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from tools import trace_store
 from tools.config_tool import get_config
 from tools.file_tools import extract_file, get_file_sha256_hex
-from tools.llm_tool import get_embedding_model
+from gateway.llm_tool import get_embedding_model
 from tools.log_tool import get_logger
 from tools.path_tool import get_abs_path
 

@@ -9,7 +9,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
 from test_scripts._runner import *
 
 from config.word_dict_config import domain_filter
-from tools.agent import StageSpec, _run_stages, _stage_retrieve
+from service.agent import StageSpec, _run_stages, _stage_retrieve
 from tools.dto.executor import Reply
 from tools.dto.handoff import Handoff
 from tools.dto.request import ChatRequest
@@ -22,7 +22,7 @@ def _ctx():
 
 
 def test_run_stages_forward_handoff_skips_middle():
-    import tools.agent as agent_mod
+    import service.agent as agent_mod
 
     saved = agent_mod._STAGES
     calls = []
@@ -40,7 +40,7 @@ def test_run_stages_forward_handoff_skips_middle():
 
 
 def test_run_stages_rejects_backward_handoff():
-    import tools.agent as agent_mod
+    import service.agent as agent_mod
 
     saved = agent_mod._STAGES
     agent_mod._STAGES = (
@@ -64,7 +64,7 @@ class _FakeRetriever:
 
 
 def test_retrieve_uses_handoff_domain_and_query():
-    import tools.agent as agent_mod
+    import service.agent as agent_mod
 
     fake = _FakeRetriever()
     saved_get = agent_mod._get_retriever
@@ -80,7 +80,7 @@ def test_retrieve_uses_handoff_domain_and_query():
 
 
 def test_ops_dispatch_propagates_handoff():
-    import tools.agent as agent_mod
+    import service.agent as agent_mod
 
     saved_exec, saved_pipeline = agent_mod._OP_EXEC, agent_mod._PIPELINE_OPS
     agent_mod._OP_EXEC = {"x": lambda ctx: Reply(handoff=Handoff("retrieve", "q", "repair"))}

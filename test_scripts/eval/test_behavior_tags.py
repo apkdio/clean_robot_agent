@@ -102,7 +102,7 @@ def test_accepted_branches_cover_mapping():
 
 def test_isolation_and_import_convention():
     """导入侧的隐性坑：测试隔离目录真的生效、项目模块不再出现裸名实例。"""
-    import tools.context_store as tc
+    import repo.context_store as tc
 
     _assert_in("test_context", tc._CONTEXT_DIR.replace("\\", "/"),
                "会话目录指向测试隔离目录 data/test_context")
@@ -297,7 +297,7 @@ def test_feedback_reason_enum():
 def test_stage_spans_and_stream_close():
     """阶段 span 由主链统一落；流式阶段要等子节点（answer.verify）之后才关。"""
     from tools import trace_store
-    import tools.agent as agent
+    import service.agent as agent
     from tools.dto.request import ChatRequest
     from tools.dto.stage import Continue, Finish
     from tools.turn_context import TurnContext
@@ -346,7 +346,7 @@ def test_stage_spans_and_stream_close():
 def test_stage_branch_alignment():
     """最后一个 stage 的出口语义必须落在 branch 的允许域内。"""
     from config.word_dict_config import BEHAVIOR_BY_TAG, TRACE_NODE_LABELS
-    from tools.agent import ask_stream
+    from service.agent import ask_stream
     from tools.dto.request import ChatRequest
 
     scope = {
@@ -557,7 +557,7 @@ def test_emitted_tags_and_nodes_are_registered():
     """静态登记核查：源码里实际写出的行为 tag / trace 节点与状态，必须在闭集表里登记。
 
     读写侧都容忍未登记的词（读侧回落原名、评测只报「tag 未登记」），所以要等运行时踩到才发现；
-    这里直接扫 tools/ sops/ function_tools/ 的字面量——新增埋点忘了登记会当场红。
+    这里直接扫 service/ tools/ sops/ function_tools/ 的字面量——新增埋点忘了登记会当场红。
     """
     import re
 
@@ -565,7 +565,7 @@ def test_emitted_tags_and_nodes_are_registered():
 
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     src = {}
-    for sub in ("tools", "sops", "function_tools"):
+    for sub in ("service", "tools", "sops", "function_tools"):
         d = os.path.join(root, sub)
         if not os.path.isdir(d):
             continue
@@ -597,7 +597,7 @@ def test_step_keys_registered():
 
     root = pathlib.Path(__file__).resolve().parents[2]
     found = {}
-    for sub in ("tools", "sops", "webapp"):
+    for sub in ("service", "tools", "sops", "webapp"):
         for py in (root / sub).rglob("*.py"):
             try:
                 tree = ast.parse(py.read_text(encoding="utf-8"))
@@ -720,7 +720,7 @@ def test_clarify_hub_contract():
     from config.word_dict_config import TRACE_NODE_LABELS
     from tools import clarify_service as clarify
     from tools import pending_store as ps
-    from tools.redis_store import clarify_ttl, sop_ttl
+    from gateway.redis_store import clarify_ttl, sop_ttl
 
     biz_consts = {getattr(ps, n) for n in dir(ps) if n.startswith("BIZ_")}
     handlers = clarify.registered_handlers()
@@ -894,22 +894,24 @@ def test_dto_boundary_contract():
 
 def test_transport_event_sequence():
     """交付层回归：stream_turn 产出的 TurnEvent 序列必须稳定（delta → meta → done）。"""
-    from tools import chat_service
-    from tools.context_store import delete_session, get_recent, set_session_title
+    from service import chat_service
+    from repo.context_store import delete_session, get_recent, set_session_title
+    from tools.dto.request import ChatRequest
 
     sid = "dto-transport-smoke"
     delete_session(sid)
     set_session_title(sid, "transport smoke")
 
     def fake_ask(request, *_args, **_kwargs):
-        from tools.context_store import append_message
+        from repo.context_store import append_message
 
         append_message(request.session_id, "user", request.query)
         yield "第一段"
         yield "第二段"
 
     try:
-        events = list(chat_service.stream_turn("你好", sid, ask_stream_func=fake_ask))
+        events = list(chat_service.stream_turn(
+            ChatRequest("你好", sid), ask_stream_func=fake_ask))
         _assert_eq([e.kind for e in events], ["delta", "delta", "meta", "done"],
                    "事件顺序固定：增量 → meta → done")
         _assert_eq("".join(e.text for e in events if e.kind == "delta"),

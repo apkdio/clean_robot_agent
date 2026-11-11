@@ -21,7 +21,7 @@ from tools import pending_store
 
 def set_danger_window(session_id: str, word: str = "糊味", text: str = "") -> None:
     """在会话里造一条带 danger 标记的用户消息（安全承接的前提之一）。"""
-    from tools.context_store import append_message
+    from repo.context_store import append_message
 
     append_message(session_id, "user", text or ("我的机器人底下好像有%s出现，还有味道" % word), danger=True)
 
@@ -33,7 +33,7 @@ def set_carry_count(session_id: str, n: int) -> None:
     开头的 assistant 回复，所以这里就追加以该前缀开头的回复。
     """
     from config.word_dict_config import SAFETY_CARRY_PREFIX
-    from tools.context_store import append_message
+    from repo.context_store import append_message
 
     for _ in range(max(0, int(n))):
         append_message(session_id, "assistant",
@@ -60,7 +60,7 @@ def reset(session_id: str) -> None:
     """清掉该会话的全部状态（会话记录与 meta / SOP / 待确认），用于用例间隔离。"""
     from sops.base import _delete_session
 
-    from tools.context_store import delete_session
+    from repo.context_store import delete_session
 
     delete_session(session_id)
     _delete_session(session_id)

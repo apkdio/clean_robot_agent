@@ -19,7 +19,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-import tools.context_store as ctx
+import repo.context_store as ctx
 
 
 def _new_sid():
@@ -181,7 +181,7 @@ def test_session_filename_has_created_ts():
 # ──────────────────────────────────────────────────────────────
 
 def test_generate_session_title_fallback():
-    import tools.llm_tool as lt
+    import gateway.llm_tool as lt
     orig = lt.get_chat_model
 
     def _boom(*_a, **_k):

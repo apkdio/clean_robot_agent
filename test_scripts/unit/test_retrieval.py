@@ -238,7 +238,7 @@ def test_drop_without_dense_support():
 
 def test_reranker_unavailable_returns_none():
     """模型不可用时 rerank 必须返回 None（调用方据此退回 RRF 顺序），且不抛异常。"""
-    from tools import reranker
+    from gateway import reranker
     cands = [(Document(page_content="边刷每 6 个月更换一次"), 0.03, {"dense_rank": 1})]
     _assert_eq(reranker.rerank("边刷多久换一次", []), [], "空候选→空列表（不触发模型加载）")
     orig = reranker._ensure_model
@@ -302,7 +302,7 @@ def test_score_threshold_filters_out_of_domain_e2e():
 
 @e2e("精排端到端需要本地 bge-reranker-v2-m3 模型")
 def test_rerank_scores_e2e():
-    from tools import reranker
+    from gateway import reranker
     if not reranker._ensure_model():
         _skip("精排模型不可用（未下载或依赖缺失）——降级契约另由 test_reranker_unavailable_returns_none 覆盖")
         return

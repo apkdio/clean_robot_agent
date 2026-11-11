@@ -20,7 +20,7 @@ import torch.nn as nn
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.llm_tool import get_embedding_model
+from gateway.llm_tool import get_embedding_model
 
 _DATASET_PATH = "data/datasets/intent_dataset.jsonl"
 _MODEL_DIR = "data/bgm_model"

@@ -308,8 +308,8 @@ def invalidate_runtime_caches() -> None:
 
     BM25 与型号记录都走懒加载，下一次检索或型号查询再重建；这里不阻塞摄入请求。
     """
-    from tools import agent as _agent
     from tools.config_tool import reload_configs
+    from tools.hybrid_retriever import reset_hybrid_retriever
     from tools.path_tool import get_abs_path
     from tools.prompts_tool import reset as reset_prompts
 
@@ -318,7 +318,7 @@ def invalidate_runtime_caches() -> None:
         os.remove(cache)
     reload_configs()
     reset_prompts()
-    _agent._hybrid_retriever = None
+    reset_hybrid_retriever()
     try:
         from tools import models_repo
         from tools import service_point as _spt
@@ -340,7 +340,7 @@ def run_once(data_dir: str = None) -> bool:
         return False
 
     # 摄入锁：Redis 分布式锁（多实例只有一个摄入），不可用回退本地；被占用则跳过本次周期
-    from tools.redis_store import acquire_lock, release_lock
+    from gateway.redis_store import acquire_lock, release_lock
     if not acquire_lock("lock:ingest"):
         logger.info("[HotIngest] another ingest in progress, skip this cycle")
         return False

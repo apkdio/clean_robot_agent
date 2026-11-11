@@ -14,7 +14,7 @@ from test_scripts._runner import *
 import sops  # 触发各 SOP 注册
 import sops.base
 import tools.service_point as spt
-from sops import service_point as sp
+from sops import service_point_sop as sp
 from tools.dto.sop import ExtractResult
 
 _CAND = [
@@ -31,7 +31,7 @@ def _pair(result):
 def _cleanup():
     sops.base._sessions = {}
     try:
-        from tools.redis_store import get_redis
+        from gateway.redis_store import get_redis
         r = get_redis()
         if r is not None:
             for k in r.keys("sop:session:*"):

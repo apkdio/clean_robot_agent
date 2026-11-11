@@ -43,10 +43,10 @@ def stream_with_fallback(messages: list, temperature: float = 0.3, stop_check=No
 
     verify 只在完整生成（未停止、未异常）后调用，半截答案不参与核对。
     """
-    from tools.llm_tool import get_chat_model_name
+    from gateway.llm_tool import get_chat_model_name
 
     if stream_chat_func is None:
-        from tools.llm_tool import stream_chat as stream_chat_func
+        from gateway.llm_tool import stream_chat as stream_chat_func
 
     produced = False
     parts = []
@@ -94,7 +94,7 @@ def rag_stream(query: str, history_block: str, chunk_texts: list,
                temperature: float = 0.3, stop_check=None,
                stream_chat_func=None):
     """RAG 生成：参考资料 + 对话历史 + 问题，生成后做硬事实校验。"""
-    from tools.llm_tool import get_chat_model_name
+    from gateway.llm_tool import get_chat_model_name
 
     context_block = "\n\n".join(chunk_texts)
     user_message = render("rag_answer_rules", history_block=history_block,

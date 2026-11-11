@@ -30,7 +30,7 @@ from tools.safety import (
     recent_carry_count,
     safety_carry_max,
 )
-from tools.sop_runtime import (
+from sops.runtime import (
     enter_sop_result as _enter_sop_result,
     has_residual_request as _has_residual_request,
     is_symbols_only as _is_symbols_only,
@@ -68,7 +68,7 @@ from config.word_dict_config import (
 from config.word_dict_config import BLOCK_INJECT_REPLY as _BLOCK_INJECT_REPLY
 from config.word_dict_config import EXIT_CONFIRM as _EXIT_CONFIRM
 from config.word_dict_config import OPS_CLARIFY as _OPS_CLARIFY
-from tools.llm_tool import stream_chat
+from gateway.llm_tool import stream_chat
 
 logger = get_logger(name="agent")
 
@@ -85,18 +85,11 @@ def _behavior_cfg() -> dict:
     return _agent_cfg().get("behavior", {}) or {}
 
 
-_hybrid_retriever = None
-
-
 def _get_retriever():
     """懒加载双路召回器（稠密 + 稀疏 → RRF）。"""
-    global _hybrid_retriever
-    if _hybrid_retriever is None:
-        from tools.hybrid_retriever import HybridRetriever
+    from tools.hybrid_retriever import get_hybrid_retriever
 
-        _hybrid_retriever = HybridRetriever()
-        _hybrid_retriever.ensure_sparse_index()
-    return _hybrid_retriever
+    return get_hybrid_retriever()
 
 
 def detect_emotion(query: str) -> str | None:
@@ -121,7 +114,7 @@ def _ctx_cfg() -> dict:
 
 def _stage_normalize(ctx: TurnContext) -> StageOutcome:
     """入口归一化与重答回滚；硬规则统一用归一化文本判定。"""
-    from tools.context_store import rollback_last_user_message
+    from repo.context_store import rollback_last_user_message
 
     ctx.q = ctx.query
     if _normalize_enabled():
@@ -137,7 +130,7 @@ def _stage_normalize(ctx: TurnContext) -> StageOutcome:
 
 def _stage_inject_guard(ctx: TurnContext) -> StageOutcome:
     """角色扮演 / 指令注入：直接拒绝，不发给 LLM。"""
-    from tools.context_store import append_message
+    from repo.context_store import append_message
     from config.word_dict_config import INJECT_RE
 
     if not INJECT_RE.search(ctx.q):
@@ -153,7 +146,7 @@ def _stage_inject_guard(ctx: TurnContext) -> StageOutcome:
 
 def _stage_danger_guard(ctx: TurnContext) -> StageOutcome:
     """危险现象：安全优先，立即停机联系售后。"""
-    from tools.context_store import append_message
+    from repo.context_store import append_message
 
     decision = decide_safety(ctx.session_id, ctx.q, mode=SAFETY_STOP)
     if decision.level == SAFETY_NONE:
@@ -174,7 +167,7 @@ def _stage_danger_guard(ctx: TurnContext) -> StageOutcome:
 
 def _stage_record_user(ctx: TurnContext) -> StageOutcome:
     """记录用户消息；danger 标记供后续安全承接使用。"""
-    from tools.context_store import append_message
+    from repo.context_store import append_message
 
     append_message(ctx.session_id, "user", ctx.query, trace=trace_store.turn_anchor())
     return Continue()

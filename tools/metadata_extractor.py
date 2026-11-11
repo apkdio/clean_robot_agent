@@ -24,7 +24,7 @@ from config.word_dict_config import (
     TAG_CATALOG as _TAG_CATALOG,
 )
 from tools.date_rules import publish_int
-from tools.llm_tool import get_small_model_name
+from gateway.llm_tool import get_small_model_name
 from tools.log_tool import get_logger
 
 logger = get_logger(name="metadata_extractor")

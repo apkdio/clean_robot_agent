@@ -53,19 +53,19 @@ def make_stop_probe(session_id: str, min_interval: float = 0.15) -> Callable[[],
 
 
 def acquire_turn_lock(session_id: str) -> bool:
-    from tools.redis_store import acquire_lock
+    from gateway.redis_store import acquire_lock
 
     return acquire_lock(f"lock:session:{session_id}")
 
 
 def release_turn_lock(session_id: str) -> None:
-    from tools.redis_store import release_lock
+    from gateway.redis_store import release_lock
 
     release_lock(f"lock:session:{session_id}")
 
 
 def _rollback_user(session_id: str) -> None:
-    from tools.context_store import rollback_last_user_message
+    from repo.context_store import rollback_last_user_message
 
     try:
         rollback_last_user_message(session_id)
@@ -75,7 +75,7 @@ def _rollback_user(session_id: str) -> None:
 
 def _finish_turn(session_id: str, query: str, answer: str) -> dict:
     """正常收尾：assistant 落盘、首轮生成标题、返回 meta。"""
-    from tools.context_store import (
+    from repo.context_store import (
         append_message, generate_session_title, get_last_models,
         get_session_title, set_session_title,
     )
@@ -102,21 +102,14 @@ def _finish_turn(session_id: str, query: str, answer: str) -> dict:
     return meta
 
 
-def stream_turn(request: ChatRequest | str, session_id: str = "default",
-                lng=None, lat=None, retry: bool = False,
-                ask_stream_func=None) -> Iterator[TurnEvent]:
+def stream_turn(request: ChatRequest, ask_stream_func=None) -> Iterator[TurnEvent]:
     """跑完一轮问答并交付统一事件。
 
     调用方需先 acquire_turn_lock；停止 / 异常 / 断连的收尾都在这里完成。
-    request 传字符串时按旧签名构造 ChatRequest，供存量测试与低层调用。
     """
-    if isinstance(request, ChatRequest):
-        req = request
-    else:
-        req = ChatRequest(query=request, session_id=session_id,
-                          lng=lng, lat=lat, retry=retry)
+    req = request
     if ask_stream_func is None:
-        from tools.agent import ask_stream as ask_stream_func
+        from service.agent import ask_stream as ask_stream_func
 
     sid = req.session_id
     probe = make_stop_probe(sid)

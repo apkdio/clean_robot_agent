@@ -41,7 +41,7 @@ def _cleanup():
     sops.base._sessions = {}
     # 会话状态已迁到 Redis，同时清空 Redis 里的 SOP 会话，避免测试间残留
     try:
-        from tools.redis_store import get_redis
+        from gateway.redis_store import get_redis
         r = get_redis()
         if r is not None:
             for k in r.keys("sop:session:*"):
@@ -140,7 +140,7 @@ def test_register_and_match():
 
 def test_sop_name_from_definition():
     """名称只认 SOP 定义；匿名测试 SOP 缺省回 id，运行时不再维护第二张名称表。"""
-    from tools.sop_runtime import sop_name as runtime_sop_name
+    from sops.runtime import sop_name as runtime_sop_name
 
     _assert_eq(sops.base.sop_name("model_query"), "选购推荐", "model_query 名称来自定义")
     _assert_eq(sops.base.sop_name("repair"), "故障排查", "repair 名称来自定义")
@@ -584,7 +584,7 @@ def test_stale_def_state_recorded_in_trace():
 def test_local_session_expires_without_redis():
     """无 Redis 的降级路径按 sop_ttl 滑动过期（Redis 路径由 Redis 自己过期，不走这段）。"""
     _cleanup()
-    from tools import redis_store
+    from gateway import redis_store
     sops.base.register(_TEST_SOP)
     real = redis_store.get_redis
     redis_store.get_redis = lambda: None          # 强制走降级分支

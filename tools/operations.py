@@ -183,7 +183,7 @@ def _dense_scores(query: str) -> dict | None:
         return None
     try:
         if not _phrase_vecs:
-            from tools.llm_tool import get_embedding_model
+            from gateway.llm_tool import get_embedding_model
             emb = get_embedding_model()
             for op in OPERATIONS:
                 vecs = emb.embed_documents(_phrases(op))

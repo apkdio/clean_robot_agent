@@ -46,10 +46,10 @@ def test_sop_step_spans_match_flow():
     """每个 SOP 循环迭代一条 sop.step span，outcome 与 sop.flow 1:1。"""
     import sops
     import sops.base
-    import sops.repair
+    import sops.repair_sop
 
     sid = "tracetest-sop-steps"
-    steps = sops.repair.REPAIR_SOP["steps"]
+    steps = sops.repair_sop.REPAIR_SOP["steps"]
     old_action = steps[1]["action"]
     steps[1]["action"] = lambda slots: {"query": "", "domain": "repair"}
     try:

@@ -33,7 +33,7 @@ def _client():
 
 def _hold(key):
     """占住一把锁，返回释放回调——用来验证「锁被占时路由怎么响应」。"""
-    from tools.redis_store import acquire_lock, release_lock
+    from gateway.redis_store import acquire_lock, release_lock
 
     got = acquire_lock(key)
     return got, (lambda: release_lock(key))
@@ -132,7 +132,7 @@ def test_stream_error_rolls_back_user_message():
     """生成异常要把这条 user 回滚掉：否则上下文留下"问了没答"的孤立提问，
     下一轮 LLM 会把孤立提问当成待回答的问题（与停止同语义：这一轮没发生）。"""
     import webapp.app as wa
-    from tools.context_store import delete_session, get_recent
+    from repo.context_store import delete_session, get_recent
 
     sid = "aaaaaaaa-1111-2222-3333-444444444444"
     delete_session(sid)

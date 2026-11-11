@@ -8,8 +8,8 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
 
 from test_scripts._runner import *
 
-from tools import chat_service as cs
-from tools.context_store import delete_session, get_recent
+from service import chat_service as cs
+from repo.context_store import delete_session, get_recent
 from tools.dto.request import ChatRequest
 
 
@@ -17,12 +17,12 @@ def test_stream_turn_accepts_chat_request():
     """新入口直接传 ChatRequest：query/session/lng/lat/retry 不再拆参数。"""
     sid = "11111111-2222-3333-4444-555566667780"
     delete_session(sid)
-    from tools.context_store import set_session_title
+    from repo.context_store import set_session_title
     set_session_title(sid, "request smoke")
     seen = {}
 
     def fake_ask(request, **_kwargs):
-        from tools.context_store import append_message
+        from repo.context_store import append_message
 
         seen["request"] = request
         append_message(request.session_id, "user", request.query)
@@ -42,7 +42,7 @@ def test_stop_flags_expire_in_local_mode():
     """本地降级停止标志也要过期，残留不会误杀下一轮。"""
     import time
 
-    import tools.redis_store as rs
+    from gateway import redis_store as rs
 
     saved = rs.get_redis
     rs.get_redis = lambda: None
@@ -66,14 +66,15 @@ def test_stream_turn_events_and_context():
     delete_session(sid)
 
     def fake_ask(request, *_args, **_kwargs):
-        from tools.context_store import append_message
+        from repo.context_store import append_message
 
         append_message(request.session_id, "user", request.query)
         yield "你好"
         yield "，我是扫地机器人助手"
 
     try:
-        events = list(cs.stream_turn("推荐一款", sid, ask_stream_func=fake_ask))
+        events = list(cs.stream_turn(ChatRequest("推荐一款", sid),
+                                     ask_stream_func=fake_ask))
         _assert_eq([e.kind for e in events], ["delta", "delta", "meta", "done"],
                    "事件序列符合契约")
         _assert_eq("".join(e.text for e in events if e.kind == "delta"),
@@ -96,7 +97,8 @@ def test_stream_turn_error_rolls_back_user():
         yield  # pragma: no cover
 
     try:
-        events = list(cs.stream_turn("边刷多久换一次", sid, ask_stream_func=boom))
+        events = list(cs.stream_turn(ChatRequest("边刷多久换一次", sid),
+                                     ask_stream_func=boom))
         _assert_eq([e.kind for e in events], ["error", "done"], "异常发 error + done 事件")
         _assert_eq(events[0].text, "生成失败，请重试", "错误文案是固定话术")
         _assert_eq(get_recent(sid, n=10), [], "错误轮不留在上下文")
@@ -115,7 +117,8 @@ def test_stream_turn_clears_stop_after_finish():
         yield "半截"
 
     try:
-        events = list(cs.stream_turn("边刷多久换一次", sid, ask_stream_func=fake_ask))
+        events = list(cs.stream_turn(ChatRequest("边刷多久换一次", sid),
+                                     ask_stream_func=fake_ask))
         _assert_eq([e.kind for e in events], ["stopped"], "停止请求命中当前轮")
         _assert_false(cs.is_stopped(sid), "轮次结束后停止标志已清理")
     finally:
@@ -136,7 +139,8 @@ def test_stream_turn_stopped_rolls_back_user():
         def fake_ask(*_args, **_kwargs):
             yield "半截"
 
-        events = list(cs.stream_turn("边刷多久换一次", sid, ask_stream_func=fake_ask))
+        events = list(cs.stream_turn(ChatRequest("边刷多久换一次", sid),
+                                     ask_stream_func=fake_ask))
         _assert_eq([e.kind for e in events], ["stopped"], "探测在首帧前命中时直接 stopped")
         _assert_eq(get_recent(sid, n=10), [], "停止轮不留在上下文")
 

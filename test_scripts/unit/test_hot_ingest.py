@@ -112,7 +112,7 @@ def test_run_once_repairs_missing_and_holds_snapshot_on_failure():
     hi.append_kb_metadata = lambda *a, **k: None
     hi.invalidate_runtime_caches = lambda: None
     try:
-        import tools.redis_store as rs
+        from gateway import redis_store as rs
         orig_lock = (rs.acquire_lock, rs.release_lock)
         rs.acquire_lock, rs.release_lock = (lambda name: True), (lambda name: None)
         try:
@@ -154,7 +154,7 @@ def test_kb_metadata_counts_taken_after_apply():
 
     hi.append_kb_metadata = _append
     try:
-        import tools.redis_store as rs
+        from gateway import redis_store as rs
         orig_lock = (rs.acquire_lock, rs.release_lock)
         rs.acquire_lock, rs.release_lock = (lambda name: True), (lambda name: None)
         try:
@@ -197,7 +197,7 @@ def test_run_once_logs_change_detail():
     hi.apply_changes = lambda *a, **k: {"added": 0, "changed": 0, "removed": 0,
                                         "failed": ["不染一尘具体型号.txt"]}
     try:
-        import tools.redis_store as rs
+        from gateway import redis_store as rs
         orig_lock = (rs.acquire_lock, rs.release_lock)
         rs.acquire_lock, rs.release_lock = (lambda name: True), (lambda name: None)
         try:

@@ -56,7 +56,7 @@ def note_sop(session_id: str, sop_id: str = None, state: dict = None, **extra) -
 def enter_sop_result(session_id: str, sop_id: str, query: str, **detail) -> SopStepResult:
     """进一条 SOP，返回完整 SopStepResult（可能带 handoff）。"""
     from sops import start_sop
-    from tools.context_store import set_last_sop
+    from repo.context_store import set_last_sop
 
     slots = detail.pop("slots", None)
     result = start_sop(session_id, sop_id, query, slots=slots)
@@ -76,7 +76,7 @@ def reenter_sop_on_retry(session_id: str, query: str) -> tuple:
     """「重新回答」时判断要不要重开 SOP，返回 (是否接管, 话术或 SopStepResult)。"""
     from sops import sop_needs_enter_confirm, enter_confirm_text
     from sops.base import SOPS
-    from tools.context_store import get_last_sop
+    from repo.context_store import get_last_sop
     from tools.clarify_service import open_clarify
 
     last = trace_store.latest_turn(session_id)

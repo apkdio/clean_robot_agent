@@ -30,7 +30,7 @@ def _get_emb():
     """懒加载 bge-m3 embedding 客户端（跨调用缓存复用）。"""
     global _emb
     if _emb is None:
-        from tools.llm_tool import get_embedding_model
+        from gateway.llm_tool import get_embedding_model
         _emb = get_embedding_model()
     return _emb
 

@@ -18,7 +18,7 @@ from config.word_dict_config import (
     REL_SUPER,
 )
 from tools.model_catalog import RELATIVE_SPEC, filter_by_relative
-from tools.context_store import get_last_models, set_last_models
+from repo.context_store import get_last_models, set_last_models
 from tools.metadata_extractor import enumerate_models, format_models
 
 _REL_WORDS = {

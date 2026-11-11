@@ -167,7 +167,7 @@ def generate_session_title(query: str, answer: str) -> str:
     """
     fallback_title = (query.strip()[:20] or "新会话")
     try:
-        from tools.llm_tool import get_chat_model, get_small_model_name
+        from gateway.llm_tool import get_chat_model, get_small_model_name
         from tools.prompts_tool import render
         from langchain_core.messages import HumanMessage
 

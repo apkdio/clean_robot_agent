@@ -18,7 +18,7 @@ from test_scripts._runner import *
 
 def test_redis_missing_package_degrades():
     import builtins
-    from tools import redis_store as rs
+    from gateway import redis_store as rs
 
     saved = (rs._redis, rs._enabled, rs._probe_failed_at)
     rs._redis, rs._enabled = None, None
@@ -216,7 +216,7 @@ def test_intent_head_builds_from_meta():
 def test_embedding_source_unified():
     """embedding 与向量库共用 chroma.yaml 这一处来源（此前 intent_router 用内置默认，会漂移）。"""
     from tools.config_tool import load_config
-    from tools.llm_tool import get_embedding_model
+    from gateway.llm_tool import get_embedding_model
 
     cfg = (load_config("chroma") or {}).get("embedding") or {}
     m = get_embedding_model()
@@ -226,7 +226,7 @@ def test_embedding_source_unified():
 
 def test_embedding_client_cached():
     """同一配置复用同一个 embedding 客户端：避免每次构造都打一条 init 日志。"""
-    from tools.llm_tool import get_embedding_model
+    from gateway.llm_tool import get_embedding_model
 
     _assert(get_embedding_model() is get_embedding_model(), "重复调用返回同一实例")
 
@@ -235,7 +235,7 @@ def test_local_lock_has_ttl():
     """Redis 不可用时的本地降级锁也要过期（原来无 TTL，进程内会永久占住）。"""
     import time
 
-    import tools.redis_store as rs
+    from gateway import redis_store as rs
 
     saved = rs.get_redis
     rs.get_redis = lambda: None            # 强制走本地降级态
@@ -255,8 +255,8 @@ def test_stop_flag_has_ttl_local():
     """停止标志的本地降级态也要过期（无 TTL 的残留会误杀下一轮）。"""
     import time
 
-    import tools.redis_store as rs
-    import tools.chat_service as cs
+    from gateway import redis_store as rs
+    import service.chat_service as cs
 
     saved = rs.get_redis
     rs.get_redis = lambda: None
@@ -296,8 +296,8 @@ class _StubRetriever:
 def _ask_with_stubs(query, sid, retry=False):
     """用桩件走一遍链路（不碰 Ollama / Chroma / 分类头）。"""
     import tools.intent_router as ir
-    from tools import agent as agent_mod
-    from tools.agent import ask_stream
+    from service import agent as agent_mod
+    from service.agent import ask_stream
     from tools.dto.request import ChatRequest
 
     saved = (ir.route_intent_with_margin, agent_mod._get_retriever, agent_mod.stream_chat)
@@ -312,14 +312,14 @@ def _ask_with_stubs(query, sid, retry=False):
 
 
 def _reset_session(sid):
-    from tools.context_store import delete_session
+    from repo.context_store import delete_session
 
     delete_session(sid)
 
 
 def _disk_messages(sid):
     """按落盘（jsonl）读消息，不走内存窗口 —— 断言的是持久化结果。"""
-    from tools.context_store import get_recent
+    from repo.context_store import get_recent
 
     return get_recent(sid, n=1000)
 
@@ -329,7 +329,7 @@ def test_retry_replaces_previous_turn():
 
     前端是就地替换同一个气泡，落盘也应当只有一个提问与一版回答；trace 仍留两轮（只增不改）。
     """
-    from tools.context_store import append_message
+    from repo.context_store import append_message
 
     sid, q = "t-retry-cover", "边刷多久换一次"
     _reset_session(sid)
@@ -346,7 +346,7 @@ def test_retry_replaces_previous_turn():
 
 def test_retry_without_matching_last_user_keeps_turns():
     """retry 标记但上一条不是这句话时不撤任何轮次（防误删更早的正常轮次）。"""
-    from tools.context_store import append_message
+    from repo.context_store import append_message
 
     sid = "t-retry-keep"
     _reset_session(sid)
@@ -361,7 +361,7 @@ def test_retry_without_matching_last_user_keeps_turns():
 
 def test_history_block_excludes_current_query():
     """当前这句不进「对话历史」（Prompt 的「问题：」已单独给出），与选历史轮同口径。"""
-    from tools.context_store import append_message
+    from repo.context_store import append_message
     from tools.query_rewrite import history_block
 
     sid = "t-history-block"
@@ -383,7 +383,7 @@ def test_history_block_excludes_current_query():
 def test_stopped_turn_marks_aborted():
     """被停的轮必须记 aborted=true：阶段序列静默 return 时迭代是"正常结束"的，
     只看循环是否抛异常会把停掉的轮记成 false，与 webapp 的回滚对不上。"""
-    import tools.agent as am
+    import service.agent as am
 
     seen = {}
     saved_end = am.trace_store.end_turn
@@ -401,8 +401,8 @@ def test_stopped_turn_marks_aborted():
 
 def test_reenter_sop_logs_node():
     """「重新回答」重开 SOP 时要落 sop.reenter：否则这一轮在 path 里看不出是重答重开的。"""
-    import tools.context_store as cs
-    import tools.sop_runtime as sr
+    import repo.context_store as cs
+    import sops.runtime as sr
     import sops
     from test_scripts import trace_reader
     from tools import trace_store
@@ -471,8 +471,8 @@ def test_latest_turn_across_days():
 
 def test_reenter_across_days():
     """跨天后「重新回答」仍能重开：判据是「上一轮就是被重发的那轮」，不是 turn_index 相差 1。"""
-    import tools.context_store as cs
-    import tools.sop_runtime as sr
+    import repo.context_store as cs
+    import sops.runtime as sr
     import sops
     from tools import trace_store
 

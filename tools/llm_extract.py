@@ -14,7 +14,7 @@ from function_tools.schemas import (
     EXTRACT_MODELS_SCHEMA,
     EXTRACT_SYMPTOM_SCHEMA,
 )
-from tools import llm_tool
+from gateway import llm_tool
 from tools.date_rules import calc_date_range
 from tools.log_tool import get_logger
 from tools.metadata_extractor import budget_args_to_range

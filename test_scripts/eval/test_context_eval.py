@@ -298,7 +298,7 @@ def _ask(sid: str, query: str):
     判定读记录里的 branch（唯一出口），失败归因读 path / route / retrieval——同一份记录，
     不再是两处证据。end_turn() 在本轮生成器消费完时落盘，所以返回时记录已在。
     """
-    from tools.agent import ask_stream
+    from service.agent import ask_stream
     from tools.dto.request import ChatRequest
 
     reply = "".join(ask_stream(ChatRequest(query=query, session_id=sid))).strip()
@@ -315,7 +315,7 @@ def _replay_prefix(sid: str, turns: list, lo: int, hi: int):
     例外：危险告警轮可能缺触发它的 user 消息（见数据 anomalies，当时的 guard 在落盘前
     return），此时补一条带 danger 标记的占位 user 消息，否则后续「安全承接」无从触发。
     """
-    from tools.context_store import append_message
+    from repo.context_store import append_message
     for idx in range(lo, hi):
         t = turns[idx]
         if t["role"] == "user":
@@ -337,7 +337,7 @@ def _is_must_pass_case(case: dict) -> bool:
 def _run_row(row: dict) -> list:
     import sops.base
     from tools import pending_store
-    from tools.context_store import append_message, delete_session
+    from repo.context_store import append_message, delete_session
     from tools.pending_store import close as clear_pending
 
     sid = "ctxeval-" + row["session_id"]

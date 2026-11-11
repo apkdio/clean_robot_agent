@@ -17,7 +17,7 @@ from langchain_core.documents import Document
 from tools import trace_store
 from tools.config_tool import get_config
 from tools.log_tool import get_logger
-from tools.reranker import rerank
+from gateway.reranker import rerank
 from tools.rrf_fusion import reciprocal_rank_fusion
 from tools.sparse_retriever import SparseRetriever
 from tools.vector_store import DenseRetriever, build_hybrid_index
@@ -244,3 +244,21 @@ class HybridRetriever:
                 len(fused) - len(kept),
             )
         return kept
+
+
+_default_retriever = None
+
+
+def get_hybrid_retriever():
+    """进程级懒加载召回器；知识库变更后由 reset_hybrid_retriever() 重建。"""
+    global _default_retriever
+    if _default_retriever is None:
+        _default_retriever = HybridRetriever()
+        _default_retriever.ensure_sparse_index()
+    return _default_retriever
+
+
+def reset_hybrid_retriever():
+    """丢弃召回器单例，下一次检索重新构建。"""
+    global _default_retriever
+    _default_retriever = None
