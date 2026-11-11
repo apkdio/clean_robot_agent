@@ -18,8 +18,9 @@ from config.word_dict_config import (
     REL_SUPER,
 )
 from service.model_catalog import RELATIVE_SPEC, filter_by_relative
-from repo.context_store import get_last_models, set_last_models
-from tools.metadata_extractor import enumerate_models, format_models
+from mapper.context_store import get_last_models, set_last_models
+from utils.metadata_rules import format_models
+from service.metadata_query import enumerate_models
 
 _REL_WORDS = {
     "cheaper": CHEAPER_WORDS,

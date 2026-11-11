@@ -15,7 +15,7 @@ import os
 import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
@@ -26,7 +26,7 @@ from test_scripts._runner import *
 # ──────────────────────────────────────────────────────────────
 
 def _fix_today():
-    import tools.date_rules as dt
+    import utils.date_rules as dt
     dt._DATE_TODAY = date(2026, 9, 4)
     return dt
 
@@ -92,7 +92,7 @@ def test_date_cn_to_int():
 # ──────────────────────────────────────────────────────────────
 
 def test_budget_args_to_range():
-    from tools.metadata_extractor import budget_args_to_range as r
+    from utils.metadata_rules import budget_args_to_range as r
     _assert_eq(r({"budget_max": 1000}), (None, 1000), "整数上限")
     _assert_eq(r({"budget_max": "1500"}), (None, 1500), "字符串数字上限")
     _assert(r({"budget_max": 0}) is None, "0→None（无预算）")
@@ -167,7 +167,7 @@ def test_find_models_invalid_args_do_not_clear_results():
 # ──────────────────────────────────────────────────────────────
 
 def test_symptom_id_to_query():
-    from tools.symptom_rules import symptom_id_to_query as f
+    from utils.symptom_rules import symptom_id_to_query as f
     _assert_eq(f({"symptom_id": 1}), "机器人不移动怎么办", "id=1 不移动")
     _assert_eq(f({"symptom_id": 7}), "吸力下降怎么办", "id=7 吸力")
     _assert_eq(f({"symptom_id": "3"}), "扫地机器人异响怎么办", "字符串数字 id")
@@ -181,7 +181,7 @@ def test_symptom_id_to_query():
 # ──────────────────────────────────────────────────────────────
 
 def test_haversine():
-    from tools.service_point import haversine
+    from mapper.service_points_repo import haversine
     _assert_eq(haversine(0, 0, 0, 0), 0.0, "同点距离为 0")
     d = haversine(39.9042, 116.4074, 31.2304, 121.4737)  # 北京→上海
     _assert(1000 < d < 1150, f"北京-上海约 1067km（实际 {d:.0f}）")
@@ -189,14 +189,14 @@ def test_haversine():
 
 
 def test_pick_cn_name():
-    from tools.service_point import _pick_cn_name
+    from mapper.service_points_repo import _pick_cn_name
     _assert_eq(_pick_cn_name(["Beijing", "北京", "北京市"]), "北京市", "优先行政区划后缀")
     _assert(_pick_cn_name(["Beijing", "New York"]) is None, "无中文名→None")
     _assert_eq(_pick_cn_name(["上海"]), "上海", "仅一个中文名")
 
 
 def test_search_service_points():
-    from tools.service_point import search_service_points
+    from service.service_point import search_service_points
     pts, origin = search_service_points(lng=116.4074, lat=39.9042)
     _assert(len(pts) > 0, "有网点数据")
     _assert(len(pts) <= 5, "最多返回 5 个")
@@ -211,7 +211,7 @@ def test_search_service_points():
 
 
 def test_format_service_points():
-    from tools.service_point import format_service_points as f
+    from service.service_point import format_service_points as f
     _assert_in("没有查询到", f([], ""), "空网点话术")
     txt = f([{"name": "上海旗舰店", "address": "南京路1号", "phone": "400-1", "hours": "9-18", "distance_km": 1.5}], "您当前位置")
     _assert_in("上海旗舰店", txt, "含网点名")
@@ -222,7 +222,7 @@ def test_format_service_points():
 
 def test_geocode_city():
     try:
-        from tools.service_point import geocode_city
+        from mapper.service_points_repo import geocode_city
     except Exception:
         _skip("geonamescache 不可用")
         return

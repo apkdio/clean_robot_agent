@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 from service import turn_recorder
-from tools import trace_store
-from tools.dto.executor import ExecOutcome, NotMine, Reply
-from tools.log_tool import get_logger
+from mapper import trace_store
+from utils.dto.executor import ExecOutcome, NotMine, Reply
+from utils.log_tool import get_logger
 from service.model_query import (format_model_query, is_model_detail_query,
                                resolve_model_query)
 from service.query_rewrite import history_block
@@ -23,9 +23,9 @@ def _resolve_model_query(session_id: str, query: str):
     """型号查询兜底：命中触发词 → LLM 提取型号名 → 按名精准检索型号详情。"""
     if not is_model_detail_query(query):
         return None
-    from tools.llm_extract import extract_model_names
+    from service.llm_extract import extract_model_names
     from service.model_catalog import search_models_by_names
-    from tools.metadata_extractor import extract_model_aspect, format_models
+    from utils.metadata_rules import extract_model_aspect, format_models
 
     try:
         model_names = extract_model_names(query, history=history_block(session_id))
@@ -77,14 +77,14 @@ def exec_find_models(ctx: TurnContext) -> ExecOutcome:
 
 def exec_service_point(ctx: TurnContext) -> ExecOutcome:
     from service.sops import enter_confirm_text, enter_declined, sop_needs_enter_confirm
-    from tools import pending_store
+    from mapper import pending_store
     from service.clarify_service import open_clarify
 
     has_coords = ctx.lng is not None and ctx.lat is not None
     trace_store.node("service_point", status="hit",
                      out={"mode": "coords" if has_coords else "sop"})
     if has_coords:
-        from tools.service_point import format_service_points, search_service_points
+        from service.service_point import format_service_points, search_service_points
 
         points, origin = search_service_points(lng=ctx.lng, lat=ctx.lat)
         turn_recorder.log_behavior("structured_answer", kind="service_point")
@@ -103,7 +103,7 @@ def exec_service_point(ctx: TurnContext) -> ExecOutcome:
 def exec_sop(ctx: TurnContext) -> ExecOutcome:
     from service.sops import (enter_confirm_text, enter_declined, match_sop,
                       sop_has_strong_trigger, sop_needs_enter_confirm)
-    from tools import pending_store
+    from mapper import pending_store
     from service.clarify_service import open_clarify
 
     sop_id = match_sop(ctx.q)

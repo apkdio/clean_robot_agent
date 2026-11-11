@@ -9,8 +9,8 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
 from test_scripts._runner import *
 from service.model_query import (format_model_query, parse_budget, parse_publish,
                                resolve_model_constraints, resolve_model_query)
-from tools.dto.model_query import FindModelsResult, ModelQueryConstraints
-from tools.date_rules import publish_int
+from utils.dto.model_query import FindModelsResult, ModelQueryConstraints
+from utils.date_rules import publish_int
 
 
 def _publish_int(model):

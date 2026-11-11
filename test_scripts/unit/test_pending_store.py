@@ -3,11 +3,11 @@ import sys
 import os
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools import pending_store as ps
+from mapper import pending_store as ps
 
 
 def test_ask_peek_shape():

@@ -6,7 +6,7 @@ import sys
 import os
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
@@ -44,7 +44,7 @@ def test_redis_missing_package_degrades():
 
 def test_date_gate_needs_select_signal():
     from config.word_dict_config import DATE_SELECT_HINT_RE
-    from tools.date_rules import build_date_filter
+    from utils.date_rules import build_date_filter
     from service.model_query import resolve_date_range
 
     def _date_filter(query):
@@ -140,7 +140,7 @@ def test_intent_inference_failure_degrades():
 
 def test_stream_generate_failure_falls_back():
     from config.word_dict_config import NO_ANSWER_REPLIES
-    from tools import trace_store
+    from mapper import trace_store
     from service.generation import stream_with_fallback
     from test_scripts import trace_reader
 
@@ -215,7 +215,7 @@ def test_intent_head_builds_from_meta():
 
 def test_embedding_source_unified():
     """embedding 与向量库共用 chroma.yaml 这一处来源（此前 intent_router 用内置默认，会漂移）。"""
-    from tools.config_tool import load_config
+    from utils.config_tool import load_config
     from gateway.llm_tool import get_embedding_model
 
     cfg = (load_config("chroma") or {}).get("embedding") or {}
@@ -298,7 +298,7 @@ def _ask_with_stubs(query, sid, retry=False):
     import service.intent_router as ir
     from service import agent as agent_mod
     from service.agent import ask_stream
-    from tools.dto.request import ChatRequest
+    from utils.dto.request import ChatRequest
 
     saved = (ir.route_intent_with_margin, agent_mod._get_retriever, agent_mod.stream_chat)
     ir.route_intent_with_margin = lambda q: ("robot", 0.9)
@@ -312,14 +312,14 @@ def _ask_with_stubs(query, sid, retry=False):
 
 
 def _reset_session(sid):
-    from repo.context_store import delete_session
+    from mapper.context_store import delete_session
 
     delete_session(sid)
 
 
 def _disk_messages(sid):
     """按落盘（jsonl）读消息，不走内存窗口 —— 断言的是持久化结果。"""
-    from repo.context_store import get_recent
+    from mapper.context_store import get_recent
 
     return get_recent(sid, n=1000)
 
@@ -329,7 +329,7 @@ def test_retry_replaces_previous_turn():
 
     前端是就地替换同一个气泡，落盘也应当只有一个提问与一版回答；trace 仍留两轮（只增不改）。
     """
-    from repo.context_store import append_message
+    from mapper.context_store import append_message
 
     sid, q = "t-retry-cover", "边刷多久换一次"
     _reset_session(sid)
@@ -346,7 +346,7 @@ def test_retry_replaces_previous_turn():
 
 def test_retry_without_matching_last_user_keeps_turns():
     """retry 标记但上一条不是这句话时不撤任何轮次（防误删更早的正常轮次）。"""
-    from repo.context_store import append_message
+    from mapper.context_store import append_message
 
     sid = "t-retry-keep"
     _reset_session(sid)
@@ -361,7 +361,7 @@ def test_retry_without_matching_last_user_keeps_turns():
 
 def test_history_block_excludes_current_query():
     """当前这句不进「对话历史」（Prompt 的「问题：」已单独给出），与选历史轮同口径。"""
-    from repo.context_store import append_message
+    from mapper.context_store import append_message
     from service.query_rewrite import history_block
 
     sid = "t-history-block"
@@ -389,7 +389,7 @@ def test_stopped_turn_marks_aborted():
     saved_end = am.trace_store.end_turn
     am.trace_store.end_turn = lambda aborted=False, reply="": seen.update(aborted=aborted)
     try:
-        from tools.dto.request import ChatRequest
+        from utils.dto.request import ChatRequest
         list(am.ask_stream(ChatRequest("x", "t-abort"), stop_check=lambda: True))
         _assert(seen.get("aborted") is True, "被停的轮 → aborted=true")
         seen.clear()
@@ -401,11 +401,11 @@ def test_stopped_turn_marks_aborted():
 
 def test_reenter_sop_logs_node():
     """「重新回答」重开 SOP 时要落 sop.reenter：否则这一轮在 path 里看不出是重答重开的。"""
-    import repo.context_store as cs
+    import mapper.context_store as cs
     import service.sops.runtime as sr
     import service.sops
     from test_scripts import trace_reader
-    from tools import trace_store
+    from mapper import trace_store
 
     sid, q = "t-reenter-node", "帮我推荐一款扫地机器人"
     reset_trace(sid)
@@ -413,7 +413,7 @@ def test_reenter_sop_logs_node():
     trace_store.end_turn()
     trace_store.begin_turn(sid, q)        # 第 2 轮（本轮 = 重答）
 
-    from tools.dto.sop import SopStepResult
+    from utils.dto.sop import SopStepResult
 
     saved = (trace_store.find_turn, trace_store.latest_turn, trace_store.find_turn_by_index,
              sr.enter_sop_result, cs.get_last_sop, service.sops.sop_needs_enter_confirm)
@@ -447,7 +447,7 @@ def test_latest_turn_across_days():
     import json
     import os
 
-    from tools import trace_store
+    from mapper import trace_store
 
     sid = "t-cross-day"
     reset_trace(sid)
@@ -471,15 +471,15 @@ def test_latest_turn_across_days():
 
 def test_reenter_across_days():
     """跨天后「重新回答」仍能重开：判据是「上一轮就是被重发的那轮」，不是 turn_index 相差 1。"""
-    import repo.context_store as cs
+    import mapper.context_store as cs
     import service.sops.runtime as sr
     import service.sops
-    from tools import trace_store
+    from mapper import trace_store
 
     sid, q = "t-reenter-cross", "帮我推荐一款扫地机器人"
     reset_trace(sid)
     trace_store.begin_turn(sid, q)                  # 当前轮
-    from tools.dto.sop import SopStepResult
+    from utils.dto.sop import SopStepResult
 
     saved = (trace_store.latest_turn, trace_store.find_turn, trace_store.find_turn_by_index,
              sr.enter_sop_result, cs.get_last_sop, service.sops.sop_needs_enter_confirm)

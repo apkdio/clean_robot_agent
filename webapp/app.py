@@ -11,7 +11,7 @@ import sys
 
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
-# 确保项目根目录位于 sys.path 中（service.* / tools.* 等包导入依赖它）。
+# 确保项目根目录位于 sys.path 中（service.* / utils.* 等包导入依赖它）。
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
@@ -39,9 +39,9 @@ from service.session_service import (
     rollback_last_user,
 )
 from service.status_service import agent_display_config
-from tools.dto.feedback import FeedbackRequest
-from tools.dto.request import ChatRequest
-from tools.log_tool import get_logger
+from utils.dto.feedback import FeedbackRequest
+from utils.dto.request import ChatRequest
+from utils.log_tool import get_logger
 
 logger = get_logger(name="webapp")
 

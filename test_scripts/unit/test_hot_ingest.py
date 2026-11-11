@@ -6,12 +6,12 @@ import os
 import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
 
-import tools.vector_store as vs
+import mapper.vector_store as vs
 from service import hot_ingest as hi
 
 
@@ -42,7 +42,7 @@ class _FakeStore:
 
 
 def _patch(**attrs):
-    """临时替换 tools.vector_store 的模块属性（apply_changes 内部是函数级 import）。"""
+    """临时替换 mapper.vector_store 的模块属性（apply_changes 内部是函数级 import）。"""
     orig = {k: getattr(vs, k) for k in attrs}
     for k, v in attrs.items():
         setattr(vs, k, v)
@@ -278,9 +278,9 @@ def test_invalidate_invalidates_models_repo():
     import tempfile
 
     from service import hot_ingest as hi
-    from tools import models_repo as mr
-    from tools import path_tool as pt
-    import tools.vector_store as vs
+    from mapper import models_repo as mr
+    from utils import path_tool as pt
+    import mapper.vector_store as vs
 
     mr._cache["fingerprint"] = "old"
     mr._cache["records"] = [{"name": "旧型号", "price": 1}]
@@ -297,7 +297,7 @@ def test_invalidate_invalidates_models_repo():
         _assert(mr._cache["records"] is None, "型号记录缓存被失效")
         _assert(not os.path.isfile(os.path.join(tmp_dir, "bm25_index.pkl")), "BM25 pkl 一并失效")
         # 坑的回归哨兵：补丁若打到全局 os.path，配置读取会连带失败（曾把 isfile 打成恒 False）
-        from tools.config_tool import load_config
+        from utils.config_tool import load_config
         _assert(isinstance(load_config("prompts"), dict), "补丁没波及全局 os.path（配置仍读得到）")
     finally:
         pt.get_abs_path = saved_abs

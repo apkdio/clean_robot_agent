@@ -1,4 +1,4 @@
-"""上下文存储测试：tools/context_store.py 的会话持久化与读取逻辑。
+"""上下文存储测试：mapper/context_store.py 的会话持久化与读取逻辑。
 
 覆盖：
   - append_message / get_recent（内存缓存 + 文件回读）
@@ -9,17 +9,17 @@
   - ensure_session_id（UUID 双端校验）
   - list_sessions（会话列表）
   - 文件命名：新会话带创建时间戳、历史命名兼容
-  - generate_session_title（LLM 失败时的 fallback，monkeypatch 强制异常）"""
+  - service.session_service.generate_session_title（LLM 失败时的 fallback，monkeypatch 强制异常）"""
 import sys
 import uuid
 import os
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-import repo.context_store as ctx
+import mapper.context_store as ctx
 
 
 def _new_sid():
@@ -182,6 +182,7 @@ def test_session_filename_has_created_ts():
 
 def test_generate_session_title_fallback():
     import gateway.llm_tool as lt
+    from service.session_service import generate_session_title
     orig = lt.get_chat_model
 
     def _boom(*_a, **_k):
@@ -190,9 +191,9 @@ def test_generate_session_title_fallback():
     lt.get_chat_model = _boom
     try:
         q = "你好，帮我推荐一款扫地机器人"
-        title = ctx.generate_session_title(q, "好的")
+        title = generate_session_title(q, "好的")
         _assert_eq(title, q[:20], "LLM 失败回退到 query 截断")
-        _assert_eq(ctx.generate_session_title("", ""), "新会话", "空 query 回退为「新会话」")
+        _assert_eq(generate_session_title("", ""), "新会话", "空 query 回退为「新会话」")
     finally:
         lt.get_chat_model = orig
 

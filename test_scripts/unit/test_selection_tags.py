@@ -7,7 +7,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools.selection import is_skip, parse_index, parse_multi_select
+from utils.selection import is_skip, parse_index, parse_multi_select
 
 
 def test_selection_normalization():
@@ -38,7 +38,7 @@ def test_index_parsing():
 
 
 def test_model_tags_mapping():
-    from tools.models_repo import all_records
+    from mapper.models_repo import all_records
     by_name = {m["name"]: m for m in all_records()}
     t1 = by_name["不染一尘天工 T1 Pro"]
     _assert(t1.get("tag_pet_friendly") is True and t1.get("tag_anti_tangle") is True,

@@ -1,6 +1,6 @@
 """读主链路 trace，按会话列出每一轮的走向——「从哪一轮开始跑偏」的一眼视图。
 
-trace 由 tools/trace_store.py 落盘（默认 logs/trace/<YYYYMMDD>/<session_id>_<YYYYMMDD>_<HHMM>/<同名>.jsonl，
+trace 由 mapper/trace_store.py 落盘（默认 logs/trace/<YYYYMMDD>/<session_id>_<YYYYMMDD>_<HHMM>/<同名>.jsonl，
 日期目录 + 一会话一目录、当天一份文件；TRACE_DIR 可覆盖）。本脚本只读，不改任何数据、不调模型。
 
 用法：解释器用 .venv\\Scripts\\python.exe
@@ -39,7 +39,7 @@ for _p in (_ROOT,):
         sys.path.insert(0, _p)
 
 # 刻意不 import _runner：它会设 TRACE_DIR 等测试隔离变量，而这里读的是真实 trace（--dir 可覆盖）。
-from tools import trace_store  # noqa: E402
+from mapper import trace_store  # noqa: E402
 from test_scripts import trace_reader  # noqa: E402
 
 # 读取层（本脚本的文本视图与 HTML 报告都用）与 trace_reader 共用，避免两套读法漂移

@@ -7,8 +7,8 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools import trace_store
-from repo.trace import paths, read, sidecar, write
+from mapper import trace_store
+from mapper.trace import paths, read, sidecar, write
 
 
 def test_facade_reexports_public_api():
@@ -40,6 +40,25 @@ def test_sop_span_contains_internal_node():
     child = next(n for n in path if n.get("node") == "sop.symptom")
     _assert_eq(stage.get("id"), stage_id, "stage span id 固定")
     _assert_eq(child.get("parent"), stage_id, "内部节点 parent = stage.sop")
+
+
+def test_sop_slots_and_intent_degraded_survive():
+    """结构化 SOP 槽位不能被 _scalars 丢弃；intent degraded 不能被覆盖。"""
+    sid = "tracetest-structured-facts"
+    trace_store.begin_turn(sid, "测试")
+    trace_store.route("intent", degraded=True)
+    trace_store.step("intent", intent="unknown", margin=0.0, degraded=True)
+    trace_store.step("sop", id="model_query", n_slots=1,
+                     slots={"budget": [None, 1000]},
+                     result={"count": 1})
+    trace_store.end_turn(reply="ok")
+    row = read_last_turn(sid)
+    _assert_eq(row["route"]["intent"].get("degraded"), True, "intent degraded 保留")
+    _assert_true(row["sop"].get("slots"), "SOP slots 不丢")
+    _assert_true(row["sop"].get("result"), "SOP result 不丢")
+    route_intents = [n for n in (row.get("path") or [])
+                     if n.get("node") == "route.intent"]
+    _assert_eq(len(route_intents), 1, "degraded 不重复写 route.intent 节点")
 
 
 def test_sop_step_spans_match_flow():
@@ -110,7 +129,9 @@ def test_trace_dir_isolation():
 
 
 TESTS = [test_facade_reexports_public_api,
-         test_sop_span_contains_internal_node, test_sop_step_spans_match_flow,
+         test_sop_span_contains_internal_node,
+         test_sop_slots_and_intent_degraded_survive,
+         test_sop_step_spans_match_flow,
          test_turn_index_increments_and_resets, test_trace_dir_isolation]
 
 

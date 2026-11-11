@@ -8,9 +8,9 @@ from config.word_dict_config import (
     SYMPTOM_MAP,
 )
 
-from tools.dto.handoff import Handoff
-from tools.dto.sop import ExtractResult
-from tools.log_tool import get_logger
+from utils.dto.handoff import Handoff
+from utils.dto.sop import ExtractResult
+from utils.log_tool import get_logger
 
 # 故障现象兜底用的小模型（默认 3b 更快；精度不够可在 agent.yaml 调 llm.small_model）
 logger = get_logger(name="repair_sop")
@@ -34,7 +34,7 @@ def _extract_symptom(text: str, _slots: dict):
 
     # 2. LLM function calling 兜底
     try:
-        from tools.llm_extract import classify_symptom
+        from service.llm_extract import classify_symptom
 
         query = classify_symptom(text)
         if query:

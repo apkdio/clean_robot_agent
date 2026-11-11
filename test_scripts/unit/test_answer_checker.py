@@ -9,7 +9,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
 from test_scripts._runner import *
 
 from service.answer_checker import check_answer
-from tools import trace_store
+from mapper import trace_store
 
 
 _MODELS = ["不染一尘云顶 X2", "不染一尘云顶 X1 Pro"]

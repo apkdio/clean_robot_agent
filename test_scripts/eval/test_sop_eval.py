@@ -21,8 +21,9 @@ from test_scripts._runner import *
 import service.sops
 import service.sops.base
 from test_scripts import trace_reader
-from tools import pending_store, trace_store
-from repo.context_store import delete_session
+from mapper import pending_store
+from mapper import trace_store
+from mapper.context_store import delete_session
 
 _ROOT = os.path.dirname(os.path.dirname(_SCRIPT_DIR))
 _GOLDEN_FILE = os.path.join(_ROOT, "data", "eval", "sop", "golden.jsonl")
@@ -37,7 +38,7 @@ def _reset(sid):
 
 def _models_ready():
     try:
-        from tools.metadata_extractor import get_all_models
+        from service.metadata_query import get_all_models
         return len(get_all_models()) > 0
     except Exception:
         return False

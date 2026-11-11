@@ -7,10 +7,10 @@ from __future__ import annotations
 import time
 from typing import Callable, Iterator
 
-from tools.dto.request import ChatRequest
-from tools.dto.transport import TurnEvent
-from tools.log_tool import get_logger
-from tools.state_store import StateStore
+from utils.dto.request import ChatRequest
+from utils.dto.transport import TurnEvent
+from utils.log_tool import get_logger
+from mapper.state_store import StateStore
 
 logger = get_logger(name="chat_service")
 
@@ -65,7 +65,7 @@ def release_turn_lock(session_id: str) -> None:
 
 
 def _rollback_user(session_id: str) -> None:
-    from repo.context_store import rollback_last_user_message
+    from mapper.context_store import rollback_last_user_message
 
     try:
         rollback_last_user_message(session_id)
@@ -75,12 +75,12 @@ def _rollback_user(session_id: str) -> None:
 
 def _finish_turn(session_id: str, query: str, answer: str) -> dict:
     """正常收尾：assistant 落盘、首轮生成标题、返回 meta。"""
-    from repo.context_store import (
-        append_message, generate_session_title, get_last_models,
-        get_session_title, set_session_title,
+    from mapper.context_store import (
+        append_message, get_last_models, get_session_title, set_session_title,
     )
+    from service.session_service import generate_session_title
     from service.sops import has_active_sop
-    from tools import trace_store
+    from mapper import trace_store
 
     append_message(session_id, "assistant", answer,
                    models=get_last_models(session_id))

@@ -17,9 +17,9 @@ from config.word_dict_config import (
     SAFETY_HINT as SAFETY_HINT_TEMPLATE,
     SAFETY_STOP_REPLY,
 )
-from tools import trace_store
-from tools.config_tool import get_config
-from tools.log_tool import get_logger
+from mapper import trace_store
+from utils.config_tool import get_config
+from utils.log_tool import get_logger
 
 logger = get_logger(name="safety")
 
@@ -63,7 +63,7 @@ def _enabled() -> bool:
 
 
 def _recent_messages(session_id: str) -> list:
-    from repo.context_store import get_recent
+    from mapper.context_store import get_recent
 
     n = int((_cfg().get("context") or {}).get("topic_window", 8) or 8)
     return get_recent(session_id, n=n)

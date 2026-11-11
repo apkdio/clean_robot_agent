@@ -38,7 +38,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 from test_scripts._runner import *
 
@@ -168,14 +168,14 @@ def _expect_ref(entry):
 
 
 def _compute(entries, hr):
-    from tools.date_rules import build_date_filter
+    from utils.date_rules import build_date_filter
     from service.domain_router import domain_filter as _domain_filter, route_domain as _route_domain
-    from tools.metadata_extractor import enumerate_models, resolve_budget_filter
+    from service.metadata_query import enumerate_models, resolve_budget_filter
     from service.model_query import resolve_date_range
     from service.query_rewrite import normalize_enabled as _normalize_enabled
 
     def _date_filter(query):
-        """日期解析在 service.model_query，filter 组装在 tools.date_rules（与线上同口径）。"""
+        """日期解析在 service.model_query，filter 组装在 utils.date_rules（与线上同口径）。"""
         r = resolve_date_range(query)
         return build_date_filter(r[0], r[1]) if r else None
 
@@ -184,7 +184,7 @@ def _compute(entries, hr):
     # 开关同线上：config/agent.yaml 的 behavior.query_normalize。
     normalize = None
     if _normalize_enabled():
-        from tools.query_normalizer import normalize as _normalize
+        from utils.query_normalizer import normalize as _normalize
 
         normalize = _normalize
 
@@ -332,7 +332,7 @@ def _code_label(code):
 
 def _index_file_shas(names) -> dict:
     """索引里每个文件当前带的 file_sha256 集合（chunk 入库时写入；老 chunk 可能没这个键）。"""
-    from tools.vector_store import get_vector_store
+    from mapper.vector_store import get_vector_store
 
     store = get_vector_store()
     out = {}
@@ -364,7 +364,7 @@ def _index_meta():
 
     不用文件 mtime —— Chroma 读一次也会动文件时间，mtime 判不出「索引落后」。
     """
-    from tools.config_tool import get_data_dir
+    from utils.config_tool import get_data_dir
     from service.hot_ingest import chunks_by_file, load_kb_metadata, scan_files
 
     meta = load_kb_metadata()
@@ -659,7 +659,7 @@ def run():
     if entries:
         print(f"\n评测范围：{entries[0]['id']}–{entries[-1]['id']}（{len(entries)} 条）")
 
-    from tools.metadata_extractor import get_all_models
+    from service.metadata_query import get_all_models
     catalog = {_short_name(m["name"]) for m in get_all_models()}
     want = set()
     for e in entries:

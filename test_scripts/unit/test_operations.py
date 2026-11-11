@@ -5,7 +5,7 @@ import sys
 import os
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
@@ -62,7 +62,7 @@ def test_note_ops_why_none():
 
 def test_note_ops_writes_route_and_returns_usable():
     """判定结果落 trace 的 route.ops，并把过 allow 门的候选交给主链路派发（shadow 口径）。"""
-    from tools import trace_store
+    from mapper import trace_store
     from test_scripts import trace_reader
     saved = ops._ops_cfg
     ops._ops_cfg = lambda: {"scoring": "shadow"}      # 本用例锁的是 shadow 的派发顺序
@@ -110,7 +110,7 @@ def test_order_contract():
 
 def test_model_intent_predicates_parity():
     """详情 / 枚举 / 指代三个谓词各管一段，不再由 operations 和执行体各拼一份词表。"""
-    from service import model_ref, model_query
+    from service import model_query
 
     _assert(model_query.has_model_ref("云顶 X2 怎么样"), "具体型号名 → 有指代")
     _assert(model_query.has_model_ref("这两个哪个好"), "指代词 → 有指代")
@@ -119,7 +119,6 @@ def test_model_intent_predicates_parity():
     _assert(not model_query.is_model_detail_query("有哪些型号"), "枚举问法不是详情")
     _assert(model_query.is_model_catalog_intent("天工 T 哪几款"), "哪几款覆盖")
     _assert(model_query.is_model_catalog_intent("净白系列有哪些型号"), "系列枚举覆盖")
-    _assert_eq(model_ref.has_model_ref, model_query.has_model_ref, "兼容壳转发同一实现")
     _assert_eq(ops._p_model("云顶X2多少钱"), model_query.is_model_detail_query("云顶X2多少钱"),
                "operations 与执行体共用详情谓词")
 
@@ -163,7 +162,7 @@ def test_resolve_by_scores():
 
 def test_note_ops_shadow_keeps_order():
     """scoring=shadow：分数落 trace，但 usable 仍按表序（派发行为不变）。"""
-    from tools import trace_store
+    from mapper import trace_store
     from test_scripts import trace_reader
 
     saved = (ops.score_all, ops._ops_cfg)

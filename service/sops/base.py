@@ -7,12 +7,12 @@ import hashlib
 import json
 import time
 
-from tools import trace_store
-from tools.dto.sop import ExtractResult, SopStepResult
-from tools.log_tool import get_logger
-from tools.prompts_tool import render
+from mapper import trace_store
+from utils.dto.sop import ExtractResult, SopStepResult
+from utils.log_tool import get_logger
+from utils.prompts_tool import render
 from service.safety import with_safety_hint
-from tools.state_store import StateStore
+from mapper.state_store import StateStore
 from config.word_dict_config import (
     AFTERSALES_WORDS,BUY_WORDS, CONSULT_WORDS, BRAND_WORDS,
     ENTER_CONFIRM,
@@ -177,7 +177,7 @@ def register(sop: dict) -> None:
 
 def save_recommend(session_id: str, models) -> None:
     """保存指定会话的上一轮推荐结果到 meta（供追问使用，跨重启有效）。"""
-    from repo.context_store import set_last_models
+    from mapper.context_store import set_last_models
     set_last_models(session_id, models)
 
 
@@ -299,7 +299,7 @@ def start_sop(session_id: str, sop_id: str, query: str, slots: dict = None) -> S
     提取失败再问第一个问题。`slots` 可由调用方预填，已填的 ask 槽直接跳过。
     开场提示（intro）可选，有则先输出。
     """
-    from repo.context_store import set_enter_declined
+    from mapper.context_store import set_enter_declined
     set_enter_declined(session_id, False)   # 用户这次真进了流程，之前「别再问」的标记作废
     _start(session_id, sop_id, slots=slots)
     logger.info(f"[SOP] Start SOP: {sop_id}")
@@ -387,12 +387,12 @@ def enter_confirm_text(sop_id: str) -> str:
 
 
 def enter_declined(session_id: str, sop_id: str) -> bool:
-    from repo.context_store import is_enter_declined
+    from mapper.context_store import is_enter_declined
     return is_enter_declined(session_id, sop_id)
 
 
 def mark_enter_declined(session_id: str, sop_id: str) -> None:
-    from repo.context_store import set_enter_declined
+    from mapper.context_store import set_enter_declined
     set_enter_declined(session_id, sop_id=sop_id)
 
 
@@ -641,6 +641,7 @@ def _run(session_id: str, user_input: str, session: dict = None) -> SopStepResul
 
         # 步骤走完但无 reply（异常防御），安全结束
         ended = True
+        _finished_store.set(session_id, session)
         _end(session_id)
         logger.warning("[SOP] %s ended without reply", sop["id"])
         return SopStepResult("done", SOP_EMPTY_REPLY_FALLBACK, done=True)

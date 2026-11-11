@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 from gateway.redis_store import acquire_lock, release_lock
-from tools.config_tool import get_config
-from tools.dto.knowledge import IngestResult, KnowledgeStats, ResetResult
+from utils.config_tool import get_config
+from utils.dto.knowledge import IngestResult, KnowledgeStats, ResetResult
 from service.hot_ingest import (
     invalidate_runtime_caches,
     invalidate_snapshot,
     start_hot_ingest,
 )
-from tools.vector_store import ingest_file, list_collections_info, reset_collection
+from mapper.vector_store import ingest_file, list_collections_info, reset_collection
 
 _INGEST_LOCK = "lock:ingest"
 

@@ -1,8 +1,8 @@
 """统一澄清服务：只保留状态认领、分派、载荷处理和登记机制。
 
 具体业务（SOP 进入/退出、操作澄清）在各自模块注册 handler，本模块不 import 它们：
-  - SOP 门：`sops/sop_gate.py`
-  - 操作澄清：`tools/operations.py`
+  - SOP 门：`service/sops/sop_gate.py`
+  - 操作澄清：`service/operations.py`
 """
 from __future__ import annotations
 
@@ -10,11 +10,12 @@ import re
 from collections.abc import Callable
 
 from config.word_dict_config import OPERATION_LABELS as _OPERATION_LABELS
-from tools import pending_store, trace_store
-from tools.dto.clarify import ClarifyData, ClarifyResult
-from tools.dto import clarify as _clarify_dto
-from tools.log_tool import get_logger
-from tools.selection import parse_index
+from mapper import pending_store
+from mapper import trace_store
+from utils.dto.clarify import ClarifyData, ClarifyResult
+from utils.dto import clarify as _clarify_dto
+from utils.log_tool import get_logger
+from utils.selection import parse_index
 
 logger = get_logger(name="clarify_service")
 
@@ -92,7 +93,7 @@ def apply_resume(data: ClarifyData, query: str, q: str, enter_declined_turn: boo
         from service.query_rewrite import normalize_enabled
 
         if normalize_enabled():
-            from tools.query_normalizer import normalize
+            from utils.query_normalizer import normalize
 
             q = normalize(query)
             trace_store.step("rewrite", normalize={"changed": q != query, "text": q[:120]})

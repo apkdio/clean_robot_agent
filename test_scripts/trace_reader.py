@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 
-from tools import trace_store
+from mapper import trace_store
 
 SIDE_KINDS = ("chunks", "feedback")
 

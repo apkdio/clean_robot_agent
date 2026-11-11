@@ -9,20 +9,20 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
 from test_scripts._runner import *
 
 from service import chat_service as cs
-from repo.context_store import delete_session, get_recent
-from tools.dto.request import ChatRequest
+from mapper.context_store import delete_session, get_recent
+from utils.dto.request import ChatRequest
 
 
 def test_stream_turn_accepts_chat_request():
     """新入口直接传 ChatRequest：query/session/lng/lat/retry 不再拆参数。"""
     sid = "11111111-2222-3333-4444-555566667780"
     delete_session(sid)
-    from repo.context_store import set_session_title
+    from mapper.context_store import set_session_title
     set_session_title(sid, "request smoke")
     seen = {}
 
     def fake_ask(request, **_kwargs):
-        from repo.context_store import append_message
+        from mapper.context_store import append_message
 
         seen["request"] = request
         append_message(request.session_id, "user", request.query)
@@ -66,7 +66,7 @@ def test_stream_turn_events_and_context():
     delete_session(sid)
 
     def fake_ask(request, *_args, **_kwargs):
-        from repo.context_store import append_message
+        from mapper.context_store import append_message
 
         append_message(request.session_id, "user", request.query)
         yield "你好"

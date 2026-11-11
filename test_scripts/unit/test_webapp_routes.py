@@ -132,7 +132,7 @@ def test_stream_error_rolls_back_user_message():
     """生成异常要把这条 user 回滚掉：否则上下文留下"问了没答"的孤立提问，
     下一轮 LLM 会把孤立提问当成待回答的问题（与停止同语义：这一轮没发生）。"""
     import webapp.app as wa
-    from repo.context_store import delete_session, get_recent
+    from mapper.context_store import delete_session, get_recent
 
     sid = "aaaaaaaa-1111-2222-3333-444444444444"
     delete_session(sid)
@@ -155,6 +155,67 @@ def test_stream_error_rolls_back_user_message():
         delete_session(sid)
 
 
+def test_feedback_anchor_example():
+    """反馈成功路径示例：按 (date, turn_index) 锚定轮次，不再依赖前端转换 trace 字段。"""
+    from mapper import trace_store
+
+    sid = "bbbbbbbb-1111-2222-3333-444444444444"
+    reset_trace(sid)
+    try:
+        trace_store.begin_turn(sid, "边刷多久换一次")
+        trace_store.end_turn(reply="边刷建议 3~6 个月更换。")
+        turn = trace_store.find_turn(sid, "边刷多久换一次") or {}
+        _assert_true(turn.get("date") and turn.get("turn_index") is not None,
+                     "测试轮次有日期/轮次锚点")
+        r = _client().post("/api/feedback", json={
+            "session_id": sid,
+            "query": "边刷多久换一次",
+            "rating": "useful",
+            "date": turn["date"],
+            "turn_index": turn["turn_index"],
+        })
+        _assert_eq(r.status_code, 200, "反馈成功 → 200")
+        body = r.get_json() or {}
+        _assert_eq(body.get("status"), "ok", "返回 ok")
+        _assert_eq((body.get("date"), body.get("turn_index")),
+                   (turn["date"], turn["turn_index"]), "回传锚点")
+        _assert_eq(body.get("updated"), False, "首次标注 updated=False")
+    finally:
+        reset_trace(sid)
+
+
+def test_knowledge_route_examples():
+    """知识库结果 DTO 的路由映射示例；service 用桩，避免污染真实向量库。"""
+    import webapp.app as wa
+    from utils.dto.knowledge import IngestResult, KnowledgeStats, ResetResult
+
+    saved_stats = wa.collections_info
+    saved_reset = wa.reset_knowledge_base
+    saved_ingest = wa.ingest_uploaded_file
+    wa.collections_info = lambda: KnowledgeStats("kb", 3)
+    wa.reset_knowledge_base = lambda: ResetResult("ok", deleted=2)
+    wa.ingest_uploaded_file = lambda _path: IngestResult(
+        "ok", file="例子.md", chunks=1, sha256="abc", elapsed=0.01)
+    try:
+        c = _client()
+        r = c.get("/api/stats")
+        _assert_eq(r.status_code, 200, "stats → 200")
+        _assert_eq(r.get_json(), {"collection_name": "kb", "chunk_count": 3},
+                   "stats 直出 DTO")
+        r = c.post("/api/reset")
+        _assert_eq(r.status_code, 200, "reset → 200")
+        _assert_eq(r.get_json(), {"status": "ok", "deleted": 2}, "reset 直出 DTO")
+        r = c.post("/api/ingest", data={"file": (io.BytesIO("# 例子\n".encode("utf-8")), "例子.md")})
+        _assert_eq(r.status_code, 200, "ingest → 200")
+        body = r.get_json() or {}
+        _assert_eq((body.get("status"), body.get("file"), body.get("chunks")),
+                   ("ok", "例子.md", 1), "ingest 直出 DTO")
+    finally:
+        wa.collections_info = saved_stats
+        wa.reset_knowledge_base = saved_reset
+        wa.ingest_uploaded_file = saved_ingest
+
+
 TESTS = [
     test_index_and_config,
     test_sessions_list_and_invalid_sid,
@@ -162,6 +223,8 @@ TESTS = [
     test_feedback_validation,
     test_stop_and_stream_rejects,
     test_ingest_rejects_and_busy,
+    test_feedback_anchor_example,
+    test_knowledge_route_examples,
     test_stream_error_rolls_back_user_message,
 ]
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from service.sops.base import is_aftersales, is_brand, is_consulting, register
-from tools.dto.sop import ExtractResult
+from utils.dto.sop import ExtractResult
 from config.word_dict_config import (
     BARE_BUDGET_RE,
     MODEL_QUERY_CONSTRAINT_RETRY_REPLY,
@@ -14,12 +14,13 @@ from config.word_dict_config import (
     TAG_ORDER,
 )
 from service.model_catalog import find_models_result
-from tools import trace_store
-from tools.log_tool import get_logger
-from tools.metadata_extractor import extract_price_constraint, extract_series, format_model_line
+from mapper import trace_store
+from utils.log_tool import get_logger
+from utils.metadata_rules import extract_price_constraint, format_model_line
+from service.metadata_query import extract_series
 from service.model_query import format_constraints, parse_publish
-from tools.prompts_tool import render
-from tools.selection import is_skip, parse_multi_select
+from utils.prompts_tool import render
+from utils.selection import is_skip, parse_multi_select
 
 logger = get_logger(name="model_query_sop")
 

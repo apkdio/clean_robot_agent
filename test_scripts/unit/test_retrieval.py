@@ -15,7 +15,7 @@ import sys
 import os
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
@@ -77,7 +77,7 @@ def test_domain_files_config():
     """域 → 文件映射新形态：一个域可挂多文件，且文件必须真实存在（防改名后静默失效）。"""
     from config.word_dict_config import DOMAIN_FILES, DOMAIN_MAP, domain_files_of
     from config.word_dict_config import domain_filter, validate_knowledge_domains
-    from tools.config_tool import get_data_dir
+    from utils.config_tool import get_data_dir
 
     _assert_eq(sorted(DOMAIN_MAP), sorted(DOMAIN_FILES), "DOMAIN_MAP 由 DOMAIN_FILES 派生")
     _assert_eq(domain_files_of("aftersales"), ["不染一尘售后服务.txt"], "域键 → 文件列表")
@@ -151,7 +151,7 @@ def test_word_dict_integrity():
 # ──────────────────────────────────────────────────────────────
 
 def test_tokenize():
-    from tools.sparse_retriever import SparseRetriever
+    from mapper.sparse_retriever import SparseRetriever
     t = SparseRetriever._tokenize("Python 在机器学习中的应用")
     _assert_eq(t, ["python", "在", "机", "器", "学", "习", "中", "的", "应", "用"], "中英混合分词")
     t2 = SparseRetriever._tokenize("扫地 robot100")
@@ -165,7 +165,7 @@ def test_tokenize():
 # ──────────────────────────────────────────────────────────────
 
 def test_matches_filter():
-    from tools.sparse_retriever import _matches_filter
+    from mapper.sparse_retriever import _matches_filter
     doc = Document(page_content="x", metadata={"min_price": 899, "file_name": "a.txt"})
     _assert(_matches_filter(doc, {"min_price": {"$lte": 1000}}), "lte 命中")
     _assert(not _matches_filter(doc, {"min_price": {"$gte": 1000}}), "gte 未命中")
@@ -181,7 +181,7 @@ def test_matches_filter():
 # ──────────────────────────────────────────────────────────────
 
 def test_rrf_fusion():
-    from tools.rrf_fusion import reciprocal_rank_fusion
+    from utils.rrf_fusion import reciprocal_rank_fusion
     d1, d2, d3 = Document(page_content="A"), Document(page_content="B"), Document(page_content="C")
     dense = [(d1, 0.9), (d2, 0.8)]   # dense 排名：A=1, B=2
     sparse = [(d2, 5.0), (d3, 3.0)]  # sparse 排名：B=1, C=2
@@ -200,7 +200,7 @@ def test_rrf_fusion():
 # ──────────────────────────────────────────────────────────────
 
 def test_split_numbered_entries():
-    from tools.entry_splitter import split_numbered_entries
+    from utils.entry_splitter import split_numbered_entries
     text = (
         "## 入门级\n"
         "1. **型号A**\n"
@@ -332,8 +332,8 @@ def test_bm25_cache_stale_on_content_change():
     """BM25 缓存按内容摘要判新鲜度：条数不变、正文改了 → 不能复用旧索引。"""
     import pickle
     import tempfile
-    from tools import vector_store
-    from tools.sparse_retriever import SparseRetriever
+    from mapper import vector_store
+    from mapper.sparse_retriever import SparseRetriever
     real_store, real_path = vector_store.get_vector_store, SparseRetriever._cache_path
     tmp = os.path.join(tempfile.mkdtemp(prefix="bm25_cache_"), "bm25.pkl")
 
@@ -357,8 +357,8 @@ def test_bm25_cache_stale_on_content_change():
 
 def test_dense_search_embedding_path_and_fallback():
     """稠密检索拆分 query embedding 后，向量查询与相关性分数口径不能变。"""
-    import tools.vector_store as vs
-    from tools import trace_store
+    import mapper.vector_store as vs
+    from mapper import trace_store
 
     class _Emb:
         def __init__(self):

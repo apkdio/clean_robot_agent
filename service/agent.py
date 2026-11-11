@@ -11,9 +11,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Callable
 
-from tools import pending_store, trace_store
-from tools.config_tool import get_config
-from tools.log_tool import clear_log_session, get_logger, set_log_session
+from mapper import pending_store
+from mapper import trace_store
+from utils.config_tool import get_config
+from utils.log_tool import clear_log_session, get_logger, set_log_session
 from service.query_rewrite import (
     history_block as _history_block,
     last_user_message as _last_user_message,
@@ -49,9 +50,9 @@ from service.domain_router import (
     domain_filter as _domain_filter,
     route_domain as _route_domain,
 )
-from tools.dto.executor import NotMine, Reply
-from tools.dto.request import ChatRequest
-from tools.dto.stage import Continue, Finish, StageOutcome
+from utils.dto.executor import NotMine, Reply
+from utils.dto.request import ChatRequest
+from utils.dto.stage import Continue, Finish, StageOutcome
 from service.turn_context import TurnContext
 from service.turn_recorder import log_behavior as _log_behavior
 from service.op_executors import OP_EXECUTORS as _OP_EXEC, PIPELINE_OPS as _PIPELINE_OPS
@@ -114,11 +115,11 @@ def _ctx_cfg() -> dict:
 
 def _stage_normalize(ctx: TurnContext) -> StageOutcome:
     """入口归一化与重答回滚；硬规则统一用归一化文本判定。"""
-    from repo.context_store import rollback_last_user_message
+    from mapper.context_store import rollback_last_user_message
 
     ctx.q = ctx.query
     if _normalize_enabled():
-        from tools.query_normalizer import normalize
+        from utils.query_normalizer import normalize
 
         ctx.q = normalize(ctx.query)
         trace_store.step("rewrite", normalize={"changed": ctx.q != ctx.query,
@@ -130,7 +131,7 @@ def _stage_normalize(ctx: TurnContext) -> StageOutcome:
 
 def _stage_inject_guard(ctx: TurnContext) -> StageOutcome:
     """角色扮演 / 指令注入：直接拒绝，不发给 LLM。"""
-    from repo.context_store import append_message
+    from mapper.context_store import append_message
     from config.word_dict_config import INJECT_RE
 
     if not INJECT_RE.search(ctx.q):
@@ -146,7 +147,7 @@ def _stage_inject_guard(ctx: TurnContext) -> StageOutcome:
 
 def _stage_danger_guard(ctx: TurnContext) -> StageOutcome:
     """危险现象：安全优先，立即停机联系售后。"""
-    from repo.context_store import append_message
+    from mapper.context_store import append_message
 
     decision = decide_safety(ctx.session_id, ctx.q, mode=SAFETY_STOP)
     if decision.level == SAFETY_NONE:
@@ -167,7 +168,7 @@ def _stage_danger_guard(ctx: TurnContext) -> StageOutcome:
 
 def _stage_record_user(ctx: TurnContext) -> StageOutcome:
     """记录用户消息；danger 标记供后续安全承接使用。"""
-    from repo.context_store import append_message
+    from mapper.context_store import append_message
 
     append_message(ctx.session_id, "user", ctx.query, trace=trace_store.turn_anchor())
     return Continue()
@@ -270,9 +271,7 @@ def _stage_intent(ctx: TurnContext) -> StageOutcome:
 
     low_conf_margin = float((_ctx_cfg().get("intent") or {}).get("low_conf_margin", 0) or 0)
     ctx.intent, ctx.margin = route_intent_with_margin(ctx.q)
-    if ctx.intent == "unknown" and ctx.margin == 0.0:
-        trace_store.route("intent", degraded=True)
-        trace_store.node("route.intent", status="degraded")
+    degraded = ctx.intent == "unknown" and ctx.margin == 0.0
     ctx.intent_retry = None
     if ctx.q != ctx.query and (
             ctx.intent == "other"
@@ -287,7 +286,7 @@ def _stage_intent(ctx: TurnContext) -> StageOutcome:
         if adopt:
             ctx.intent, ctx.margin = intent2, margin2
     trace_store.step("intent", intent=ctx.intent, margin=ctx.margin,
-                     intent_retry=ctx.intent_retry)
+                     intent_retry=ctx.intent_retry, degraded=degraded)
     ctx.low_conf = low_conf_margin > 0 and ctx.margin < low_conf_margin
     if ctx.intent == "unknown":
         return Continue(prefix=get_guess_hint() + "\n\n")
@@ -498,8 +497,9 @@ def _stage_retrieve(ctx: TurnContext) -> StageOutcome:
 def _stage_generate(ctx: TurnContext) -> StageOutcome:
     """RAG 流式生成：上下文 + 召回片段 + 答案硬事实校验。"""
     _log_behavior("retrieve_answer", hits=len(ctx.chunks))
+    answer_query = (ctx.handoff.query or ctx.query) if ctx.handoff else ctx.query
     return Finish(stream=rag_stream(
-        ctx.query,
+        answer_query,
         history_block=_history_block(ctx.session_id),
         chunk_texts=[c.page_content for c in ctx.chunks],
         temperature=_llm_cfg().get("temperature", 0.3),

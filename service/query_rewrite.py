@@ -7,8 +7,8 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from tools.config_tool import get_config
-from tools.log_tool import get_logger
+from utils.config_tool import get_config
+from utils.log_tool import get_logger
 
 logger = get_logger(name="query_rewrite")
 
@@ -38,7 +38,7 @@ def normalize_enabled() -> bool:
 
 def history_block(session_id: str) -> str:
     """拼最近对话历史，供 LLM 自主消解指代。"""
-    from repo.context_store import get_recent
+    from mapper.context_store import get_recent
 
     msgs = get_recent(session_id)
     if msgs and msgs[-1].get("role") == "user":
@@ -52,7 +52,7 @@ def history_block(session_id: str) -> str:
 
 def last_user_message(session_id: str) -> str:
     """最近一条 user 消息的原文（没有则空串）。"""
-    from repo.context_store import get_recent
+    from mapper.context_store import get_recent
 
     for m in reversed(get_recent(session_id)):
         if m.get("role") == "user":
@@ -62,7 +62,7 @@ def last_user_message(session_id: str) -> str:
 
 def window_messages(session_id: str) -> list:
     """最近 topic_window 条会话记录。"""
-    from repo.context_store import get_recent
+    from mapper.context_store import get_recent
 
     n = int((cfg().get("context") or {}).get("topic_window", 8) or 8)
     return get_recent(session_id, n=n)
@@ -137,7 +137,7 @@ def _llm_rewrite(query: str, history: str) -> str | None:
     """用小模型把追问改写成自足 query（输出受约束，校验不过即放弃）。"""
     from langchain_core.messages import HumanMessage
     from gateway.llm_tool import get_small_model_name, stream_chat
-    from tools.prompts_tool import render
+    from utils.prompts_tool import render
 
     max_chars = int(rewrite_cfg().get("max_chars", 80) or 80)
     prompt = render("rewrite_system", max_chars=max_chars,

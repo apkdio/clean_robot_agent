@@ -14,13 +14,13 @@ from typing import Dict, List, Tuple
 
 from langchain_core.documents import Document
 
-from tools import trace_store
-from tools.config_tool import get_config
-from tools.log_tool import get_logger
+from mapper import trace_store
+from utils.config_tool import get_config
+from utils.log_tool import get_logger
 from gateway.reranker import rerank
-from tools.rrf_fusion import reciprocal_rank_fusion
-from tools.sparse_retriever import SparseRetriever
-from tools.vector_store import DenseRetriever, build_hybrid_index
+from utils.rrf_fusion import reciprocal_rank_fusion
+from mapper.sparse_retriever import SparseRetriever
+from mapper.vector_store import DenseRetriever, build_hybrid_index
 
 logger = get_logger(name="hybrid_retriever")
 

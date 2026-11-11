@@ -70,8 +70,8 @@ EXTRACT_BUDGET_SCHEMA = {
             "type": "object",
             "properties": {
                 "budget_max": {
-                    "type": "integer",
-                    "description": "预算上限（元），无预算返回空字符串",
+                    "type": ["integer", "string"],
+                    "description": "预算上限（元）；无预算返回空字符串",
                 },
             },
             "required": ["budget_max"],

@@ -22,13 +22,13 @@ import os
 import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
 from service.agent import ask_stream
-from repo.context_store import append_message
-from tools.dto.request import ChatRequest
+from mapper.context_store import append_message
+from utils.dto.request import ChatRequest
 
 
 def _chat(query, sid, lng=None, lat=None):

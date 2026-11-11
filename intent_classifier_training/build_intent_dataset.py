@@ -16,9 +16,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.config_tool import get_data_dir
-from tools.entry_splitter import split_numbered_entries
-from tools.file_tools import extract_file
+from utils.config_tool import get_data_dir
+from utils.entry_splitter import split_numbered_entries
+from utils.file_tools import extract_file
 
 # 默认输出到 _generated.jsonl：正式数据集 intent_dataset.jsonl 是人工维护的受控数据，
 # 只有显式 --force 才允许整份重写（生成的样本没有人工标注的 source 字段）。

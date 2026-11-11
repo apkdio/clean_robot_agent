@@ -47,7 +47,7 @@ import sys
 import time
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 from test_scripts._runner import *
 from config.word_dict_config import BEHAVIOR_BY_TAG, TRACE_NODE_LABELS
@@ -118,7 +118,7 @@ def _real_context_root() -> str:
     """
     global _CONTEXT_ROOT
     if _CONTEXT_ROOT is None:
-        from tools.path_tool import get_abs_path   # 与 context_store 同一个路径助手，但不读 CONTEXT_DIR
+        from utils.path_tool import get_abs_path   # 与 context_store 同一个路径助手，但不读 CONTEXT_DIR
 
         _CONTEXT_ROOT = get_abs_path("data/context")
     return _CONTEXT_ROOT
@@ -275,7 +275,7 @@ def _check_case(expect: dict, branch, tag=None, record=None) -> list:
 
 def _answers_pending(query: str, rec: dict) -> bool:
     """这一句是不是对当前澄清的回答。是 → 让链路消费；不是 → 按新需求处理。"""
-    from tools import pending_store
+    from mapper import pending_store
     from service.clarify_service import match_op_choice, match_yes_no
 
     biz = rec.get("biz")
@@ -299,7 +299,7 @@ def _ask(sid: str, query: str):
     不再是两处证据。end_turn() 在本轮生成器消费完时落盘，所以返回时记录已在。
     """
     from service.agent import ask_stream
-    from tools.dto.request import ChatRequest
+    from utils.dto.request import ChatRequest
 
     reply = "".join(ask_stream(ChatRequest(query=query, session_id=sid))).strip()
     return reply, read_last_turn(sid)
@@ -315,7 +315,7 @@ def _replay_prefix(sid: str, turns: list, lo: int, hi: int):
     例外：危险告警轮可能缺触发它的 user 消息（见数据 anomalies，当时的 guard 在落盘前
     return），此时补一条带 danger 标记的占位 user 消息，否则后续「安全承接」无从触发。
     """
-    from repo.context_store import append_message
+    from mapper.context_store import append_message
     for idx in range(lo, hi):
         t = turns[idx]
         if t["role"] == "user":
@@ -336,16 +336,16 @@ def _is_must_pass_case(case: dict) -> bool:
 
 def _run_row(row: dict) -> list:
     import service.sops.base
-    from tools import pending_store
-    from repo.context_store import append_message, delete_session
-    from tools.pending_store import close as clear_pending
+    from mapper import pending_store
+    from mapper.context_store import append_message, delete_session
+    from mapper.pending_store import close as clear_pending
 
     sid = "ctxeval-" + row["session_id"]
     service.sops.base._sessions = {}
     # 澄清状态统一在 pending_store：
     # Redis 键 + 内存降级都要清，否则同一 sid 上一行的残留会污染下一行。
     clear_pending(sid)
-    # 主链路 trace（tools/trace_store.py）也按 sid 落盘，同一 sid 跨行复用——先清掉上轮的落盘与
+    # 主链路 trace（mapper/trace_store.py）也按 sid 落盘，同一 sid 跨行复用——先清掉上轮的落盘与
     # 进程内计数，否则 turn_index 会接着前一次运行数、文件也会累积。
     reset_trace(sid)
     # 上一次运行若被中断，会话文件会留在盘上（收尾才删）——开头也删一次，让中断后的重跑自愈。
@@ -457,9 +457,9 @@ def _node_text(node: dict) -> str:
 
 
 def _trace_version() -> str:
-    """主链路 trace 的记录版本（tools/trace_store.py::TRACE_VERSION），写进报告便于日后对齐。"""
+    """主链路 trace 的记录版本（mapper/trace_store.py::TRACE_VERSION），写进报告便于日后对齐。"""
     try:
-        from tools import trace_store
+        from mapper import trace_store
 
         return "v%s" % trace_store.TRACE_VERSION
     except Exception:  # noqa: BLE001
@@ -528,7 +528,7 @@ def _write_review(rows, results, hard_results, soft_results, must_pass, regressi
         f"- 生成时间：{time.strftime('%Y-%m-%d %H:%M:%S')}",
         f"- 评测集：`data/eval/context/golden.jsonl`"
         f"（{len(rows)} 会话 / {len(results)} 条标注：硬 {len(hard_results)} · 软 {len(soft_results)}）",
-        f"- trace 记录：{_trace_version()}（`tools/trace_store.py`，每轮一条；有问题的条目附「本轮环节」）",
+        f"- trace 记录：{_trace_version()}（`mapper/trace_store.py`，每轮一条；有问题的条目附「本轮环节」）",
         f"- 硬行为（回归门）：必过 {len(must_pass) - len(regressions)}/{len(must_pass)} 通过"
         + (f"，**{len(regressions)} 条回归需处理**" if regressions else ""),
         f"- 软行为：**{len(need_review)}/{len(soft_results)} 条行为与期望不符**（不判失败，按下表复核）",
@@ -572,7 +572,7 @@ def _env_meta() -> dict:
     再补本轨特有的三项——分类头与训练集（意图判错会直接改变出口行为）、trace 记录版本。
     """
     from test_scripts.eval import test_retrieval_eval as retr
-    from tools import trace_store
+    from mapper import trace_store
 
     env = retr._env_meta()
     env["evalset"] = retr._evalset_meta(_GOLDEN_FILE)   # 复用检索轨的指纹口径，换成本轨的用例集

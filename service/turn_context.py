@@ -1,16 +1,16 @@
 """一轮对话的业务状态与阶段返回体的兼容入口。
 
 TurnContext 只放业务状态，不放 trace、不攒日志；阶段返回 Continue / Finish，
-不直接向用户输出。返回体本身定义在 tools/dto/。
+不直接向用户输出。返回体本身定义在 utils/dto/。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Callable
 
-from tools.dto.handoff import Handoff
-from tools.dto.request import ChatRequest
-from tools.dto.stage import Continue, Finish, StageOutcome
+from utils.dto.handoff import Handoff
+from utils.dto.request import ChatRequest
+from utils.dto.stage import Continue, Finish, StageOutcome
 
 __all__ = ["TurnContext", "Continue", "Finish", "StageOutcome"]
 

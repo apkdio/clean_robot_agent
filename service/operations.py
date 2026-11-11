@@ -12,10 +12,11 @@ from config.word_dict_config import (
     OPERATION_LABELS,
     OPS_CLARIFY_RETRY,
 )
-from tools import pending_store, trace_store
+from mapper import pending_store
+from mapper import trace_store
 from service.clarify_service import match_op_choice, register_clarify_handler
-from tools.dto.clarify import ClarifyResult
-from tools.log_tool import get_logger
+from utils.dto.clarify import ClarifyResult
+from utils.log_tool import get_logger
 from service.safety import with_safety_hint
 from service.turn_recorder import log_behavior
 
@@ -112,7 +113,7 @@ def _phrases(op: str) -> list:
 def _ops_cfg() -> dict:
     """operations 段配置（缺失返回空 dict，走内置默认）。"""
     try:
-        from tools.config_tool import get_config
+        from utils.config_tool import get_config
         return (get_config("agent").get("operations") or {})
     except Exception as e:  # noqa: BLE001
         logger.warning("[Ops] load config failed: %s", e)
@@ -159,7 +160,7 @@ def _ensure_index() -> bool:
             return False
         try:
             from rank_bm25 import BM25Okapi
-            from tools.sparse_retriever import SparseRetriever   # 复用同一套分词
+            from mapper.sparse_retriever import SparseRetriever   # 复用同一套分词
 
             rows = [(op, ph) for op in OPERATIONS for ph in _phrases(op)]
             if not rows:
@@ -268,7 +269,7 @@ def score_all(query: str) -> tuple[dict, str]:
 
 
 def _tokenize(text: str) -> list:
-    from tools.sparse_retriever import SparseRetriever
+    from mapper.sparse_retriever import SparseRetriever
     return SparseRetriever._tokenize(text)
 
 
@@ -327,7 +328,7 @@ def note_ops(query: str, *, intent: str = None, margin: float = None,
 
     usable 是主链路派发顺序：scoring=on 时按分数、否则按表序。
     """
-    from tools import trace_store
+    from mapper import trace_store
     mode, floor, gap = _cfg_opts(_ops_cfg())
     raw = probe(query)
     scores, scoring = score_all(query) if mode != "off" else ({}, "off")

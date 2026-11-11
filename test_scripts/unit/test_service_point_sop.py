@@ -7,15 +7,15 @@ import re
 import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
 import service.sops  # 触发各 SOP 注册
 import service.sops.base
-import tools.service_point as spt
+import mapper.service_points_repo as spt
 from service.sops import service_point_sop as sp
-from tools.dto.sop import ExtractResult
+from utils.dto.sop import ExtractResult
 
 _CAND = [
     {"name": "Chaoyang", "cn_name": "朝阳（辽宁）", "lng": 120.45, "lat": 41.57, "population": 400000},

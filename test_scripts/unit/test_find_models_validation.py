@@ -77,7 +77,7 @@ def test_zero_none_sentinel_and_tags():
 def test_direct_query_rejects_dropped_result():
     """有 dropped 时直出不能把剩余全量当答案，必须交回 RAG 兜底。"""
     import service.model_query as mq
-    from tools.dto.model_query import FindModelsResult, ModelQueryConstraints
+    from utils.dto.model_query import FindModelsResult, ModelQueryConstraints
 
     saved_constraints, saved_find = mq.resolve_model_constraints, mq.find_models
     mq.resolve_model_constraints = lambda query: (ModelQueryConstraints(limit=50), "budget")

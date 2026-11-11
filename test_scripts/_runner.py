@@ -1,7 +1,7 @@
 """测试公共基础设施：路径注入 + 断言 + 计数汇总 + e2e 门控。
 
 所有 test_*.py 模块通过 from test_scripts._runner import * 复用本文件提供的：
-  - 路径注入：把项目根目录加入 sys.path，保证 import tools/sops/config/function_tools
+  - 路径注入：把项目根目录加入 sys.path，保证 import utils/sops/config/function_tools
     下的包导入都能正确解析（各入口脚本自行插入项目根，此处兜底）。
   - 断言函数：_assert / _assert_eq / _assert_true / _assert_false /
     _assert_in / _assert_not_in / _assert_raises。
@@ -38,7 +38,7 @@ os.environ.setdefault("CONTEXT_META_DIR", "data/test_context_metadata")
 os.environ.setdefault("TRACE_DIR", "temp/trace_test")   # trace 也隔离，避免污染真实 logs/trace/
 
 # 上一段那句「_runner 总先于其它模块被导入」是隐含约定，破了会静默失效
-_EARLY_IMPORTED = [m for m in ("repo.context_store", "tools.vector_store") if m in sys.modules]
+_EARLY_IMPORTED = [m for m in ("mapper.context_store", "mapper.vector_store") if m in sys.modules]
 if _EARLY_IMPORTED:
     raise RuntimeError(
         "测试隔离未生效：%s 已在 _runner 之前被导入——测试会话会被写进真实数据目录。"
@@ -177,7 +177,7 @@ def stats():
     return _passed, _total, _skipped
 
 
-# 双重导入（裸名 + tools. 前缀）曾会加载出两份带状态的模块，两者都能 import 成功。
+# 双重导入（裸名 + utils. 前缀）曾会加载出两份带状态的模块，两者都能 import 成功。
 # 项目里踩过：context_store 两份实例 → 喂给 LLM 的历史缺 assistant 一侧。
 # 已随「全项目统一完整导入」消除（见 docs/project_detail.md §八）：此处不再需要守卫。
 
@@ -189,7 +189,7 @@ def reset_trace(session_id: str) -> None:
     trace_store.reset_sequence() 同时清 Redis `trace:seq` 与本地 fallback。
     """
     try:
-        from tools import trace_store
+        from mapper import trace_store
 
         for kind in ("", trace_store.CHUNK_KIND,
                      trace_store.FEEDBACK_KIND, trace_store.EVENT_KIND):
@@ -199,10 +199,12 @@ def reset_trace(session_id: str) -> None:
         session_dir = trace_store._session_dir(session_id)
         if session_dir and os.path.isdir(session_dir) and not os.listdir(session_dir):
             os.rmdir(session_dir)          # 文件删空就连目录收掉：别留空壳（读数器会按目录名解析日期）
-        from repo.trace import write as trace_write
+        from mapper.trace import paths as trace_paths
+        from mapper.trace import write as trace_write
 
         trace_store.reset_sequence(session_id)
         trace_write._last.pop(session_id, None)
+        trace_paths.reset_session_cache(session_id)
     except Exception:  # noqa: BLE001
         pass
 
@@ -210,7 +212,7 @@ def reset_trace(session_id: str) -> None:
 def read_last_turn(session_id: str) -> dict:
     """读某会话当天 trace 的最后一条记录（评测失败归因用）；读不到返回 {}。"""
     try:
-        from tools import trace_store
+        from mapper import trace_store
 
         last = {}
         with open(trace_store._path(session_id), encoding="utf-8") as f:

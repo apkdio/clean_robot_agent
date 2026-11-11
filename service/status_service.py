@@ -1,7 +1,7 @@
 """运行状态与展示配置：给 Controller 提供只读视图。"""
 from __future__ import annotations
 
-from tools.config_tool import get_config
+from utils.config_tool import get_config
 
 
 def agent_display_config() -> dict:

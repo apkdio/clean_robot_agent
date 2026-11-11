@@ -8,7 +8,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools import prompts_tool as pt
+from utils import prompts_tool as pt
 
 
 def _restore():

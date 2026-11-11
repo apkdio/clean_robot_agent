@@ -1,4 +1,4 @@
-"""Agent 前置防护测试：tools/agent.py 里不依赖 LLM 的安全/路由逻辑。
+"""Agent 前置防护测试：service/agent.py 里不依赖 LLM 的安全/路由逻辑。
 
 覆盖：
   - detect_emotion（负面情绪识别：强/弱/无；词表短语化，业务词不误伤）
@@ -13,12 +13,12 @@ import sys
 import os
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
 from service.agent import ask_stream as _ask_prod
-from tools.dto.request import ChatRequest
+from utils.dto.request import ChatRequest
 import service.agent as agent_mod
 
 
@@ -36,7 +36,7 @@ def _reply(query):
 
 
 def _reset_session(sid):
-    from repo.context_store import delete_session
+    from mapper.context_store import delete_session
 
     delete_session(sid)
 
@@ -82,7 +82,7 @@ def test_enter_gate_decline_reuses_entry_query():
     """
     import service.intent_router as ir
     from service.sops import end_sop
-    from tools import pending_store
+    from mapper import pending_store
 
     sid = "t-entergate"
     end_sop(sid)                      # 清上次运行可能残留的 SOP 会话（Redis 跨进程存活）
@@ -106,10 +106,11 @@ def test_enter_gate_decline_reuses_entry_query():
 
 def test_enter_gate_timeout_is_not_decline():
     """进入确认门两次没听懂只跳过本轮，不写持久拒绝标记。"""
-    from tools import pending_store, trace_store
+    from mapper import pending_store
+    from mapper import trace_store
     from service.sops.sop_gate import _clarify_sop_enter
     from service.clarify_service import CLARIFY_DONE, CLARIFY_RESUME
-    from repo.context_store import is_enter_declined
+    from mapper.context_store import is_enter_declined
     from test_scripts import trace_reader
 
     sid = "t-enter-timeout"
@@ -146,7 +147,7 @@ def test_enter_gate_decline_hint_truthful():
     import service.intent_router as ir
     from config.word_dict_config import SOP_REENTER_HINT
     from service.sops import end_sop
-    from tools import pending_store
+    from mapper import pending_store
 
     sid = "t-decline-hint"
     end_sop(sid)
@@ -174,7 +175,7 @@ def test_enter_gate_decline_hint_truthful():
 def test_all_sop_entry_gate():
     """强触发也先过进入门；答「是」才启动 SOP。"""
     from service.sops import end_sop
-    from tools import pending_store
+    from mapper import pending_store
 
     sid = "t-all-sop-gate"
     end_sop(sid)
@@ -196,7 +197,7 @@ def test_all_sop_entry_gate():
 def test_safety_hint_in_sop_clarify():
     """安全窗口内，SOP 待确认收到非答案：重问并追加软提醒，不消费 pending。"""
     from service.sops import end_sop
-    from tools import pending_store
+    from mapper import pending_store
     from test_scripts.test_hooks import set_danger_window
 
     sid = "t-safety-hint-clarify"
@@ -254,9 +255,10 @@ def test_model_list_routes_through_find_models():
 def test_exit_with_residual_uses_trace_not_behavior():
     """退出但带诉求：中间退出只落 sop.exit，不污染 tags / branch。"""
     from service.sops import end_sop, start_sop
-    from tools import pending_store, trace_store
+    from mapper import pending_store
+    from mapper import trace_store
     from service.agent import _stage_active_sop
-    from tools.dto.request import ChatRequest
+    from utils.dto.request import ChatRequest
     from service.turn_context import TurnContext
     from test_scripts import trace_reader
 
@@ -285,9 +287,9 @@ def test_exit_with_residual_uses_trace_not_behavior():
 
 def test_stopped_before_retrieval_records_node():
     """停止发生在检索前：不伪造回答，但 trace 要能看出是 stopped。"""
-    from tools import trace_store
+    from mapper import trace_store
     from service.agent import _stage_retrieve
-    from tools.dto.request import ChatRequest
+    from utils.dto.request import ChatRequest
     from service.turn_context import TurnContext
     from test_scripts import trace_reader
 
@@ -312,9 +314,9 @@ def test_empty_sop_reply_still_has_branch():
     from service.sops import end_sop
     from service.sops.base import _save_session, make_session
     import service.sops.repair_sop
-    from tools import trace_store
+    from mapper import trace_store
     from service.agent import _stage_active_sop
-    from tools.dto.request import ChatRequest
+    from utils.dto.request import ChatRequest
     from service.turn_context import TurnContext
     from test_scripts import trace_reader
 
@@ -346,8 +348,8 @@ def test_active_sop_repair_hands_off_to_retrieve():
     from service.sops.base import _save_session, make_session
     import service.sops.repair_sop
     from service.agent import _stage_active_sop
-    from tools.dto.request import ChatRequest
-    from tools.dto.stage import Continue
+    from utils.dto.request import ChatRequest
+    from utils.dto.stage import Continue
     from service.turn_context import TurnContext
 
     sid = "t-sop-handoff"
@@ -374,9 +376,9 @@ def test_active_sop_reads_state_once():
     """活跃 SOP 轮次只读一次状态快照，后续 continue/note 复用。"""
     import service.sops.base
     from service.sops import end_sop, start_sop
-    from tools import trace_store
+    from mapper import trace_store
     from service.agent import _stage_active_sop
-    from tools.dto.request import ChatRequest
+    from utils.dto.request import ChatRequest
     from service.turn_context import TurnContext
 
     sid = "t-sop-one-load"
@@ -405,7 +407,7 @@ def test_active_sop_reads_state_once():
 def test_safety_carry_main_text():
     """主链路硬承接仍是独立出口，文案改为软警示。"""
     from service.sops import end_sop
-    from tools import pending_store
+    from mapper import pending_store
     from test_scripts.test_hooks import set_danger_window
 
     sid = "t-safety-carry-main"
@@ -427,7 +429,8 @@ def test_ops_clarify_roundtrip():
     """判别器 ambiguous（分差 < gap）→ 问用户选 1/2 → 按选择重放，trace 记 override。"""
     import service.operations as ops_mod
     from service.sops import end_sop
-    from tools import pending_store, trace_store
+    from mapper import pending_store
+    from mapper import trace_store
     from test_scripts import trace_reader
 
     sid = "t-ops-clarify"
@@ -465,7 +468,8 @@ def test_clarify_open_trace():
     """提问轮落 clarify.open：biz、选项、retry，以及被覆盖的 biz。"""
     import service.operations as ops_mod
     from service.sops import end_sop
-    from tools import pending_store, trace_store
+    from mapper import pending_store
+    from mapper import trace_store
     from service.clarify_service import open_clarify
     from test_scripts import trace_reader
 
@@ -505,7 +509,8 @@ def test_clarify_open_trace():
 def test_sop_exit_confirm_does_not_emit_sop_active():
     """退出确认是 clarify 分支：不能伪装成 _stage_active_sop 的 sop.active。"""
     from service.sops import end_sop, start_sop
-    from tools import pending_store, trace_store
+    from mapper import pending_store
+    from mapper import trace_store
     from service.sops.sop_gate import _clarify_sop_exit
     from test_scripts import trace_reader
 
@@ -535,7 +540,7 @@ def test_sop_exit_confirm_does_not_emit_sop_active():
 
 def test_ops_clarify_single_option_does_not_ask_two():
     """单候选不是二选一：直接按唯一候选继续，不能拼出「2=-」。"""
-    from tools import pending_store
+    from mapper import pending_store
     from service.clarify_service import CLARIFY_RESUME, match_op_choice
     from service.operations import _clarify_ops
 
@@ -560,7 +565,8 @@ def test_ops_clarify_two_misses_take_top1():
     """两次认不出 → 按 top1 走，不再第三次追问（prefer 压掉重新判歧义）。"""
     import service.operations as ops_mod
     from service.sops import end_sop
-    from tools import pending_store, trace_store
+    from mapper import pending_store
+    from mapper import trace_store
     from test_scripts import trace_reader
 
     sid = "t-ops-clarify-miss"
@@ -603,7 +609,7 @@ def test_ops_clarify_only_when_close():
     """分差够大（不是 ambiguous）时不问用户，直接按分数派发。"""
     import service.operations as ops_mod
     from service.sops import end_sop
-    from tools import pending_store
+    from mapper import pending_store
 
     sid = "t-ops-noclarify"
     end_sop(sid)

@@ -206,7 +206,7 @@ RECENT_VAGUE_WORDS = ["发布", "新", "出", "上市"]
 # 相对上一轮展示范围的追问（「更…」）：更便宜 / 更贵 / 更新 / 更旧
 CHEAPER_WORDS = ["便宜", "低价", "划算"]
 PRICIER_WORDS = ["更贵", "贵一点", "贵些", "贵的", "价格高一点", "再贵点"]
-# 裸「更新」易与「固件更新」混，只收带后缀说法；「更X更Y」并列（更新更便宜的）另用 regex 兜（见 tools/followup.py）
+# 裸「更新」易与「固件更新」混，只收带后缀说法；「更X更Y」并列（更新更便宜的）另用 regex 兜（见 service/followup.py）
 NEWER_WORDS = ["更新的", "更新一点", "更新一些", "更新点", "更新些", "更新款", "新一点的", "新一些"]
 OLDER_WORDS = ["更旧", "旧一点", "老款", "老一点"]
 
@@ -422,7 +422,7 @@ INJECT_RE = re.compile(
 BARE_BUDGET_RE = re.compile(r"^\s*(\d{2,6})\s*(?:块|元|钱|预算|左右|上下)?\s*[。.!！~，,]?\s*$")
 
 
-# ── 追问维度话术（tools/followup.py 的抬头用词）──────────────────
+# ── 追问维度话术（service/followup.py 的抬头用词）──────────────────
 REL_LABEL = {"cheaper": "更便宜", "pricier": "更贵", "newer": "更新", "older": "发布更早"}
 REL_SUPER = {"cheaper": "最便宜", "pricier": "最贵", "newer": "最新", "older": "最早发布"}
 

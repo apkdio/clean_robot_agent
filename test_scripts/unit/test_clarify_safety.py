@@ -44,7 +44,8 @@ def test_safety_decision_levels():
 
 
 def test_unknown_clarify_biz_is_consumed():
-    from tools import pending_store, trace_store
+    from mapper import pending_store
+    from mapper import trace_store
     from service.clarify_service import dispatch_clarify
     from test_scripts import trace_reader
 
@@ -68,7 +69,7 @@ def test_unknown_clarify_biz_is_consumed():
 
 def test_sop_enter_missing_sop_drops():
     from service.sops.sop_gate import _clarify_sop_enter
-    from tools import pending_store
+    from mapper import pending_store
 
     sid = "t-s5-enter-missing"
     _clean(sid)

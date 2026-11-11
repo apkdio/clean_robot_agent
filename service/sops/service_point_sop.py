@@ -6,8 +6,8 @@ import re
 
 from config.word_dict_config import SERVICE_POINT_CONSULT_WORDS, SERVICE_POINT_WORDS
 from service.sops.base import register
-from tools.dto.sop import ExtractResult
-from tools.log_tool import get_logger
+from utils.dto.sop import ExtractResult
+from utils.log_tool import get_logger
 
 logger = get_logger(name="sops_service_point")
 
@@ -32,7 +32,7 @@ def _choice_prompt(candidates: list) -> str:
 
 def _extract_city_by_llm(text: str) -> list:
     """整句没识出城市 → 让 LLM 按网点工具的 schema 抽一次（沿用原有兜底）。"""
-    from tools.llm_extract import extract_city_candidates
+    from service.llm_extract import extract_city_candidates
 
     # 抽城市失败=槽位收不到，下一步会重问；适配器内部已记 WARNING
     return extract_city_candidates(text)
@@ -40,7 +40,7 @@ def _extract_city_by_llm(text: str) -> list:
 
 def _extract_city(text: str, _slots: dict):
     """识城市；重名候选放 extra，由 base 在 done 时原子写入 slots。"""
-    from tools.service_point import geocode_city
+    from mapper.service_points_repo import geocode_city
     candidates = geocode_city(text) or _extract_city_by_llm(text)
     if not candidates:
         return ExtractResult("fail", reason="no_city")
@@ -53,7 +53,7 @@ def _extract_city(text: str, _slots: dict):
 
 def _extract_pick(text: str, slots: dict):
     """答序号 → 候选下标（从 0 起）；越界/句子里没有完整序号都算失败。"""
-    from tools.selection import parse_index
+    from utils.selection import parse_index
 
     candidates = slots.get("candidates") or []
     status, idx = parse_index(text, len(candidates))
@@ -64,7 +64,7 @@ def _extract_pick(text: str, slots: dict):
 
 def format_nearest(coord: dict) -> str:
     """按城市坐标算最近网点并格式化。"""
-    from tools.service_point import search_service_points, format_service_points
+    from service.service_point import search_service_points, format_service_points
     points, _ = search_service_points(lng=coord["lng"], lat=coord["lat"])
     return format_service_points(points, coord.get("cn_name") or coord.get("name", ""))
 

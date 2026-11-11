@@ -4,9 +4,10 @@ from __future__ import annotations
 import re
 
 from config.word_dict_config import EXIT_WORDS
-from tools.dto.sop import SopStepResult
-from tools import pending_store, trace_store
-from tools.log_tool import get_logger
+from utils.dto.sop import SopStepResult
+from mapper import pending_store
+from mapper import trace_store
+from utils.log_tool import get_logger
 from service.turn_recorder import log_behavior
 
 logger = get_logger(name="sop_runtime")
@@ -56,7 +57,7 @@ def note_sop(session_id: str, sop_id: str = None, state: dict = None, **extra) -
 def enter_sop_result(session_id: str, sop_id: str, query: str, **detail) -> SopStepResult:
     """进一条 SOP，返回完整 SopStepResult（可能带 handoff）。"""
     from service.sops import start_sop
-    from repo.context_store import set_last_sop
+    from mapper.context_store import set_last_sop
 
     slots = detail.pop("slots", None)
     result = start_sop(session_id, sop_id, query, slots=slots)
@@ -76,7 +77,7 @@ def reenter_sop_on_retry(session_id: str, query: str) -> tuple:
     """「重新回答」时判断要不要重开 SOP，返回 (是否接管, 话术或 SopStepResult)。"""
     from service.sops import sop_needs_enter_confirm, enter_confirm_text
     from service.sops.base import SOPS
-    from repo.context_store import get_last_sop
+    from mapper.context_store import get_last_sop
     from service.clarify_service import open_clarify
 
     last = trace_store.latest_turn(session_id)

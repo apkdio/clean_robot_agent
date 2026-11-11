@@ -9,7 +9,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools.state_store import StateStore
+from mapper.state_store import StateStore
 
 
 class _FakeRedis:

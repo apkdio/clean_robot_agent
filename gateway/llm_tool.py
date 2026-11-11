@@ -10,8 +10,8 @@ import threading
 
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
-from tools.config_tool import get_config
-from tools.log_tool import get_logger
+from utils.config_tool import get_config
+from utils.log_tool import get_logger
 
 logger = get_logger(name="llm_tool")
 

@@ -8,16 +8,16 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
 
 from test_scripts._runner import *
 
-from tools.dto.clarify import CLARIFY_DONE, CLARIFY_DROP, CLARIFY_RESUME, ClarifyResult
-from tools.dto.executor import NotMine, Reply
-from tools.dto.handoff import Handoff
-from tools.dto.model_query import FindModelsResult, ModelQueryConstraints
-from tools.dto.feedback import FeedbackRequest, FeedbackResult
-from tools.dto.knowledge import IngestResult, KnowledgeStats, ResetResult
-from tools.dto.request import ChatRequest
-from tools.dto.sop import ExtractResult, SopStepResult
-from tools.dto.stage import Continue, Finish
-from tools.dto.transport import TurnEvent
+from utils.dto.clarify import CLARIFY_DONE, CLARIFY_DROP, CLARIFY_RESUME, ClarifyResult
+from utils.dto.executor import NotMine, Reply
+from utils.dto.handoff import Handoff
+from utils.dto.model_query import FindModelsResult, ModelQueryConstraints
+from utils.dto.feedback import FeedbackRequest, FeedbackResult
+from utils.dto.knowledge import IngestResult, KnowledgeStats, ResetResult
+from utils.dto.request import ChatRequest
+from utils.dto.sop import ExtractResult, SopStepResult
+from utils.dto.stage import Continue, Finish
+from utils.dto.transport import TurnEvent
 
 
 def test_stage_outcome():

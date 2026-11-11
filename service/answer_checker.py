@@ -27,7 +27,7 @@ def _model_candidates(answer: str, known: set) -> tuple:
     先按系列前缀抓完整 token，再只把 token 整体拿去对目录；
     这样「云顶 X1 Max」不会被截成已知的「云顶 X1」蒙混过关。
     """
-    from tools.models_repo import series_catalog
+    from mapper.models_repo import series_catalog
 
     flat = _compact(answer)
     candidates = []

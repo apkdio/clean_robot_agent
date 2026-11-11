@@ -7,7 +7,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools.config_tool import get_config, load_config, reload_configs
+from utils.config_tool import get_config, load_config, reload_configs
 
 
 def test_same_config_is_cached():

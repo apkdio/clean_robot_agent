@@ -12,7 +12,7 @@ import os
 import threading
 import time
 
-from tools.log_tool import get_logger
+from utils.log_tool import get_logger
 
 logger = get_logger(name="hot_ingest")
 
@@ -36,13 +36,13 @@ _SUPPORTED_EXTS = (".txt", ".md", ".pdf", ".csv", ".docx", ".pptx", ".xlsx")
 # ──────────────────────────────────────────────────────────────────────────
 
 def _snapshot_path() -> str:
-    from tools.path_tool import get_abs_path
+    from utils.path_tool import get_abs_path
     return get_abs_path(_SNAPSHOT_FILE)
 
 
 def _knowledge_path() -> str:
     """知识库源目录（rag.yaml 的 data_dir，默认 data/knowledge）。"""
-    from tools.config_tool import get_data_dir
+    from utils.config_tool import get_data_dir
     return get_data_dir()
 
 
@@ -79,7 +79,7 @@ def invalidate_snapshot() -> None:
 # ──────────────────────────────────────────────────────────────────────────
 
 def metadata_path() -> str:
-    from tools.path_tool import get_abs_path
+    from utils.path_tool import get_abs_path
     return get_abs_path(_METADATA_FILE)
 
 
@@ -141,7 +141,7 @@ def append_kb_metadata(file_list: dict, ts: str = "") -> None:
 
 def chunks_by_file(names) -> dict:
     """从 Chroma 数每个文件的 chunk 数（以索引为准，不看目录）。"""
-    from tools.vector_store import get_vector_store
+    from mapper.vector_store import get_vector_store
     store = get_vector_store()
     out = {}
     for name in names:
@@ -155,7 +155,7 @@ def chunks_by_file(names) -> dict:
 
 def ids_of_file(name: str) -> list:
     """某文件当前在索引里的 chunk id（换新内容时删旧用）；取不到返回空表。"""
-    from tools.vector_store import ids_of_file as _ids_of_file
+    from mapper.vector_store import ids_of_file as _ids_of_file
     try:
         return _ids_of_file(name)
     except Exception as e:  # noqa: BLE001
@@ -183,7 +183,7 @@ def kb_file_list(scan: dict, counts: dict = None) -> dict:
 
 def scan_files(data_dir: str) -> dict:
     """递归扫描 data_dir → {相对路径: sha256}。"""
-    from tools.file_tools import get_file_sha256_hex
+    from utils.file_tools import get_file_sha256_hex
 
     result = {}
     for root, dirs, files in os.walk(data_dir):
@@ -216,7 +216,7 @@ def diff_snapshot(old: dict, new: dict):
 
 
 def _project_root() -> str:
-    """仓库根（本文件在 tools/ 下）。"""
+    """仓库根（本文件在 utils/ 下）。"""
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -263,7 +263,7 @@ def apply_changes(data_dir: str, added: dict, changed: dict, removed: list) -> d
 
     changed 先入库、成功后再删旧 chunk：ingest_file 最后一步才落库，先删后插一失败就留下 0 chunk 的空洞。
     """
-    from tools.vector_store import get_vector_store, ingest_file
+    from mapper.vector_store import get_vector_store, ingest_file
 
     store = get_vector_store()
     results = {"added": 0, "changed": 0, "removed": 0, "failed": []}
@@ -308,10 +308,10 @@ def invalidate_runtime_caches() -> None:
 
     BM25 与型号记录都走懒加载，下一次检索或型号查询再重建；这里不阻塞摄入请求。
     """
-    from tools.config_tool import reload_configs
+    from utils.config_tool import reload_configs
     from service.hybrid_retriever import reset_hybrid_retriever
-    from tools.path_tool import get_abs_path
-    from tools.prompts_tool import reset as reset_prompts
+    from utils.path_tool import get_abs_path
+    from utils.prompts_tool import reset as reset_prompts
 
     cache = get_abs_path("data/pkl/bm25_index.pkl")
     if os.path.isfile(cache):
@@ -320,8 +320,8 @@ def invalidate_runtime_caches() -> None:
     reset_prompts()
     reset_hybrid_retriever()
     try:
-        from tools import models_repo
-        from tools import service_point as _spt
+        from mapper import models_repo
+        from mapper import service_points_repo as _spt
         models_repo.invalidate()
         _spt._points_cache = None
     except Exception:  # noqa: BLE001

@@ -10,7 +10,7 @@ key 约定：
 import json
 import time
 
-from tools.log_tool import get_logger
+from utils.log_tool import get_logger
 
 logger = get_logger(name="redis_store")
 
@@ -37,7 +37,7 @@ def mark_unavailable() -> None:
 
 
 def _load_config() -> dict:
-    from tools.config_tool import get_config
+    from utils.config_tool import get_config
     try:
         return get_config("redis") or {}
     except Exception:

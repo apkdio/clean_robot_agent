@@ -1,7 +1,7 @@
 """型号搜索工具：让模型自主决策要查哪个型号，再按型号名精准检索型号详情。
 
 用于「型号详情咨询 / 上下文对比」兜底（处理指代「这两个/它」、对比「区别」）。
-型号名提取走 `tools.llm_extract`（主生成模型）；本模块只负责筛选、
+型号名提取走 `service.llm_extract`（主生成模型）；本模块只负责筛选、
 排序、参数校验等确定性能力，不直接发起 LLM 调用。
 """
 
@@ -18,18 +18,18 @@ from config.word_dict_config import (
     PUBLISH_KEYS as _PUBLISH_KEYS,
     TAG_CATALOG as _TAG_CATALOG,
 )
-from tools.date_rules import publish_int
-from tools.dto.model_query import (FindModelsResult, ModelQueryConstraints,
+from utils.date_rules import publish_int
+from utils.dto.model_query import (FindModelsResult, ModelQueryConstraints,
                                    ParamFilter, PriceRange, PublishRange)
-from tools.log_tool import get_logger
-from tools.models_repo import all_records, match_key
+from utils.log_tool import get_logger
+from mapper.models_repo import all_records, match_key
 
 logger = get_logger(name="model_tool")
 
 
 def _enumerate_model_infos() -> List[Dict]:
     """枚举全量型号信息（去重），复用 metadata_extractor 的条目校验。"""
-    from tools.metadata_extractor import enumerate_models
+    from service.metadata_query import enumerate_models
     return enumerate_models({"file_name": {"$ne": "__never__"}}, require_field="price")
 
 
@@ -206,7 +206,7 @@ def _publish_bounds(args: Dict, dropped: List[str], notes: List[str]):
     if end not in (None, ""):
         _drop(dropped, notes, "publish_end", "end without start")
     if rng:
-        from tools.date_rules import calc_date_range
+        from utils.date_rules import calc_date_range
 
         parsed = calc_date_range(rng)
         if "start_date" not in parsed:
@@ -245,7 +245,7 @@ def build_constraints(args: Dict, query: str = "") -> tuple:
     phrase = str(args.get("budget") or "").strip()
     bmin = bmax = None
     if phrase:
-        from tools.metadata_extractor import extract_price_constraint
+        from utils.metadata_rules import extract_price_constraint
         parsed = extract_price_constraint(phrase)
         if parsed is not None and (parsed[0] is not None or parsed[1] is not None):
             bmin, bmax = parsed[0] or None, parsed[1] or None
@@ -446,7 +446,7 @@ def validate_find_models_args(query: str, args: Dict) -> tuple:
     # budget 原话能解析出边界时，它是唯一口径，数值侧清空避免两套口径打架
     phrase = str(args.get("budget") or "").strip()
     if phrase:
-        from tools.metadata_extractor import extract_price_constraint
+        from utils.metadata_rules import extract_price_constraint
         if extract_price_constraint(phrase):
             if args.get("budget_min") or args.get("budget_max"):
                 notes.append("原话「%s」可解析，忽略模型填的数值预算" % phrase)

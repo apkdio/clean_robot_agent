@@ -1,4 +1,4 @@
-"""结构化元数据提取测试：tools/metadata_extractor.py 的全部纯规则函数。
+"""结构化元数据提取测试：utils/metadata_rules.py 的全部纯规则函数。
 
 覆盖：
   - extract_price_constraint（区间/上限/下限/浮动/中文数字）
@@ -16,7 +16,7 @@ import os
 import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
@@ -31,7 +31,7 @@ class _FakeDoc:
 def _models_ready():
     """型号数据（Chroma / models.pkl 缓存）是否可用。"""
     try:
-        from tools.metadata_extractor import get_all_models
+        from service.metadata_query import get_all_models
         return len(get_all_models()) > 0
     except Exception:
         return False
@@ -42,7 +42,7 @@ def _models_ready():
 # ──────────────────────────────────────────────────────────────
 
 def test_extract_price_constraint():
-    from tools.metadata_extractor import extract_price_constraint as f
+    from utils.metadata_rules import extract_price_constraint as f
     # 显式区间（须带价格语境：前缀价格/预算词或尾带货币单位——裸数字区间是日期/时长，R-11）
     _assert_eq(f("1000-2000元"), (1000, 2000), "区间 1000-2000元")
     _assert_eq(f("1000到2000元"), (1000, 2000), "区间 1000到2000元")
@@ -78,7 +78,7 @@ def test_extract_price_constraint():
 
 
 def test_budget_filter_adapter():
-    from tools.metadata_extractor import resolve_budget_filter as f
+    from service.metadata_query import resolve_budget_filter as f
     _assert_eq(f("1000以内"), {"min_price": {"$lte": 1000}}, "上限→min_price lte")
     _assert_eq(
         f("1000-2000元"),
@@ -94,14 +94,14 @@ def test_budget_filter_adapter():
 # ──────────────────────────────────────────────────────────────
 
 def test_extract_price_metadata():
-    from tools.metadata_extractor import extract_price_metadata as f
+    from utils.metadata_rules import extract_price_metadata as f
     _assert_eq(f("参考价：7999"), {"min_price": 7999, "max_price": 7999}, "单价格")
     _assert_eq(f("参考价 899，参考价 1499"), {"min_price": 899, "max_price": 1499}, "多价格取 min/max")
     _assert_eq(f("这个型号没有价格"), {}, "无价格→空 dict")
 
 
 def test_extract_publish_date():
-    from tools.metadata_extractor import extract_publish_date as f
+    from utils.metadata_rules import extract_publish_date as f
     _assert_eq(f("发布时间：2026-09-15"), {"publish_date": 20260915}, "YYYY-MM-DD")
     _assert_eq(f("发布时间：2024年1月1日"), {"publish_date": 20240101}, "中文年月日")
     _assert_eq(f("无日期"), {}, "无日期→空 dict")
@@ -112,7 +112,7 @@ def test_extract_publish_date():
 # ──────────────────────────────────────────────────────────────
 
 def test_extract_model_info():
-    from tools.metadata_extractor import extract_model_info
+    from utils.metadata_rules import extract_model_info
     text = (
         "1. **不染一尘云顶 X2**\n"
         "   - 系列：云顶 X\n"
@@ -131,7 +131,7 @@ def test_extract_model_info():
 
 
 def test_format_model_line():
-    from tools.metadata_extractor import format_model_line
+    from utils.metadata_rules import format_model_line
     info = {
         "name": "不染一尘云顶 X2", "series": "云顶 X", "price": 7999,
         "suction": "13500Pa", "navigation": "LDS激光", "obstacle": "AI双摄",
@@ -155,7 +155,7 @@ def test_format_model_line():
 
 
 def test_extract_model_aspect():
-    from tools.metadata_extractor import extract_model_aspect as f
+    from utils.metadata_rules import extract_model_aspect as f
     _assert_eq(f("多少钱"), "价格", "多少钱→价格")
     _assert_eq(f("吸力多大"), "吸力", "吸力→吸力")
     _assert_eq(f("什么时候发布"), "发布时间", "什么时候发布→发布时间")
@@ -172,13 +172,13 @@ def test_extract_model_aspect():
 def test_series_catalog_from_repo():
     if not _models_ready():
         _skip("无型号数据（Chroma/pkl 缓存缺失）")
-    from tools.models_repo import all_records, series_catalog
+    from mapper.models_repo import all_records, series_catalog
     expected = {m.get("series") for m in all_records() if m.get("series")}
     _assert_eq(set(series_catalog()), expected, "系列目录从型号记录派生")
 
 
 def test_extract_series():
-    from tools.metadata_extractor import extract_series as f
+    from service.metadata_query import extract_series as f
     _assert_eq(f("净白 S 系列有什么产品"), "净白 S", "净白 S 系列")
     _assert_eq(f("天工 T 系列有哪些型号"), "天工 T", "天工 T 系列")
     _assert_eq(f("云顶 X 系列推荐"), "云顶 X", "云顶 X 系列")
@@ -189,7 +189,7 @@ def test_extract_series():
 
 
 def test_cn_to_int():
-    from tools.metadata_extractor import _cn_to_int as f
+    from utils.metadata_rules import _cn_to_int as f
     _assert_eq(f("一千"), 1000, "一千")
     _assert_eq(f("两千"), 2000, "两千")
     _assert_eq(f("三百"), 300, "三百")
@@ -209,7 +209,7 @@ def test_cn_to_int():
 
 
 def test_match_model_filter():
-    from tools.metadata_extractor import _match_model_filter as f
+    from utils.metadata_rules import _match_model_filter as f
     info = {"name": "X2", "price": 7999, "series": "云顶 X", "publish_date": "2026-09-15"}
     _assert(f(info, {"min_price": {"$lte": 8000}}), "min_price lte 命中")
     _assert(not f(info, {"min_price": {"$lte": 1000}}), "min_price lte 未命中")
@@ -226,8 +226,8 @@ def test_enumerate_models_by_series():
     if not _models_ready():
         _skip("无型号数据（Chroma/pkl 缓存缺失）")
         return
-    from tools.metadata_extractor import enumerate_models_by_series
-    from tools.models_repo import series_catalog
+    from service.metadata_query import enumerate_models_by_series
+    from mapper.models_repo import series_catalog
     expected = {"净白 S": 3, "净界 P": 5, "天工 T": 5, "云顶 X": 3}
     for series, cnt in expected.items():
         models = enumerate_models_by_series(series)
@@ -253,7 +253,7 @@ class _FakeCollection:
 
 def test_store_fingerprint_content_sensitive():
     """索引指纹要认内容：条数不变、只改一个文件的正文（改价格/参数/错字）也必须变。"""
-    from tools import vector_store
+    from mapper import vector_store
     real = vector_store.get_vector_store
     base = [("型号.txt", "sha-old"), ("型号.txt", "sha-old"), ("售后.txt", "sha-2")]
 
@@ -278,7 +278,7 @@ def test_budget_range_filter_parity():
     """规则 DTO 与旧 Chroma filter 在同一 fixture 下筛出的型号集合一致。"""
     if not _models_ready():
         _skip("无型号数据（Chroma/pkl 缓存缺失）")
-    from tools.metadata_extractor import enumerate_models, resolve_budget_filter, resolve_budget_range
+    from service.metadata_query import enumerate_models, resolve_budget_filter, resolve_budget_range
     for query in ("1000以内", "1000-2000元", "1000以上"):
         rng = resolve_budget_range(query, allow_llm=False)
         f = resolve_budget_filter(query, allow_llm=False)
@@ -292,7 +292,7 @@ def test_budget_range_filter_parity():
 
 
 def test_extract_tag_metadata():
-    from tools.metadata_extractor import extract_spec_metadata, extract_tag_metadata
+    from utils.metadata_rules import extract_spec_metadata, extract_tag_metadata
     text = ("1. **不染一尘天工 T1 Pro**\n"
             "   - 特点：零缠绕浮动主刷 + 宠物模式\n"
             "   - 标签：养宠友好, 防毛发缠绕\n"
@@ -311,9 +311,9 @@ def test_extract_tag_metadata():
 def test_models_cache_rebuilt_on_content_change():
     """models.pkl 由旧内容生成、正文已改（指纹变）→ 必须重建，不能继续给旧价格。"""
     import pickle
-    from tools import metadata_extractor as me
-    from tools import models_repo as mr
-    from tools import vector_store
+    from service import metadata_query as me
+    from mapper import models_repo as mr
+    from mapper import vector_store
     real_store, real_path, real_build = (vector_store.get_vector_store, mr._CACHE_FILE,
                                          mr._build_records)
     rel = "temp/models_cache_test.pkl"

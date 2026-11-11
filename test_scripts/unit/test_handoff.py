@@ -10,10 +10,10 @@ from test_scripts._runner import *
 
 from config.word_dict_config import domain_filter
 from service.agent import StageSpec, _run_stages, _stage_retrieve
-from tools.dto.executor import Reply
-from tools.dto.handoff import Handoff
-from tools.dto.request import ChatRequest
-from tools.dto.stage import Continue, Finish
+from utils.dto.executor import Reply
+from utils.dto.handoff import Handoff
+from utils.dto.request import ChatRequest
+from utils.dto.stage import Continue, Finish
 from service.turn_context import TurnContext
 
 
@@ -79,6 +79,30 @@ def test_retrieve_uses_handoff_domain_and_query():
                "handoff 的 query/domain 进入 retrieve")
 
 
+def test_generate_uses_handoff_query():
+    """clarify 答“是”后，retrieve 与 generate/verify 必须使用同一个 handoff query。"""
+    import service.agent as agent_mod
+
+    captured = {}
+    saved = agent_mod.rag_stream
+
+    def fake_stream(query, **_kwargs):
+        captured["query"] = query
+        return iter(())
+
+    agent_mod.rag_stream = fake_stream
+    try:
+        ctx = _ctx()
+        ctx.handoff = Handoff("retrieve", "机器人不移动怎么办", "repair")
+        ctx.chunks = [type("Chunk", (), {"page_content": "证据"})()]
+        outcome = agent_mod._stage_generate(ctx)
+        list(outcome.stream)
+    finally:
+        agent_mod.rag_stream = saved
+    _assert_eq(captured["query"], "机器人不移动怎么办",
+               "generate 使用 handoff query，而不是确认句“是”")
+
+
 def test_ops_dispatch_propagates_handoff():
     import service.agent as agent_mod
 
@@ -100,6 +124,7 @@ TESTS = [
     test_run_stages_forward_handoff_skips_middle,
     test_run_stages_rejects_backward_handoff,
     test_retrieve_uses_handoff_domain_and_query,
+    test_generate_uses_handoff_query,
     test_ops_dispatch_propagates_handoff,
 ]
 

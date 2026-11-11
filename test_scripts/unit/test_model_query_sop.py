@@ -14,15 +14,15 @@ import os
 import time
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
 import service.sops  # 触发 repair/model_query SOP 注册
 import service.sops.base
 from test_scripts import trace_reader
-from tools import trace_store
-from tools.dto.sop import ExtractResult
+from mapper import trace_store
+from utils.dto.sop import ExtractResult
 
 
 def _pair(result):
@@ -31,7 +31,7 @@ def _pair(result):
 
 def _models_ready():
     try:
-        from tools.metadata_extractor import get_all_models
+        from service.metadata_query import get_all_models
         return len(get_all_models()) > 0
     except Exception:
         return False
@@ -55,7 +55,7 @@ def _cleanup():
 # ──────────────────────────────────────────────────────────────
 
 def _extract_budget(text, _slots):
-    from tools.metadata_extractor import extract_price_constraint
+    from utils.metadata_rules import extract_price_constraint
     parsed = extract_price_constraint(text)
     return ExtractResult("done", parsed) if parsed is not None else ExtractResult("fail")
 
@@ -185,7 +185,7 @@ def test_register_validation():
 
 def test_extract_done_skip_and_drop_are_distinct():
     """done 合并 extra；skip 写 None+skipped；fail 超限只写 dropped，不把槽位塞进 slots。"""
-    from tools.dto.sop import ExtractResult
+    from utils.dto.sop import ExtractResult
 
     sop_id = "sop_extract_result"
     service.sops.base.register({
@@ -376,7 +376,7 @@ def test_search_rejects_malformed_slots():
     import service.sops.model_query_sop as mq
     from config.word_dict_config import MODEL_QUERY_CONSTRAINT_RETRY_REPLY
 
-    from tools.dto.model_query import FindModelsResult, ModelQueryConstraints
+    from utils.dto.model_query import FindModelsResult, ModelQueryConstraints
     saved = mq.find_models_result
     calls = []
     mq.find_models_result = lambda args: calls.append(args) or FindModelsResult(

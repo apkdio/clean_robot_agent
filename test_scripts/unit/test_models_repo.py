@@ -22,9 +22,9 @@ def _extract(doc):
 
 def test_build_records_dedupes_and_merges():
     """同名多 chunk 只留一条，参数/标签取并集；后到只补空值，不覆盖非空值。"""
-    from tools import metadata_extractor as me
-    from tools import models_repo as mr
-    import tools.vector_store as vs
+    from utils import metadata_rules as me
+    from mapper import models_repo as mr
+    import mapper.vector_store as vs
 
     docs = [
         _Doc("late", {"file_name": "b.md", "start_index": 10,
@@ -54,9 +54,9 @@ def test_build_records_dedupes_and_merges():
 
 
 def test_build_records_skips_non_models_and_sorts():
-    from tools import metadata_extractor as me
-    from tools import models_repo as mr
-    import tools.vector_store as vs
+    from utils import metadata_rules as me
+    from mapper import models_repo as mr
+    import mapper.vector_store as vs
 
     docs = [
         _Doc("b", {"file_name": "b.md", "start_index": 2,
@@ -78,8 +78,8 @@ def test_build_records_skips_non_models_and_sorts():
 
 
 def test_warm_cache_does_not_touch_chroma():
-    from tools import models_repo as mr
-    import tools.vector_store as vs
+    from mapper import models_repo as mr
+    import mapper.vector_store as vs
     from service.model_catalog import find_models_result
 
     saved_cache = dict(mr._cache)

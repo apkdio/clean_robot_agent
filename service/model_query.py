@@ -8,14 +8,15 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 
-from tools import trace_store
-from tools.dto.model_query import (FindModelsResult, ModelQueryConstraints,
+from mapper import trace_store
+from utils.dto.model_query import (FindModelsResult, ModelQueryConstraints,
                                    PriceRange, PublishRange)
-from tools.log_tool import get_logger
-from tools.metadata_extractor import extract_series, format_model_line, resolve_budget_range
-from tools.prompts_tool import render
+from utils.log_tool import get_logger
+from utils.metadata_rules import format_model_line
+from service.metadata_query import extract_series, resolve_budget_range
+from utils.prompts_tool import render
 from service.model_catalog import find_models
-from tools.date_rules import parse_date, publish_int
+from utils.date_rules import parse_date, publish_int
 from config.word_dict_config import (
     BRAND_EVENT_WORDS,
     DATE_SELECT_HINT_RE,
@@ -47,7 +48,7 @@ def resolve_date_range(query: str, allow_llm: bool = True):
         return r[0], r[1]
     if not TIME_HINT_RE.search(query) or not allow_llm:
         return None
-    from tools.llm_extract import extract_date_range
+    from service.llm_extract import extract_date_range
 
     return extract_date_range(query)
 

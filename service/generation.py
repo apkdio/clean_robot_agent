@@ -6,9 +6,9 @@ import random
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config.word_dict_config import NO_ANSWER_REPLIES
-from tools import trace_store
-from tools.log_tool import get_logger
-from tools.prompts_tool import load_main_prompts, render
+from mapper import trace_store
+from utils.log_tool import get_logger
+from utils.prompts_tool import load_main_prompts, render
 from service.turn_recorder import log_behavior
 
 logger = get_logger(name="generation")

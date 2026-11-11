@@ -9,7 +9,7 @@ import sys
 import os
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
@@ -17,7 +17,7 @@ import service.sops  # 触发注册
 import service.sops.base
 import service.sops.repair_sop
 from test_scripts import trace_reader
-from tools import trace_store
+from mapper import trace_store
 
 
 def _pair(result):
@@ -87,7 +87,7 @@ def test_repair_sop_flow():
 def test_repair_sop_ask_fallback():
     _cleanup()
     orig = service.sops.repair_sop.REPAIR_SOP["steps"][0]["extract"]
-    from tools.dto.sop import ExtractResult
+    from utils.dto.sop import ExtractResult
     service.sops.repair_sop.REPAIR_SOP["steps"][0]["extract"] = lambda text, slots: ExtractResult("fail")
     try:
         reply, done = _pair(service.sops.base.start_sop("r2", "repair", "机器人不动了怎么办"))

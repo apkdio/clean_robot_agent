@@ -28,7 +28,7 @@ import sys
 import time
 from collections import defaultdict
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 与 test_scripts._runner 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 与 test_scripts._runner 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 from test_scripts._runner import *
 
@@ -59,7 +59,7 @@ def _load_jsonl(path):
 
 def _conf_bands():
     """置信分档阈值：与线上同源（config/context.yaml），不在评测里另立标准。"""
-    from tools.config_tool import load_config
+    from utils.config_tool import load_config
     try:
         cfg = load_config("context") or {}
     except OSError as exc:

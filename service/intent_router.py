@@ -12,7 +12,7 @@ import json
 import random
 
 from config.word_dict_config import GUESS_HINTS as _GUESS_HINTS
-from tools.log_tool import get_logger
+from utils.log_tool import get_logger
 
 logger = get_logger(name="intent_router")
 
@@ -75,7 +75,7 @@ def _load_model():
     if _head_unavailable:
         return None, None
 
-    from tools.path_tool import get_abs_path
+    from utils.path_tool import get_abs_path
 
     # 先在局部装配完再赋值：失败时不留半个状态
     try:

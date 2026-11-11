@@ -7,7 +7,7 @@ import re
 import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 tools.* 导入
+if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根：供 utils.* 导入
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
@@ -28,7 +28,7 @@ CASES = [
 
 
 def _norm():
-    from tools.query_normalizer import normalize
+    from utils.query_normalizer import normalize
     return normalize
 
 

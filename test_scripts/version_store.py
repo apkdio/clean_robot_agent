@@ -14,9 +14,9 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime
 
-from tools.config_tool import get_data_dir, load_config
-from tools.log_tool import get_logger
-from tools.path_tool import get_abs_path, get_project_root
+from utils.config_tool import get_data_dir, load_config
+from utils.log_tool import get_logger
+from utils.path_tool import get_abs_path, get_project_root
 
 logger = get_logger(name="version_store")
 ROOT = get_project_root()
@@ -132,7 +132,7 @@ def _prompts_meta() -> dict:
     """prompt 目录里的实际文件与配置声明取并集，二者变化都进版本指纹。"""
     rels = []
     try:
-        from tools.prompts_tool import prompt_paths
+        from utils.prompts_tool import prompt_paths
         rels.extend(prompt_paths())
     except Exception as e:  # noqa: BLE001
         logger.warning("[Version] 读取 prompt 配置失败，仍扫描目录：%s", e)
@@ -304,7 +304,7 @@ def collect_eval(track: str, path: str = None) -> dict:
 def collect_env() -> dict:
     return {"kb": _kb_meta(), "config": _config_meta(), "prompts": _prompts_meta(),
             "index": _index_meta(), "intent": _intent_meta(), "sops": _sops_meta(),
-            "trace": getattr(__import__("tools.trace_store", fromlist=["TRACE_VERSION"]),
+            "trace": getattr(__import__("mapper.trace_store", fromlist=["TRACE_VERSION"]),
                              "TRACE_VERSION", None), "models": _models_meta()}
 
 
