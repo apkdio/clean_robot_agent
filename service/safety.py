@@ -132,7 +132,7 @@ def decide_safety(session_id: str, query: str = "", *, intent: str = None,
     if recent_carry_count(session_id) >= safety_carry_max():
         return SafetyDecision(SAFETY_NONE)
     if intent is None:
-        from tools.intent_router import route_intent_with_margin
+        from service.intent_router import route_intent_with_margin
         intent, margin = route_intent_with_margin(query)
     high_conf_margin = float((_cfg().get("intent") or {}).get("high_conf_margin", 0) or 0)
     margin = float(margin or 0.0)

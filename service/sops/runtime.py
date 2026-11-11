@@ -7,7 +7,7 @@ from config.word_dict_config import EXIT_WORDS
 from tools.dto.sop import SopStepResult
 from tools import pending_store, trace_store
 from tools.log_tool import get_logger
-from tools.turn_recorder import log_behavior
+from service.turn_recorder import log_behavior
 
 logger = get_logger(name="sop_runtime")
 
@@ -15,8 +15,8 @@ _EXIT_RESIDUE_RE = re.compile(r"[\s，,。.、！!？?~～…·「」【】（�
 
 
 def sop_name(sop_id: str) -> str:
-    """薄转发到 sops.base，避免运行时和 SOP 定义各维护一份名称表。"""
-    from sops.base import sop_name as _sop_name
+    """薄转发到 service.sops.base，避免运行时和 SOP 定义各维护一份名称表。"""
+    from service.sops.base import sop_name as _sop_name
     return _sop_name(sop_id)
 
 
@@ -36,7 +36,7 @@ def has_residual_request(query: str) -> bool:
 
 def note_sop(session_id: str, sop_id: str = None, state: dict = None, **extra) -> None:
     """把 SOP 进度记进 trace：本轮开始时停在哪、槽位填了什么；本轮内收尾的补上结果。"""
-    from sops import get_sop_state, pop_finished
+    from service.sops import get_sop_state, pop_finished
 
     if state is None:
         state = get_sop_state(session_id) or pop_finished(session_id)
@@ -55,7 +55,7 @@ def note_sop(session_id: str, sop_id: str = None, state: dict = None, **extra) -
 
 def enter_sop_result(session_id: str, sop_id: str, query: str, **detail) -> SopStepResult:
     """进一条 SOP，返回完整 SopStepResult（可能带 handoff）。"""
-    from sops import start_sop
+    from service.sops import start_sop
     from repo.context_store import set_last_sop
 
     slots = detail.pop("slots", None)
@@ -74,10 +74,10 @@ def enter_sop(session_id: str, sop_id: str, query: str, **detail) -> str:
 
 def reenter_sop_on_retry(session_id: str, query: str) -> tuple:
     """「重新回答」时判断要不要重开 SOP，返回 (是否接管, 话术或 SopStepResult)。"""
-    from sops import sop_needs_enter_confirm, enter_confirm_text
-    from sops.base import SOPS
+    from service.sops import sop_needs_enter_confirm, enter_confirm_text
+    from service.sops.base import SOPS
     from repo.context_store import get_last_sop
-    from tools.clarify_service import open_clarify
+    from service.clarify_service import open_clarify
 
     last = trace_store.latest_turn(session_id)
     found = trace_store.find_turn(session_id, query)

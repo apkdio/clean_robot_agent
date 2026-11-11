@@ -2,7 +2,7 @@
 
 只验证「进入 SOP 之后」的槽位与流程，不判路由、不判检索质量、不调 LLM：
   - 场景与断言在 data/eval/sop/golden.jsonl（一行一个场景；首行 `_meta` 带版本符号）；
-  - `_meta.sop_def_ver` = 每个 SOP 的流程结构指纹（sops.base._def_ver）。SOP 流程改了
+  - `_meta.sop_def_ver` = 每个 SOP 的流程结构指纹（service.sops.base._def_ver）。SOP 流程改了
     指纹就会变——数据集必须同步更新并升 version，否则本轨直接报「数据集与主链路不一致」；
   - 需要外部依赖的路径用 `patches` 打桩（LLM 抽城市 / 故障检索），保证确定性：
     `llm_city` → service_point 的 LLM 兜底返回空；`repair_action` → 故障检索返回固定话术。
@@ -18,8 +18,8 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-import sops
-import sops.base
+import service.sops
+import service.sops.base
 from test_scripts import trace_reader
 from tools import pending_store, trace_store
 from repo.context_store import delete_session
@@ -30,7 +30,7 @@ _SUPPORTED_V = 1
 
 
 def _reset(sid):
-    sops.end_sop(sid)
+    service.sops.end_sop(sid)
     pending_store.close(sid)
     delete_session(sid)
 
@@ -70,14 +70,14 @@ def _load_dataset():
 
 def _apply_patches(names):
     """给依赖外部模型的路径打桩；返回可用于复原的 (对象, 属性, 原值) 列表。"""
-    import sops.service_point_sop as sp
+    import service.sops.service_point_sop as sp
 
     saved = []
     if "llm_city" in names:
         saved.append((sp, "_extract_city_by_llm", sp._extract_city_by_llm))
         sp._extract_city_by_llm = lambda text: []
     if "repair_action" in names:
-        for step in (sops.base.SOPS.get("repair") or {}).get("steps") or []:
+        for step in (service.sops.base.SOPS.get("repair") or {}).get("steps") or []:
             if step.get("type") == "action":
                 saved.append((step, "action", step["action"]))
                 step["action"] = lambda slots: {"query": "机器人不移动怎么办", "domain": "repair"}
@@ -98,10 +98,10 @@ def _norm(value):
 
 def _check_turn(sid, expect, reply, flow, finished=None):
     problems = []
-    state = sops.get_sop_state(sid) or {}
+    state = service.sops.get_sop_state(sid) or {}
     if not state and finished:
         state = finished            # 已完成：槽位看「刚收尾」的那份快照
-    active = sops.has_active_sop(sid)
+    active = service.sops.has_active_sop(sid)
     if "active" in expect and active != expect["active"]:
         problems.append(f"active 应为 {expect['active']}，实际 {active}")
     if "step" in expect and state.get("step") != expect["step"]:
@@ -134,17 +134,17 @@ def _run_case(case):
                 entry = case.get("entry", "")
                 reply, flow = _turn(
                     sid,
-                    lambda: _reply_of(sops.start_sop(
+                    lambda: _reply_of(service.sops.start_sop(
                         sid, case["sop"], entry, slots=case.get("slots"))),
                     turn.get("q") or entry)
             else:
                 q = turn.get("q") or ""
                 reply, flow = _turn(
-                    sid, lambda q=q: _reply_of(sops.continue_sop(sid, q)), q)
+                    sid, lambda q=q: _reply_of(service.sops.continue_sop(sid, q)), q)
             problems += _check_turn(sid, turn.get("expect") or {}, reply, flow,
-                                    sops.pop_finished(sid) if not sops.has_active_sop(sid) else None)
+                                    service.sops.pop_finished(sid) if not service.sops.has_active_sop(sid) else None)
         final = case.get("final") or {}
-        if "active" in final and sops.has_active_sop(sid) != final["active"]:
+        if "active" in final and service.sops.has_active_sop(sid) != final["active"]:
             problems.append(f"最终 active 应为 {final['active']}")
     finally:
         _restore(saved)
@@ -155,14 +155,14 @@ def _run_case(case):
 def _check_version(meta):
     """数据集版本符号：流程结构（def_ver）与行为定义（trigger_ver）分别核对。"""
     _assert_eq(meta.get("v"), _SUPPORTED_V, f"数据集版本可读（v={meta.get('v')}）")
-    cur = {sid: (sop or {}).get("def_ver") for sid, sop in sops.base.SOPS.items()}
+    cur = {sid: (sop or {}).get("def_ver") for sid, sop in service.sops.base.SOPS.items()}
     want = meta.get("sop_def_ver") or {}
     stale = {sid: {"数据集": want.get(sid), "当前": cur[sid]} for sid in cur if want.get(sid) != cur[sid]}
     _assert_eq(stale, {}, "SOP 流程结构未变；变了要先更新数据集并升 _meta.version")
     want_trigger = meta.get("trigger_ver")
     if want_trigger:
-        from tools.version_store import trigger_ver
-        cur_trigger = {sid: trigger_ver(sop) for sid, sop in sops.base.SOPS.items()}
+        from test_scripts.version_store import trigger_ver
+        cur_trigger = {sid: trigger_ver(sop) for sid, sop in service.sops.base.SOPS.items()}
         stale_trigger = {sid: {"数据集": want_trigger.get(sid), "当前": cur_trigger[sid]}
                          for sid in cur_trigger if want_trigger.get(sid) != cur_trigger[sid]}
         _assert_eq(stale_trigger, {}, "SOP 触发词/guards/进入门未变；变了要同步 trigger_ver")
@@ -171,7 +171,7 @@ def _check_version(meta):
 def run():
     reset()
     try:
-        from tools.version_store import dataset_warning
+        from test_scripts.version_store import dataset_warning
         warning = dataset_warning("sop")
         if warning:
             print(f"  [版本] ⚠ {warning}")

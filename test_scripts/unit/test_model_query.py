@@ -7,7 +7,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools.model_query import (format_model_query, parse_budget, parse_publish,
+from service.model_query import (format_model_query, parse_budget, parse_publish,
                                resolve_model_constraints, resolve_model_query)
 from tools.dto.model_query import FindModelsResult, ModelQueryConstraints
 from tools.date_rules import publish_int
@@ -81,7 +81,7 @@ def test_no_match_falls_back():
 
 
 def test_internal_publish_range():
-    from tools.model_catalog import find_models_result
+    from service.model_catalog import find_models_result
     models = find_models_result({"publish_start": "2025-01-01",
                                  "publish_end": "2025-12-31", "limit": 50}).models
     _assert(models, "内部日期区间可用")

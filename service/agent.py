@@ -14,7 +14,7 @@ from typing import Callable
 from tools import pending_store, trace_store
 from tools.config_tool import get_config
 from tools.log_tool import clear_log_session, get_logger, set_log_session
-from tools.query_rewrite import (
+from service.query_rewrite import (
     history_block as _history_block,
     last_user_message as _last_user_message,
     normalize_enabled as _normalize_enabled,
@@ -22,7 +22,7 @@ from tools.query_rewrite import (
     rewrite_query as _rewrite_query,
     window_domain as _window_domain,
 )
-from tools.safety import (
+from service.safety import (
     SAFETY_CARRY,
     SAFETY_NONE,
     SAFETY_STOP,
@@ -30,7 +30,7 @@ from tools.safety import (
     recent_carry_count,
     safety_carry_max,
 )
-from sops.runtime import (
+from service.sops.runtime import (
     enter_sop_result as _enter_sop_result,
     has_residual_request as _has_residual_request,
     is_symbols_only as _is_symbols_only,
@@ -38,24 +38,24 @@ from sops.runtime import (
     reenter_sop_on_retry as _reenter_sop_on_retry,
     sop_name as _sop_name,
 )
-from tools.clarify_service import (
+from service.clarify_service import (
     CLARIFY_DONE,
     CLARIFY_RESUME,
     apply_resume,
     dispatch_clarify as _dispatch_clarify,
     open_clarify as _open_clarify,
 )
-from tools.domain_router import (
+from service.domain_router import (
     domain_filter as _domain_filter,
     route_domain as _route_domain,
 )
 from tools.dto.executor import NotMine, Reply
 from tools.dto.request import ChatRequest
 from tools.dto.stage import Continue, Finish, StageOutcome
-from tools.turn_context import TurnContext
-from tools.turn_recorder import log_behavior as _log_behavior
-from tools.op_executors import OP_EXECUTORS as _OP_EXEC, PIPELINE_OPS as _PIPELINE_OPS
-from tools.generation import casual_stream, rag_stream
+from service.turn_context import TurnContext
+from service.turn_recorder import log_behavior as _log_behavior
+from service.op_executors import OP_EXECUTORS as _OP_EXEC, PIPELINE_OPS as _PIPELINE_OPS
+from service.generation import casual_stream, rag_stream
 
 from config.word_dict_config import (
     EMOTION_MILD,
@@ -87,7 +87,7 @@ def _behavior_cfg() -> dict:
 
 def _get_retriever():
     """懒加载双路召回器（稠密 + 稀疏 → RRF）。"""
-    from tools.hybrid_retriever import get_hybrid_retriever
+    from service.hybrid_retriever import get_hybrid_retriever
 
     return get_hybrid_retriever()
 
@@ -105,7 +105,7 @@ def detect_emotion(query: str) -> str | None:
 
 
 def _ctx_cfg() -> dict:
-    from tools.query_rewrite import cfg
+    from service.query_rewrite import cfg
 
     return cfg()
 
@@ -157,7 +157,7 @@ def _stage_danger_guard(ctx: TurnContext) -> StageOutcome:
     append_message(ctx.session_id, "user", ctx.query, danger=True,
                    trace=trace_store.turn_anchor())
     logger.warning("[Guard] danger word hit: %s | %s", danger_hit, ctx.query[:60])
-    from sops import end_sop
+    from service.sops import end_sop
 
     end_sop(ctx.session_id)
     pending_store.close(ctx.session_id)
@@ -201,7 +201,7 @@ def _stage_pending_clarify(ctx: TurnContext) -> StageOutcome:
 
 def _stage_active_sop(ctx: TurnContext) -> StageOutcome:
     """SOP 会话：有活跃 SOP 时继续该流程，不经过意图路由。"""
-    from sops import continue_sop, end_sop, get_sop_state
+    from service.sops import continue_sop, end_sop, get_sop_state
 
     st = get_sop_state(ctx.session_id)
     if not st:
@@ -240,7 +240,7 @@ def _stage_active_sop(ctx: TurnContext) -> StageOutcome:
     if result.reply or result.handoff:
         _log_behavior("sop_step")
     else:
-        # 空回复也必须留下行为出口，避免 branch 为空；正文由 sops.base 兜底。
+        # 空回复也必须留下行为出口，避免 branch 为空；正文由 service.sops.base 兜底。
         _log_behavior("sop_step", empty=True)
     if result.handoff is not None:
         ctx.handoff = result.handoff
@@ -250,7 +250,7 @@ def _stage_active_sop(ctx: TurnContext) -> StageOutcome:
 
 def _stage_retry_reopen_sop(ctx: TurnContext) -> StageOutcome:
     """「重新回答」：上一轮是已结束的 SOP 轮 → 重开同一 SOP。"""
-    from sops import has_active_sop
+    from service.sops import has_active_sop
 
     if not ctx.retry or has_active_sop(ctx.session_id):
         return Continue()
@@ -266,7 +266,7 @@ def _stage_retry_reopen_sop(ctx: TurnContext) -> StageOutcome:
 
 def _stage_intent(ctx: TurnContext) -> StageOutcome:
     """本地分类头：robot / casual / other / unknown；归一化可疑时用原文再判一次。"""
-    from tools.intent_router import get_guess_hint, route_intent_with_margin
+    from service.intent_router import get_guess_hint, route_intent_with_margin
 
     low_conf_margin = float((_ctx_cfg().get("intent") or {}).get("low_conf_margin", 0) or 0)
     ctx.intent, ctx.margin = route_intent_with_margin(ctx.q)
@@ -329,7 +329,7 @@ def _stage_other_downgrade(ctx: TurnContext) -> StageOutcome:
 def _stage_ops_decide(ctx: TurnContext) -> StageOutcome:
     """操作判别器：按分数与词表产出候选，失败按原链路继续。"""
     try:
-        from tools.operations import note_ops
+        from service.operations import note_ops
 
         ctx.op_note = note_ops(ctx.q, intent=ctx.intent, margin=ctx.margin,
                                prefer=ctx.prefer_op)
@@ -341,7 +341,7 @@ def _stage_ops_decide(ctx: TurnContext) -> StageOutcome:
 
 def _stage_ops_clarify(ctx: TurnContext) -> StageOutcome:
     """判别器 ambiguous 且候选动作不同 → 先问用户选哪个。"""
-    from sops import match_sop
+    from service.sops import match_sop
 
     usable = ctx.op_note.get("usable") or []
     if ctx.prefer_op or ctx.op_note.get("state") != "ambiguous" or len(usable) < 2:
@@ -397,7 +397,7 @@ def _stage_intent_exit(ctx: TurnContext) -> StageOutcome:
     """other 拒答 / casual 闲聊出口。"""
     if ctx.intent == "other":
         from config.word_dict_config import REPAIR_STRONG_WORDS
-        from sops import match_sop
+        from service.sops import match_sop
 
         if any(w in ctx.q for w in REPAIR_STRONG_WORDS):
             sop_id = match_sop(ctx.q)

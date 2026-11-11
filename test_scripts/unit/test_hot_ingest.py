@@ -12,7 +12,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
 from test_scripts._runner import *
 
 import tools.vector_store as vs
-from tools import hot_ingest as hi
+from service import hot_ingest as hi
 
 
 class _FakeCollection:
@@ -277,7 +277,7 @@ def test_invalidate_invalidates_models_repo():
     型号增删改名后不重启也能查到，否则新型号永远不触发型号直出。"""
     import tempfile
 
-    from tools import hot_ingest as hi
+    from service import hot_ingest as hi
     from tools import models_repo as mr
     from tools import path_tool as pt
     import tools.vector_store as vs

@@ -13,11 +13,11 @@ from config.word_dict_config import (
     OPS_CLARIFY_RETRY,
 )
 from tools import pending_store, trace_store
-from tools.clarify_service import match_op_choice, register_clarify_handler
+from service.clarify_service import match_op_choice, register_clarify_handler
 from tools.dto.clarify import ClarifyResult
 from tools.log_tool import get_logger
-from tools.safety import with_safety_hint
-from tools.turn_recorder import log_behavior
+from service.safety import with_safety_hint
+from service.turn_recorder import log_behavior
 
 logger = get_logger(name="operations")
 
@@ -39,31 +39,31 @@ def _p_followup(query: str) -> bool:
 
 def _p_model(query: str) -> bool:
     """命中型号详情/对比入口：统一谓词，避免与执行体重复拼词表。"""
-    from tools.model_query import is_model_detail_query
+    from service.model_query import is_model_detail_query
 
     return is_model_detail_query(query)
 
 
 def _p_find_models(query: str) -> bool:
     """预算 / 日期 / 系列规则约束，或明确的型号枚举问法，交给型号筛选。"""
-    from tools.model_query import is_model_catalog_intent, resolve_model_constraints
+    from service.model_query import is_model_catalog_intent, resolve_model_constraints
 
     return (resolve_model_constraints(query, allow_llm=False) is not None
             or is_model_catalog_intent(query))
 
 
 def _p_service_point(query: str) -> bool:
-    from sops import match_sop
+    from service.sops import match_sop
     return bool(match_sop(query, "service_point", log=False))
 
 
 def _p_sop(query: str) -> bool:
-    from sops import match_sop
+    from service.sops import match_sop
     return bool(match_sop(query, log=False))
 
 
 def _p_domain(query: str) -> bool:
-    from tools.domain_router import route_domain
+    from service.domain_router import route_domain
     return bool(route_domain(query))
 
 
@@ -176,7 +176,7 @@ def _ensure_index() -> bool:
 def _dense_scores(query: str) -> dict | None:
     """稠密：query 与每个操作的所有关键句取最大余弦；embedding 不可用返回 None。"""
     global _phrase_vecs, _dense_failed_logged
-    from tools.intent_router import get_query_embedding
+    from service.intent_router import get_query_embedding
 
     qv = get_query_embedding(query)
     if qv is None:
@@ -213,8 +213,8 @@ def _strong_ops(query: str) -> set:
     """强判据命中的操作（确定性证据，给固定加分；不是"像"）。"""
     out = set()
     try:
-        from sops import match_sop, sop_has_strong_trigger
-        from tools.model_query import (has_model_ref, is_model_catalog_intent,
+        from service.sops import match_sop, sop_has_strong_trigger
+        from service.model_query import (has_model_ref, is_model_catalog_intent,
                                        resolve_model_constraints)
 
         if match_sop(query, "service_point", log=False):
@@ -313,7 +313,7 @@ def _prefer_structured(usable: list, query: str) -> list:
     if "find_models" not in usable or "sop" not in usable:
         return usable
     try:
-        from sops import match_sop
+        from service.sops import match_sop
         if match_sop(query, log=False) == "model_query":
             return ["find_models"] + [o for o in usable if o != "find_models"]
     except Exception as e:  # noqa: BLE001

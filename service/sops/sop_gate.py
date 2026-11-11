@@ -7,22 +7,22 @@ from config.word_dict_config import (
     SOP_ENTER_FAILED_REPLY,
 )
 from tools import pending_store, trace_store
-from tools.clarify_service import (
+from service.clarify_service import (
     match_yes_no,
     register_clarify_handler,
 )
 from tools.dto.clarify import ClarifyResult
 from tools.log_tool import get_logger
-from tools.safety import with_safety_hint
-from sops.runtime import enter_sop_result, note_sop, sop_name
-from tools.turn_recorder import log_behavior
+from service.safety import with_safety_hint
+from service.sops.runtime import enter_sop_result, note_sop, sop_name
+from service.turn_recorder import log_behavior
 
 logger = get_logger(name="sop_gate")
 
 
 def _clarify_sop_exit(session_id: str, _query: str, q: str) -> ClarifyResult:
     """SOP 退出确认门：答「是」退出，「不是」继续。"""
-    from sops import end_sop, get_active_sop_id, get_sop_state, has_active_sop
+    from service.sops import end_sop, get_active_sop_id, get_sop_state, has_active_sop
 
     rec = pending_store.take(session_id, pending_store.BIZ_SOP_EXIT)
     if not rec:
@@ -68,7 +68,7 @@ def _clarify_sop_exit(session_id: str, _query: str, q: str) -> ClarifyResult:
 
 def _clarify_sop_enter(session_id: str, query: str, _q: str) -> ClarifyResult:
     """SOP 进入确认门：答「是」进引导，「不是」恢复原句直接作答。"""
-    from sops import SOPS, enter_decline_hint, has_active_sop, mark_enter_declined
+    from service.sops import SOPS, enter_decline_hint, has_active_sop, mark_enter_declined
 
     rec = pending_store.take(session_id, pending_store.BIZ_SOP_ENTER)
     if not rec:

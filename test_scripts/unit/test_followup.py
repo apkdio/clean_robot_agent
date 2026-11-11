@@ -8,9 +8,9 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
 
 from test_scripts._runner import *
 
-import tools.model_catalog as mt
-from tools.model_catalog import filter_by_relative
-from tools import followup as f
+import service.model_catalog as mt
+from service.model_catalog import filter_by_relative
+from service import followup as f
 
 _FAKE = [
     {"name": "A", "price": 1000, "publish_date": "2025-01-01"},

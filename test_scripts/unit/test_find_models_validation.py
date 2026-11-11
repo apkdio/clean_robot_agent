@@ -18,7 +18,7 @@ _FAKE = [
 
 
 def _with_fake(fn):
-    import tools.model_catalog as mt
+    import service.model_catalog as mt
     orig = mt.all_records
     mt.all_records = lambda: _FAKE
     try:
@@ -28,12 +28,12 @@ def _with_fake(fn):
 
 
 def _run(args):
-    import tools.model_catalog as mt
+    import service.model_catalog as mt
     return _with_fake(lambda: mt.find_models_result(args))
 
 
 def test_valid_and_compat_entry():
-    import tools.model_catalog as mt
+    import service.model_catalog as mt
     result = _run({"budget_min": 1500, "budget_max": 2000})
     _assert_eq([m["name"] for m in result.models], ["B"], "合法预算正常筛选")
     _assert_eq(result.dropped, [], "合法参数无 dropped")
@@ -76,7 +76,7 @@ def test_zero_none_sentinel_and_tags():
 
 def test_direct_query_rejects_dropped_result():
     """有 dropped 时直出不能把剩余全量当答案，必须交回 RAG 兜底。"""
-    import tools.model_query as mq
+    import service.model_query as mq
     from tools.dto.model_query import FindModelsResult, ModelQueryConstraints
 
     saved_constraints, saved_find = mq.resolve_model_constraints, mq.find_models

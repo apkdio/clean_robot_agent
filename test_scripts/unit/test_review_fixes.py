@@ -45,7 +45,7 @@ def test_redis_missing_package_degrades():
 def test_date_gate_needs_select_signal():
     from config.word_dict_config import DATE_SELECT_HINT_RE
     from tools.date_rules import build_date_filter
-    from tools.model_query import resolve_date_range
+    from service.model_query import resolve_date_range
 
     def _date_filter(query):
         r = resolve_date_range(query)
@@ -106,7 +106,7 @@ def test_build_dataset_writes_generated_not_dataset():
 # ──────────────────────────────────────────────────────────────
 
 def test_intent_inference_failure_degrades():
-    import tools.intent_router as ir
+    import service.intent_router as ir
 
     saved = ir._head, ir._labels, ir._head_unavailable
     try:
@@ -141,7 +141,7 @@ def test_intent_inference_failure_degrades():
 def test_stream_generate_failure_falls_back():
     from config.word_dict_config import NO_ANSWER_REPLIES
     from tools import trace_store
-    from tools.generation import stream_with_fallback
+    from service.generation import stream_with_fallback
     from test_scripts import trace_reader
 
     reset_trace("s10")
@@ -175,7 +175,7 @@ def test_stream_generate_failure_falls_back():
 def test_intent_head_builds_from_meta():
     import json
     import tempfile
-    import tools.intent_router as ir
+    import service.intent_router as ir
 
     with tempfile.TemporaryDirectory() as d:
         import torch
@@ -295,7 +295,7 @@ class _StubRetriever:
 
 def _ask_with_stubs(query, sid, retry=False):
     """用桩件走一遍链路（不碰 Ollama / Chroma / 分类头）。"""
-    import tools.intent_router as ir
+    import service.intent_router as ir
     from service import agent as agent_mod
     from service.agent import ask_stream
     from tools.dto.request import ChatRequest
@@ -362,7 +362,7 @@ def test_retry_without_matching_last_user_keeps_turns():
 def test_history_block_excludes_current_query():
     """当前这句不进「对话历史」（Prompt 的「问题：」已单独给出），与选历史轮同口径。"""
     from repo.context_store import append_message
-    from tools.query_rewrite import history_block
+    from service.query_rewrite import history_block
 
     sid = "t-history-block"
     _reset_session(sid)
@@ -402,8 +402,8 @@ def test_stopped_turn_marks_aborted():
 def test_reenter_sop_logs_node():
     """「重新回答」重开 SOP 时要落 sop.reenter：否则这一轮在 path 里看不出是重答重开的。"""
     import repo.context_store as cs
-    import sops.runtime as sr
-    import sops
+    import service.sops.runtime as sr
+    import service.sops
     from test_scripts import trace_reader
     from tools import trace_store
 
@@ -416,19 +416,19 @@ def test_reenter_sop_logs_node():
     from tools.dto.sop import SopStepResult
 
     saved = (trace_store.find_turn, trace_store.latest_turn, trace_store.find_turn_by_index,
-             sr.enter_sop_result, cs.get_last_sop, sops.sop_needs_enter_confirm)
+             sr.enter_sop_result, cs.get_last_sop, service.sops.sop_needs_enter_confirm)
     trace_store.find_turn = lambda s, query: {"date": "2026-10-20", "turn_index": 1}
     trace_store.latest_turn = lambda s: {"date": "2026-10-20", "turn_index": 1}
     trace_store.find_turn_by_index = lambda s, d, i: {"sop": {"id": "model_query"}, "branch": "start_sop"}
     sr.enter_sop_result = lambda sid, sop_id, query, **kw: SopStepResult(
         "reply", "您的预算大概是多少？", done=True)
     cs.get_last_sop = lambda s: {"entry_query": q}
-    sops.sop_needs_enter_confirm = lambda *a, **kw: False   # 本用例只测重开，不测进入门
+    service.sops.sop_needs_enter_confirm = lambda *a, **kw: False   # 本用例只测重开，不测进入门
     try:
         taken, reply = sr.reenter_sop_on_retry(sid, q)
     finally:
         (trace_store.find_turn, trace_store.latest_turn, trace_store.find_turn_by_index,
-         sr.enter_sop_result, cs.get_last_sop, sops.sop_needs_enter_confirm) = saved
+         sr.enter_sop_result, cs.get_last_sop, service.sops.sop_needs_enter_confirm) = saved
     _assert(taken, "重开被接管")
     _assert_in("预算", reply, "回到 SOP 第一步")
     trace_store.end_turn()
@@ -472,8 +472,8 @@ def test_latest_turn_across_days():
 def test_reenter_across_days():
     """跨天后「重新回答」仍能重开：判据是「上一轮就是被重发的那轮」，不是 turn_index 相差 1。"""
     import repo.context_store as cs
-    import sops.runtime as sr
-    import sops
+    import service.sops.runtime as sr
+    import service.sops
     from tools import trace_store
 
     sid, q = "t-reenter-cross", "帮我推荐一款扫地机器人"
@@ -482,19 +482,19 @@ def test_reenter_across_days():
     from tools.dto.sop import SopStepResult
 
     saved = (trace_store.latest_turn, trace_store.find_turn, trace_store.find_turn_by_index,
-             sr.enter_sop_result, cs.get_last_sop, sops.sop_needs_enter_confirm)
+             sr.enter_sop_result, cs.get_last_sop, service.sops.sop_needs_enter_confirm)
     trace_store.latest_turn = lambda s: {"date": "2026-10-19", "turn_index": 7}
     trace_store.find_turn = lambda s, query: {"date": "2026-10-19", "turn_index": 7}
     trace_store.find_turn_by_index = lambda s, d, i: {"sop": {"id": "model_query"}, "branch": "start_sop"}
     sr.enter_sop_result = lambda sid, sop_id, query, **kw: SopStepResult(
         "reply", "您的预算大概是多少？", done=True)
     cs.get_last_sop = lambda s: {"entry_query": q}
-    sops.sop_needs_enter_confirm = lambda *a, **kw: False   # 本用例只测跨天重开
+    service.sops.sop_needs_enter_confirm = lambda *a, **kw: False   # 本用例只测跨天重开
     try:
         taken, reply = sr.reenter_sop_on_retry(sid, q)
     finally:
         (trace_store.latest_turn, trace_store.find_turn, trace_store.find_turn_by_index,
-         sr.enter_sop_result, cs.get_last_sop, sops.sop_needs_enter_confirm) = saved
+         sr.enter_sop_result, cs.get_last_sop, service.sops.sop_needs_enter_confirm) = saved
         reset_trace(sid)
     _assert(taken, "昨天最后一轮 + 今天重答 → 仍重开")
     _assert_in("预算", reply, "回到 SOP 第一步")

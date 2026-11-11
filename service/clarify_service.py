@@ -58,8 +58,8 @@ def _ensure_builtin_handlers() -> None:
         return
     _BUILTINS_LOADED = True
     try:
-        from sops import sop_gate  # noqa: F401  导入即注册 SOP 门
-        from tools import operations  # noqa: F401  导入即注册 ops 澄清
+        from service.sops import sop_gate  # noqa: F401  导入即注册 SOP 门
+        from service import operations  # noqa: F401  导入即注册 ops 澄清
     except Exception:
         _BUILTINS_LOADED = False
         raise
@@ -89,7 +89,7 @@ def apply_resume(data: ClarifyData, query: str, q: str, enter_declined_turn: boo
         prefer_op = data.prefer_op
     if data.query != query:
         query = data.query
-        from tools.query_rewrite import normalize_enabled
+        from service.query_rewrite import normalize_enabled
 
         if normalize_enabled():
             from tools.query_normalizer import normalize

@@ -13,9 +13,9 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-import sops  # 触发注册
-import sops.base
-import sops.repair_sop
+import service.sops  # 触发注册
+import service.sops.base
+import service.sops.repair_sop
 from test_scripts import trace_reader
 from tools import trace_store
 
@@ -25,7 +25,7 @@ def _pair(result):
 
 
 def _cleanup():
-    sops.base._sessions = {}
+    service.sops.base._sessions = {}
     # 会话状态已迁到 Redis，同时清空 Redis 里的 SOP 会话，避免测试间残留
     try:
         from gateway.redis_store import get_redis
@@ -42,7 +42,7 @@ def _cleanup():
 # ──────────────────────────────────────────────────────────────
 
 def test_extract_symptom_rule():
-    from sops.repair_sop import _extract_symptom
+    from service.sops.repair_sop import _extract_symptom
     _assert_eq(_extract_symptom("机器人不动了", {}).value, "机器人不移动怎么办", "不动")
     _assert_eq(_extract_symptom("水箱漏水", {}).value, "水箱漏水怎么办", "漏水")
     _assert_eq(_extract_symptom("有异响", {}).value, "扫地机器人异响怎么办", "异响")
@@ -57,10 +57,10 @@ def test_extract_symptom_rule():
 # ──────────────────────────────────────────────────────────────
 
 def test_repair_trigger():
-    _assert_eq(sops.base.match_sop("机器人不动了怎么办"), "repair", "故障词→repair")
-    _assert_eq(sops.base.match_sop("水箱漏水了"), "repair", "漏水→repair")
-    _assert_eq(sops.base.match_sop("帮我修一下扫地机器人"), "repair", "修→repair")
-    _assert_eq(sops.base.match_sop("扫地机器人保修多久"), None, "售后→不触发 repair（guard）")
+    _assert_eq(service.sops.base.match_sop("机器人不动了怎么办"), "repair", "故障词→repair")
+    _assert_eq(service.sops.base.match_sop("水箱漏水了"), "repair", "漏水→repair")
+    _assert_eq(service.sops.base.match_sop("帮我修一下扫地机器人"), "repair", "修→repair")
+    _assert_eq(service.sops.base.match_sop("扫地机器人保修多久"), None, "售后→不触发 repair（guard）")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -69,16 +69,16 @@ def test_repair_trigger():
 
 def test_repair_sop_flow():
     _cleanup()
-    steps = sops.repair_sop.REPAIR_SOP["steps"]
+    steps = service.sops.repair_sop.REPAIR_SOP["steps"]
     orig_action = steps[1]["action"]
     steps[1]["action"] = lambda slots: {"query": "机器人不移动怎么办", "domain": "repair"}
     try:
-        result = sops.base.start_sop("r1", "repair", "机器人不动了怎么办")
+        result = service.sops.base.start_sop("r1", "repair", "机器人不动了怎么办")
         _assert(result.done, "触发词含症状→一次完成")
         _assert_eq(result.handoff.target, "retrieve", "交给主链 retrieve")
         _assert_eq(result.handoff.domain, "repair", "带 repair 域")
         _assert_eq(result.handoff.query, "机器人不移动怎么办", "带归一化 query")
-        _assert(not sops.base.has_active_sop("r1"), "会话已结束")
+        _assert(not service.sops.base.has_active_sop("r1"), "会话已结束")
     finally:
         steps[1]["action"] = orig_action
     _cleanup()
@@ -86,49 +86,49 @@ def test_repair_sop_flow():
 
 def test_repair_sop_ask_fallback():
     _cleanup()
-    orig = sops.repair_sop.REPAIR_SOP["steps"][0]["extract"]
+    orig = service.sops.repair_sop.REPAIR_SOP["steps"][0]["extract"]
     from tools.dto.sop import ExtractResult
-    sops.repair_sop.REPAIR_SOP["steps"][0]["extract"] = lambda text, slots: ExtractResult("fail")
+    service.sops.repair_sop.REPAIR_SOP["steps"][0]["extract"] = lambda text, slots: ExtractResult("fail")
     try:
-        reply, done = _pair(sops.base.start_sop("r2", "repair", "机器人不动了怎么办"))
+        reply, done = _pair(service.sops.base.start_sop("r2", "repair", "机器人不动了怎么办"))
         _assert(not done, "提取失败未结束")
         _assert_in("故障现象", reply, "返回 ask 反问现象")
-        _assert(sops.base.has_active_sop("r2"), "会话保持活跃")
+        _assert(service.sops.base.has_active_sop("r2"), "会话保持活跃")
     finally:
-        sops.repair_sop.REPAIR_SOP["steps"][0]["extract"] = orig
+        service.sops.repair_sop.REPAIR_SOP["steps"][0]["extract"] = orig
     _cleanup()
 
 
 def test_repair_dropped_symptom_does_not_search():
     """症状槽位被放弃后 slots 里没有该键，不能把 None 字符串拿去检索。"""
-    out = sops.repair_sop._search_repair({"_slot_status": {"symptom": "dropped"}})
+    out = service.sops.repair_sop._search_repair({"_slot_status": {"symptom": "dropped"}})
     _assert_eq(out.get("query"), "", "dropped 槽位直接返回空 query")
 
 
 def test_repair_handoff_contract():
     """症状确认后只产出 handoff，不在 SOP 内检索/生成。"""
-    result = sops.repair_sop._search_repair({"symptom": "机器人不移动"})
+    result = service.sops.repair_sop._search_repair({"symptom": "机器人不移动"})
     _assert_eq(result.get("query"), "机器人不移动", "action 只归一 query")
     _assert_eq(result.get("domain"), "repair", "action 标记 repair 域")
-    handoff = sops.repair_sop._repair_handoff(result)
+    handoff = service.sops.repair_sop._repair_handoff(result)
     _assert_eq(handoff.target, "retrieve", "目标阶段 retrieve")
     _assert_eq(handoff.query, "机器人不移动", "query 透传")
     _assert_eq(handoff.domain, "repair", "domain 透传")
-    _assert_eq(sops.repair_sop._repair_handoff({"query": ""}), None, "无 query 不 handoff")
+    _assert_eq(service.sops.repair_sop._repair_handoff({"query": ""}), None, "无 query 不 handoff")
 
 
 def test_repair_empty_reply_falls_back():
     """没有 query 时 handoff 返回 None，reply 用步骤级 fallback。"""
     _cleanup()
-    steps = sops.repair_sop.REPAIR_SOP["steps"]
+    steps = service.sops.repair_sop.REPAIR_SOP["steps"]
     orig_action = steps[1]["action"]
     fallback = steps[2]["fallback"]
     steps[1]["action"] = lambda slots: {"query": "", "domain": "repair"}
     try:
-        reply, done = _pair(sops.base.start_sop("r-empty", "repair", "机器人不动了怎么办"))
+        reply, done = _pair(service.sops.base.start_sop("r-empty", "repair", "机器人不动了怎么办"))
         _assert(done, "空回复仍应结束")
         _assert_in(fallback, reply, "空回复走步骤级兜底")
-        _assert(not sops.base.has_active_sop("r-empty"), "会话已结束")
+        _assert(not service.sops.base.has_active_sop("r-empty"), "会话已结束")
     finally:
         steps[1]["action"] = orig_action
     _cleanup()
@@ -162,27 +162,27 @@ def test_symptom_mapping_leaves_trace():
     """症状映射来源要落 trace：extractor 只返回 extra["trace"]，由 base 统一写。"""
     import gateway.llm_tool as lt
     real = lt.chat_with_tools
-    orig_action = sops.repair_sop.REPAIR_SOP["steps"][1]["action"]
-    sops.repair_sop.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"query": "", "domain": "repair"}
+    orig_action = service.sops.repair_sop.REPAIR_SOP["steps"][1]["action"]
+    service.sops.repair_sop.REPAIR_SOP["steps"][1]["action"] = lambda slots: {"query": "", "domain": "repair"}
     try:
         lt.chat_with_tools = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm"))
         path = _path_of("sym1", "它不动了",
-                        lambda: sops.base.start_sop("sym1", "repair", "它不动了"))
+                        lambda: service.sops.base.start_sop("sym1", "repair", "它不动了"))
         node = next((n for n in path if n.get("node") == "sop.symptom"), None)
         _assert(node is not None, "规则命中留 sop.symptom 节点")
         _assert_eq(((node or {}).get("out") or {}).get("via"), "rule", "via=rule")
         _assert_eq(((node or {}).get("out") or {}).get("kw"), "不动", "带命中的口语词")
 
         path = _path_of("sym2", "说不上来",
-                        lambda: sops.base.start_sop("sym2", "repair", "嗯…说不上来"))
+                        lambda: service.sops.base.start_sop("sym2", "repair", "嗯…说不上来"))
         node = next((n for n in path if n.get("node") == "sop.symptom"), None)
         _assert_eq((node or {}).get("status"), "miss", "两条都没命中 → status=miss")
     finally:
         lt.chat_with_tools = real
-        sops.repair_sop.REPAIR_SOP["steps"][1]["action"] = orig_action
-        sops.base.end_sop("sym1")
-        sops.base.end_sop("sym2")
-        sops.base._sessions = {}
+        service.sops.repair_sop.REPAIR_SOP["steps"][1]["action"] = orig_action
+        service.sops.base.end_sop("sym1")
+        service.sops.base.end_sop("sym2")
+        service.sops.base._sessions = {}
 
 
 TESTS = [
@@ -200,7 +200,7 @@ TESTS = [
 
 def run():
     reset()
-    return run_tests("故障排查 SOP 测试（sops.repair_sop）", TESTS)
+    return run_tests("故障排查 SOP 测试（service.sops.repair_sop）", TESTS)
 
 
 if __name__ == "__main__":

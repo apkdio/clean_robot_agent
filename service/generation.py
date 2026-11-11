@@ -9,14 +9,14 @@ from config.word_dict_config import NO_ANSWER_REPLIES
 from tools import trace_store
 from tools.log_tool import get_logger
 from tools.prompts_tool import load_main_prompts, render
-from tools.turn_recorder import log_behavior
+from service.turn_recorder import log_behavior
 
 logger = get_logger(name="generation")
 
 
 def verify_answer(answer: str, chunks: list, query: str) -> None:
     """核对 RAG 答案里的硬事实；只记日志与 trace，不改变已经输出的内容。"""
-    from tools.answer_checker import check_answer
+    from service.answer_checker import check_answer
 
     try:
         result = check_answer(answer, chunks, query)

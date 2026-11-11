@@ -11,7 +11,7 @@ import sys
 
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
-# 确保项目根目录位于 sys.path 中（tools.* / sops.* 等包导入依赖它）。
+# 确保项目根目录位于 sys.path 中（service.* / tools.* 等包导入依赖它）。
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
@@ -20,15 +20,28 @@ from service.agent import ask_stream
 from service.chat_service import (
     acquire_turn_lock, clear_stop, release_turn_lock, set_stop, stream_turn,
 )
-from tools.dto.request import ChatRequest
-from tools.config_tool import get_config
-from repo.context_store import ensure_session_id, list_sessions
-from tools.log_tool import get_logger
-from tools.vector_store import (
-    ingest_file,
-    list_collections_info,
-    reset_collection,
+from service.feedback_service import reasons as feedback_reasons, submit as submit_feedback
+from service.knowledge_service import (
+    acquire_ingest_lock,
+    collections_info,
+    ingest_uploaded_file,
+    release_ingest_lock,
+    reset_knowledge_base,
+    start_background_ingest,
+    supported_exts,
 )
+from service.session_service import (
+    all_sessions,
+    is_valid_session_id,
+    normalize_session_id,
+    recent_messages,
+    remove_session as remove_session_record,
+    rollback_last_user,
+)
+from service.status_service import agent_display_config
+from tools.dto.feedback import FeedbackRequest
+from tools.dto.request import ChatRequest
+from tools.log_tool import get_logger
 
 logger = get_logger(name="webapp")
 
@@ -48,7 +61,7 @@ os.makedirs(_upload_dir, exist_ok=True)
 
 
 def _supported_exts() -> tuple:
-    return tuple((get_config("rag") or {}).get("supported_exts", [".txt", ".pdf"]))
+    return supported_exts()
 
 
 def _safe_upload_name(raw: str) -> str:
@@ -62,65 +75,33 @@ def _safe_upload_name(raw: str) -> str:
 
 @app.route("/")
 def index():
-    from config.word_dict_config import FEEDBACK_REASONS
-    return render_template("index.html", feedback_reasons=FEEDBACK_REASONS)
+    return render_template("index.html", feedback_reasons=feedback_reasons())
 
 
 @app.route("/api/feedback", methods=["POST"])
 def feedback():
     """记录用户对某轮回复的「有用/无用」标注，落到 trace 旁路文件 <sid>.feedback.jsonl。"""
     data = request.get_json(silent=True) or {}
-    session_id = ensure_session_id(data.get("session_id", ""))
-    query = (data.get("query") or "").strip()
-    rating = data.get("rating")
-    if rating not in ("useful", "useless"):
-        return jsonify({"status": "error", "message": "rating 必须是 useful / useless"}), 400
-    if not query:
-        return jsonify({"status": "error", "message": "缺少 query（用于定位轮次）"}), 400
-
-    from config.word_dict_config import FEEDBACK_REASON_KEYS
-    reason = (data.get("reason") or "").strip()
-    if rating == "useless":
-        # 无用必须给一个枚举原因（含 other）：否则标完没法聚类；有用不带原因
-        if reason not in FEEDBACK_REASON_KEYS:
-            return jsonify({"status": "error",
-                            "message": "无用原因必须是 %s 之一" % "/".join(FEEDBACK_REASON_KEYS)}), 400
-    else:
-        reason = ""
-
-    from tools import trace_store
-    anchor = data.get("trace") or {}
-    ctx = {}
-    if isinstance(anchor, dict):
-        # 上下文消息里带了该轮锚点：直接按（日期, 轮次）取，不再用 query 猜轮次
-        ctx = trace_store.find_turn_by_index(session_id, anchor.get("date"), anchor.get("turn_index"))
-        if ctx and ctx.get("query") != query:
-            ctx = {}          # 锚点与提交的问句对不上，不当锚点用
-    if not ctx:
-        ctx = trace_store.find_turn(session_id, query)
-    if not ctx:
-        # 没对上轮次：标注没地方落，如实告诉前端（也提醒可能是跨天/轮次已过久）
-        logger.warning("[Feedback] no matching turn: session=%s query=%s", session_id, query[:40])
-        return jsonify({"status": "no_turn", "message": "没找到对应的轮次（可能已超出回看天数）"}), 404
-    marked = trace_store.feedback_of(session_id, ctx.get("date"), ctx.get("turn_index"))
-    # 同一轮可以再来一次（改主意）：追加一条、不改历史，读侧按轮次取最后一条为准
-    trace_store.feedback_turn(
-        ctx, rating=rating,
-        reason=reason[:40],
-        note=(data.get("note") or "")[:200],
-    )
-    logger.info("[Feedback] turn=%s/%s rating=%s reason=%s session=%s%s",
-                ctx.get("date"), ctx.get("turn_index"), rating,
-                reason or "-", session_id, " (revise)" if marked else "")
-    return jsonify({"status": "ok", "date": ctx.get("date"),
-                    "turn_index": ctx.get("turn_index"), "updated": bool(marked)})
+    try:
+        feedback_request = FeedbackRequest(
+            query=data.get("query") or "",
+            session_id=normalize_session_id(data.get("session_id", "")),
+            rating=data.get("rating") or "",
+            reason=data.get("reason") or "",
+            note=data.get("note") or "",
+            date=data.get("date") or None,
+            turn_index=data.get("turn_index"),
+        )
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    result = submit_feedback(feedback_request)
+    return jsonify(result.payload()), {"ok": 200, "no_turn": 404}.get(result.status, 400)
 
 
 @app.route("/api/stats", methods=["GET"])
 def stats():
     try:
-        info = list_collections_info()
-        return jsonify(info)
+        return jsonify(collections_info().payload())
     except Exception as e:
         logger.error(f"[Stats] {e}")
         return jsonify({"status": "error", "message": _INTERNAL_ERROR_MSG}), 500
@@ -145,8 +126,7 @@ def ingest():
 
     # 先拿锁再落盘：两个并发同名上传会互相覆盖/删掉对方正在摄入的源文件；
     # 锁拿不到时文件还没写盘，直接 409 不留垃圾
-    from gateway.redis_store import acquire_lock, release_lock
-    if not acquire_lock("lock:ingest"):
+    if not acquire_ingest_lock():
         return jsonify({"status": "busy", "message": "正在摄入知识库，请稍候"}), 409
 
     try:
@@ -157,14 +137,7 @@ def ingest():
         upload.save(save_path)
         logger.info(f"[Ingest] Saved upload: {save_path}")
         try:
-            result = ingest_file(save_path)
-            if result.get("status") == "ok":
-                # 手动入库也要让索引侧跟上：统一失效 BM25 / 型号记录 / 检索器单例，
-                # 下一次检索懒重建；快照一并作废——上传按 basename 替换会盖掉同名知识文件的
-                # chunk，而磁盘上的原文件哈希没变，快照与索引从此对不上，作废让下轮热更新全量对齐
-                from tools.hot_ingest import invalidate_runtime_caches, invalidate_snapshot
-                invalidate_snapshot()
-                invalidate_runtime_caches()
+            result = ingest_uploaded_file(save_path)
         finally:
             # 摄入完成后清理临时文件（只删自己刚命名的这个）
             try:
@@ -172,39 +145,29 @@ def ingest():
             except OSError:
                 pass
     finally:
-        release_lock("lock:ingest")
+        release_ingest_lock()
 
-    code = 200 if result.get("status") == "ok" else 500
-    return jsonify(result), code
+    code = 200 if result.status == "ok" else 500
+    return jsonify(result.payload()), code
 
 
 @app.route("/api/reset", methods=["POST"])
 def reset():
-    from gateway.redis_store import acquire_lock, release_lock
-    if not acquire_lock("lock:ingest"):
-        return jsonify({"status": "busy", "message": "正在摄入知识库，请稍候"}), 409
     try:
-        # 先失效快照再清空：两步之间中断时，热更新下一轮会按「全新增」重入，不会留下「空索引 + 快照称已同步」
-        from tools.hot_ingest import invalidate_snapshot
-        invalidate_snapshot()
-        deleted = reset_collection()
-        # 清库后立即失效全部索引缓存（BM25/型号记录/检索器单例）：
-        # 否则进程内还留着旧知识，最长 30 分钟继续用已删内容作答；下一次检索懒重建
-        from tools.hot_ingest import invalidate_runtime_caches
-        invalidate_runtime_caches()
-        return jsonify({"status": "ok", "deleted": deleted})
+        result = reset_knowledge_base()
+        if result.status == "busy":
+            return jsonify({"status": "busy", "message": "正在摄入知识库，请稍候"}), 409
+        return jsonify(result.payload())
     except Exception as e:
         logger.error(f"[Reset] {e}")
         return jsonify({"status": "error", "message": _INTERNAL_ERROR_MSG}), 500
-    finally:
-        release_lock("lock:ingest")
 
 
 @app.route("/api/chat/stop", methods=["POST"])
 def chat_stop():
     """设置停止标志，中断当前会话的流式回答。"""
     data = request.get_json(silent=True) or {}
-    session_id = ensure_session_id(data.get("session_id", ""))
+    session_id = normalize_session_id(data.get("session_id", ""))
     set_stop(session_id)
     logger.info(f"[Stream] stop requested, session={session_id}")
     return jsonify({"status": "ok"})
@@ -219,7 +182,7 @@ def chat_stream():
     query = data["query"].strip()
     if not query:
         return jsonify({"status": "error", "message": "Empty query."}), 400
-    session_id = ensure_session_id(data.get("session_id", ""))
+    session_id = normalize_session_id(data.get("session_id", ""))
     lng = data.get("lng")
     lat = data.get("lat")
     is_retry = bool(data.get("retry"))     # 前端点「重新回答」时显式带上；不靠"和上一句相同"猜
@@ -260,9 +223,7 @@ def chat_stream():
             # 停止同一语义：回滚这轮的 user 消息，不留「问了没答」的上下文残局
             if not completed:
                 try:
-                    from repo.context_store import rollback_last_user_message
-
-                    rollback_last_user_message(session_id)
+                    rollback_last_user(session_id)
                 except Exception as e:  # noqa: BLE001
                     logger.warning(f"[Stream] rollback on disconnect failed: {e}")
             release_turn_lock(session_id)
@@ -279,7 +240,7 @@ def chat_stream():
 def sessions():
     """列出所有历史会话（供前端对话列表）。"""
     try:
-        return jsonify({"status": "ok", "sessions": list_sessions()})
+        return jsonify({"status": "ok", "sessions": all_sessions()})
     except Exception as e:
         logger.error(f"[Sessions] {e}")
         return jsonify({"status": "error", "message": _INTERNAL_ERROR_MSG}), 500
@@ -288,11 +249,10 @@ def sessions():
 @app.route("/api/sessions/<sid>/messages", methods=["GET"])
 def session_messages(sid):
     """返回指定会话的完整消息（供前端加载历史对话）。"""
-    from repo.context_store import get_recent
-    if sid != ensure_session_id(sid):
+    if not is_valid_session_id(sid):
         return jsonify({"status": "error", "message": "Invalid session id."}), 400
     try:
-        msgs = get_recent(sid, n=1000)  # 文件保留全量，这里取足够多
+        msgs = recent_messages(sid, n=1000)  # 文件保留全量，这里取足够多
         return jsonify({"status": "ok", "messages": msgs})
     except Exception as e:
         logger.error(f"[SessionMessages] {e}")
@@ -302,11 +262,10 @@ def session_messages(sid):
 @app.route("/api/sessions/<sid>", methods=["DELETE"])
 def remove_session(sid):
     """删除指定会话。"""
-    from repo.context_store import delete_session as _del_session
-    if sid != ensure_session_id(sid):
+    if not is_valid_session_id(sid):
         return jsonify({"status": "error", "message": "Invalid session id."}), 400
     try:
-        ok = _del_session(sid)
+        ok = remove_session_record(sid)
         return jsonify({"status": "ok", "deleted": ok})
     except Exception as e:
         logger.error(f"[DeleteSession] {e}")
@@ -317,14 +276,7 @@ def remove_session(sid):
 def agent_config():
     """返回当前的 agent 与检索配置，用于前端标识。"""
     try:
-        agent_cfg = get_config("agent")
-        behavior = agent_cfg.get("behavior", {})
-        return jsonify({
-            "status": "ok",
-            "mode": "retrieval_only" if behavior.get("retrieval_only", True) else "rag_full",
-            "mode_label": "RAG 检索模式" if behavior.get("retrieval_only", True) else "RAG+LLM 模式",
-            "model": agent_cfg.get("llm", {}).get("model", "?"),
-        })
+        return jsonify(agent_display_config())
     except Exception as e:
         logger.error(f"[Config] {e}")
         return jsonify({"status": "error", "message": _INTERNAL_ERROR_MSG}), 500
@@ -335,7 +287,6 @@ if __name__ == "__main__":
     logger.info(f"[WebApp] Starting on http://localhost:{port}")
 
     # 启动热更新守护线程（每 30 分钟扫描一次 data/knowledge）
-    from tools.hot_ingest import start_hot_ingest
-    start_hot_ingest()
+    start_background_ingest()
 
     app.run(host="0.0.0.0", port=port, debug=False)

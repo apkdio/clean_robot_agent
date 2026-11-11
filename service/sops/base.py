@@ -11,7 +11,7 @@ from tools import trace_store
 from tools.dto.sop import ExtractResult, SopStepResult
 from tools.log_tool import get_logger
 from tools.prompts_tool import render
-from tools.safety import with_safety_hint
+from service.safety import with_safety_hint
 from tools.state_store import StateStore
 from config.word_dict_config import (
     AFTERSALES_WORDS,BUY_WORDS, CONSULT_WORDS, BRAND_WORDS,

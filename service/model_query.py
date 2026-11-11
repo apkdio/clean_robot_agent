@@ -1,6 +1,6 @@
 """模型查询业务：约束解析、直出编排与型号意图判断。
 
-约束 DTO 与预算/日期/系列解析在本模块；型号筛选在 `tools.model_catalog`。
+约束 DTO 与预算/日期/系列解析在本模块；型号筛选在 `service.model_catalog`。
 S9 撤销后不再保留独立 domain 层，避免只为一个消费者维护半挂目录。
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ from tools.dto.model_query import (FindModelsResult, ModelQueryConstraints,
 from tools.log_tool import get_logger
 from tools.metadata_extractor import extract_series, format_model_line, resolve_budget_range
 from tools.prompts_tool import render
-from tools.model_catalog import find_models
+from service.model_catalog import find_models
 from tools.date_rules import parse_date, publish_int
 from config.word_dict_config import (
     BRAND_EVENT_WORDS,
@@ -151,7 +151,7 @@ def has_model_ref(query: str) -> bool:
     if any(w in query for w in MODEL_REF_WORDS):
         return True
     try:
-        from tools.model_catalog import model_name_in_query
+        from service.model_catalog import model_name_in_query
         return model_name_in_query(query)
     except Exception as e:  # noqa: BLE001
         logger.warning("[ModelQuery] model name check failed: %s", e)

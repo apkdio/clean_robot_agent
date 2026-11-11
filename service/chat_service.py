@@ -79,7 +79,7 @@ def _finish_turn(session_id: str, query: str, answer: str) -> dict:
         append_message, generate_session_title, get_last_models,
         get_session_title, set_session_title,
     )
-    from sops import has_active_sop
+    from service.sops import has_active_sop
     from tools import trace_store
 
     append_message(session_id, "assistant", answer,

@@ -8,7 +8,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
 
 from test_scripts._runner import *
 
-from tools.answer_checker import check_answer
+from service.answer_checker import check_answer
 from tools import trace_store
 
 
@@ -135,7 +135,7 @@ def test_trace_verify_unchecked():
 
 
 def test_stream_verify_only_on_complete():
-    from tools.generation import stream_with_fallback
+    from service.generation import stream_with_fallback
 
     captured = []
 

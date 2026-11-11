@@ -8,7 +8,7 @@ SOP 会话状态与统一待确认状态——所以把最小的 setup 接口集
     setup = {"danger_word": "糊味", "carry_count": 1, "intent": "unknown"}
     → set_danger_window(sid, "糊味"); set_carry_count(sid, 1)
 
-用到的私有接口（config.word_dict_config.SAFETY_CARRY_PREFIX、sops.base.make_session / _save_session）都在本文件里封住：
+用到的私有接口（config.word_dict_config.SAFETY_CARRY_PREFIX、service.sops.base.make_session / _save_session）都在本文件里封住：
 将来内部结构变了，只改这一处。
 """
 
@@ -29,7 +29,7 @@ def set_danger_window(session_id: str, word: str = "糊味", text: str = "") -> 
 def set_carry_count(session_id: str, n: int) -> None:
     """把「最近连续安全承接次数」设成 n。
 
-    判定机制：tools.safety.recent_carry_count() 从尾部数连续以 SAFETY_CARRY_PREFIX
+    判定机制：service.safety.recent_carry_count() 从尾部数连续以 SAFETY_CARRY_PREFIX
     开头的 assistant 回复，所以这里就追加以该前缀开头的回复。
     """
     from config.word_dict_config import SAFETY_CARRY_PREFIX
@@ -46,7 +46,7 @@ def set_active_sop(session_id: str, sop_id: str, step: int = 0,
 
     状态要带当前定义指纹（make_session 负责），否则会被 _load_session 当成过期状态作废。
     """
-    from sops.base import _save_session, make_session
+    from service.sops.base import _save_session, make_session
 
     _save_session(session_id, make_session(sop_id, step=step, slots=slots, retry_count=retry_count))
 
@@ -58,7 +58,7 @@ def set_pending(session_id: str, biz: str, state: dict = None, **data) -> None:
 
 def reset(session_id: str) -> None:
     """清掉该会话的全部状态（会话记录与 meta / SOP / 待确认），用于用例间隔离。"""
-    from sops.base import _delete_session
+    from service.sops.base import _delete_session
 
     from repo.context_store import delete_session
 

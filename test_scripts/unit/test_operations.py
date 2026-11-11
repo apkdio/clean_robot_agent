@@ -9,7 +9,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:   # 项目根�
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools import operations as ops
+from service import operations as ops
 
 
 def test_registry_shape():
@@ -110,7 +110,7 @@ def test_order_contract():
 
 def test_model_intent_predicates_parity():
     """详情 / 枚举 / 指代三个谓词各管一段，不再由 operations 和执行体各拼一份词表。"""
-    from tools import model_ref, model_query
+    from service import model_ref, model_query
 
     _assert(model_query.has_model_ref("云顶 X2 怎么样"), "具体型号名 → 有指代")
     _assert(model_query.has_model_ref("这两个哪个好"), "指代词 → 有指代")

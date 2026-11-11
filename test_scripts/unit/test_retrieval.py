@@ -2,7 +2,7 @@
 
 覆盖（全部测真实代码，不再复制 mock 副本）：
   - agent._route_domain / _domain_filter（知识域 → file_name；两域接近时返回 $in）
-  - sops.base.is_consulting / is_aftersales / is_brand
+  - service.sops.base.is_consulting / is_aftersales / is_brand
   - config.word_dict_config 词表完整性（DOMAIN_MAP / SYMPTOM_MAP / SYMPTOM_QUERY_MAP）
   - SparseRetriever._tokenize（中英混合分词）
   - sparse_retriever._matches_filter（Chroma where 内存过滤）
@@ -27,7 +27,7 @@ from langchain_core.documents import Document
 # ──────────────────────────────────────────────────────────────
 
 def test_route_domain():
-    from tools.domain_router import route_domain
+    from service.domain_router import route_domain
 
     # 品牌域（优先于“买”误判）
     _assert_eq(route_domain("为什么买不染一尘"), "不染一尘品牌介绍.txt", "为什么买→品牌域")
@@ -56,7 +56,7 @@ def test_domain_scoring_and_filter():
     与 route_domain 的分工：后者保留旧语义（只给 top1 主文件，供 window_domain 与兼容
     调用点用）；实际检索走 domain_filter，两域咬得近时会返回 $in 两文件。
     """
-    from tools.domain_router import domain_filter, domain_scores, route_domain
+    from service.domain_router import domain_filter, domain_scores, route_domain
 
     # 打分 = 命中词的长度之和（词越长越具体）；同分按历史优先级
     _assert_eq(domain_scores("为什么买不染一尘")[0][0], "brand", "品牌优先于「买」误判的选购")
@@ -93,7 +93,7 @@ def test_domain_files_config():
 # ──────────────────────────────────────────────────────────────
 
 def test_is_consulting():
-    from sops.base import is_consulting
+    from service.sops.base import is_consulting
     _assert(is_consulting("选购扫地机器人要注意什么"), "选购+注意→咨询")
     _assert(is_consulting("买扫地机器人有什么技巧"), "买+技巧→咨询")
     _assert(is_consulting("入手扫地机器人有哪些坑"), "入手+坑→咨询")
@@ -104,7 +104,7 @@ def test_is_consulting():
 
 
 def test_is_aftersales():
-    from sops.base import is_aftersales
+    from service.sops.base import is_aftersales
     _assert(is_aftersales("扫地机器人保修多久"), "保修→售后")
     _assert(is_aftersales("可以退货吗"), "退货→售后")
     _assert(not is_aftersales("帮我推荐一款"), "推荐→非售后")
@@ -112,7 +112,7 @@ def test_is_aftersales():
 
 
 def test_is_brand():
-    from sops.base import is_brand
+    from service.sops.base import is_brand
     _assert(is_brand("为什么买不染一尘"), "为什么买→品牌")
     _assert(is_brand("不染一尘是什么品牌"), "品牌→品牌")
     _assert(not is_brand("帮我推荐一款"), "推荐→非品牌")
@@ -220,7 +220,7 @@ def test_split_numbered_entries():
 # ──────────────────────────────────────────────────────────────
 
 def test_drop_without_dense_support():
-    from tools.hybrid_retriever import HybridRetriever
+    from service.hybrid_retriever import HybridRetriever
     a, b, c = (Document(page_content=t) for t in ("A", "B", "C"))
     fused = [(a, 0.03, {}), (b, 0.02, {}), (c, 0.01, {})]
     dense = [(a, 0.5), (c, 0.4)]        # B 只被稀疏路命中
@@ -252,7 +252,7 @@ def test_reranker_unavailable_returns_none():
 def test_rerank_degraded_keeps_candidates():
     """精排降级时不按精排阈值砍候选（R-01）：降级分数是 RRF 量纲（top1 约 0.03），
     按 0.2 硬砍会把无域过滤的查询清零成"没查到"。"""
-    from tools import hybrid_retriever as hrm
+    from service import hybrid_retriever as hrm
 
     class _Doc:
         def __init__(self, i):
@@ -278,7 +278,7 @@ def test_rerank_degraded_keeps_candidates():
 
 @e2e("HybridRetriever 端到端需要 Ollama + Chroma 数据")
 def test_hybrid_domain_filter_e2e():
-    from tools.hybrid_retriever import HybridRetriever
+    from service.hybrid_retriever import HybridRetriever
     hr = HybridRetriever()
     hr.ensure_sparse_index()
     chunks = hr.search("吸力下降", filter={"file_name": "不染一尘常见维修问题.txt"})
@@ -291,7 +291,7 @@ def test_hybrid_domain_filter_e2e():
 @e2e("阈值/精排端到端需要 Ollama + Chroma 数据")
 def test_score_threshold_filters_out_of_domain_e2e():
     """稠密阈值验收：领域外 query 召回应为 0 或显著减少，领域内不受影响。"""
-    from tools.hybrid_retriever import HybridRetriever
+    from service.hybrid_retriever import HybridRetriever
     hr = HybridRetriever()
     hr.ensure_sparse_index()
     for q in ("今天天气怎么样", "给我讲个笑话", "asdfghjkl 123456"):

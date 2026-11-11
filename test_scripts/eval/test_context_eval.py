@@ -276,7 +276,7 @@ def _check_case(expect: dict, branch, tag=None, record=None) -> list:
 def _answers_pending(query: str, rec: dict) -> bool:
     """这一句是不是对当前澄清的回答。是 → 让链路消费；不是 → 按新需求处理。"""
     from tools import pending_store
-    from tools.clarify_service import match_op_choice, match_yes_no
+    from service.clarify_service import match_op_choice, match_yes_no
 
     biz = rec.get("biz")
     try:
@@ -335,13 +335,13 @@ def _is_must_pass_case(case: dict) -> bool:
 
 
 def _run_row(row: dict) -> list:
-    import sops.base
+    import service.sops.base
     from tools import pending_store
     from repo.context_store import append_message, delete_session
     from tools.pending_store import close as clear_pending
 
     sid = "ctxeval-" + row["session_id"]
-    sops.base._sessions = {}
+    service.sops.base._sessions = {}
     # 澄清状态统一在 pending_store：
     # Redis 键 + 内存降级都要清，否则同一 sid 上一行的残留会污染下一行。
     clear_pending(sid)
@@ -399,7 +399,7 @@ def _run_row(row: dict) -> list:
 
     delete_session(sid)
     clear_pending(sid)
-    sops.base._sessions = {}
+    service.sops.base._sessions = {}
     return results
 
 
@@ -594,7 +594,7 @@ def _baseline_payload(rows, results) -> dict:
     per_id 的口径：硬行为比 branch 是否等于期望、软行为比是否落在接受集内，
     取不到出口（没记 branch / 未登记）也算不一致。软行为那条只是参考，不当门禁。
     """
-    from tools.version_store import pin
+    from test_scripts.version_store import pin
 
     hard = [r for r in results if r["hard"]]
     soft = [r for r in results if not r["hard"]]
@@ -706,7 +706,7 @@ def _compare_baseline(results) -> None:
     print(f"  基线采集于 {base.get('created_at', '?')}")
     _print_env_compare(_env_meta(), base.get("env") or {})
     if base.get("pinned"):
-        from tools.version_store import compare_pinned
+        from test_scripts.version_store import compare_pinned
         attr = compare_pinned(base["pinned"])
         print("\n[版本归因]")
         if attr["code_recorded"]:
@@ -829,7 +829,7 @@ def run():
               + os.path.relpath(_ARCHIVE_DIR, _ROOT).replace("\\", "/") + "（见 MANIFEST.json）")
         return stats()
     try:
-        from tools.version_store import dataset_warning
+        from test_scripts.version_store import dataset_warning
         warning = dataset_warning("context")
         if warning:
             print(f"  [版本] ⚠ {warning}")

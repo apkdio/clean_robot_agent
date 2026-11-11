@@ -70,7 +70,7 @@ def window_messages(session_id: str) -> list:
 
 def window_domain(session_id: str) -> str | None:
     """窗口内最近一条能路由到知识域的 user 消息所属域。"""
-    from tools.domain_router import route_domain
+    from service.domain_router import route_domain
 
     for m in reversed(window_messages(session_id)):
         if m.get("role") == "user" and not m.get("blocked"):

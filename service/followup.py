@@ -1,6 +1,6 @@
 """追问回答：全局最新/价格极值，以及相对上一轮展示边界的筛选。
 
-相对维度的过滤与排序统一走 `tools.model_catalog.filter_by_relative`；
+相对维度的过滤与排序统一走 `service.model_catalog.filter_by_relative`；
 本模块只负责把用户话术解析成有序的 rels，并组织展示文案。
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from config.word_dict_config import (
     REL_LABEL,
     REL_SUPER,
 )
-from tools.model_catalog import RELATIVE_SPEC, filter_by_relative
+from service.model_catalog import RELATIVE_SPEC, filter_by_relative
 from repo.context_store import get_last_models, set_last_models
 from tools.metadata_extractor import enumerate_models, format_models
 

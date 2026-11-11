@@ -886,7 +886,7 @@
     return div;
   }
 
-  // ── 回复评价：有用/无用（+理由），后端按 query 定位轮次后落 trace ──
+  // ── 回复评价：有用/无用（+理由），带 date/turn_index 时精确回标该轮 ──
   const FEEDBACK_REASONS = {{ feedback_reasons | tojson }};
 
   // 「改」走同一条路径重建内容：监听器闭包里的 bar 必须始终是**页面上**那个节点
@@ -941,8 +941,11 @@
       const r = await fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sid, query, rating, reason, note,
-                               trace: anchor || undefined })
+        body: JSON.stringify({
+          session_id: sid, query, rating, reason, note,
+          date: anchor && anchor.date || undefined,
+          turn_index: anchor && anchor.turn_index != null ? anchor.turn_index : undefined
+        })
       });
       const d = await r.json();
       if (d.status === 'ok') {

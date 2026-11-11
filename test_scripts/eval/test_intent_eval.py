@@ -70,7 +70,7 @@ def _conf_bands():
 
 
 def _evaluate(rows):
-    from tools.intent_router import route_intent_with_margin
+    from service.intent_router import route_intent_with_margin
     records = []
     for row in rows:
         label, margin = route_intent_with_margin(row["query"])
@@ -175,7 +175,7 @@ def _env_meta():
 
 
 def _baseline_payload(m, records):
-    from tools.version_store import pin
+    from test_scripts.version_store import pin
 
     return {"baseline_v": 2, "pinned": pin("intent"),
             "accuracy": round(m["accuracy"], 4),
@@ -252,7 +252,7 @@ def _compare_baseline(m, records):
           f"  ({m['accuracy'] - base.get('accuracy', 0.0):+.4f})")
     _print_env_compare(_env_meta(), base.get("env"))
     if base.get("pinned"):
-        from tools.version_store import compare_pinned
+        from test_scripts.version_store import compare_pinned
         attr = compare_pinned(base["pinned"])
         print("\n[版本归因]")
         if attr["code_recorded"]:
@@ -291,7 +291,7 @@ def _compare_baseline(m, records):
 def run():
     reset()
     try:
-        from tools.version_store import dataset_warning
+        from test_scripts.version_store import dataset_warning
         warning = dataset_warning("intent")
         if warning:
             print(f"  [版本] ⚠ {warning}")
@@ -342,7 +342,7 @@ def run():
         print(f"  {r['id']}  期望 {r['expect']:<7} 实判 {r['got']:<7} margin={r['margin']:.3f}  {r['query']}")
 
     if "--save-baseline" in sys.argv:
-        from tools.version_store import baseline_ready
+        from test_scripts.version_store import baseline_ready
         issues = baseline_ready("intent")
         if issues:
             for issue in issues:

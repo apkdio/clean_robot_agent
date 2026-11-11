@@ -7,7 +7,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))   # 项目根
 
 from test_scripts._runner import E2E  # noqa: E402
-from tools import version_store as vs  # noqa: E402
+from test_scripts import version_store as vs  # noqa: E402
 
 # ── tag 契约自检（纯规则，先跑：判据错了后面的评测跑得再久也没意义）──────
 from test_scripts.eval import test_behavior_tags  # noqa: E402

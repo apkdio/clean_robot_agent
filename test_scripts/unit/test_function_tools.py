@@ -106,7 +106,7 @@ def test_budget_args_to_range():
 # ──────────────────────────────────────────────────────────────
 
 def test_search_models_by_names():
-    import tools.model_catalog as mt
+    import service.model_catalog as mt
     fake = [
         {"name": "不染一尘云顶 X2", "price": 7999},
         {"name": "不染一尘净白 S1", "price": 899},
@@ -125,7 +125,7 @@ def test_search_models_by_names():
 
 
 def test_model_name_in_query():
-    import tools.model_catalog as mt
+    import service.model_catalog as mt
     orig = mt._enumerate_model_infos
     mt._enumerate_model_infos = lambda: [{"name": "不染一尘云顶 X2"},
                                          {"name": "不染一尘净白 S1"}]
@@ -140,7 +140,7 @@ def test_model_name_in_query():
 
 def test_find_models_invalid_args_do_not_clear_results():
     """非法参数只能丢弃该条件，不能把已筛结果清零或把 0 当真实预算。"""
-    import tools.model_catalog as mt
+    import service.model_catalog as mt
 
     fake = [
         {"name": "A", "price": 1000, "series": "净白 S", "param_吸力_num": 6000},

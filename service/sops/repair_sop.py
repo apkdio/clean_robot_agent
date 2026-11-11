@@ -1,6 +1,6 @@
 """故障排查 SOP：问现象 → 检索 → LLM 生成排查步骤。"""
 
-from sops.base import register, is_aftersales
+from service.sops.base import register, is_aftersales
 from config.word_dict_config import (
     REPAIR_NO_SYMPTOM_REPLY,
     REPAIR_TRIGGER,

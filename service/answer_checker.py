@@ -8,7 +8,7 @@
 import re
 
 from config.word_dict_config import ANSWER_PRICE_RE, ANSWER_WARRANTY_RE
-from tools.model_catalog import match_key
+from service.model_catalog import match_key
 
 
 def _compact(text: str) -> str:
@@ -94,7 +94,7 @@ def check_answer(answer: str, chunks, query: str = "",
 
     if model_names is None:
         try:
-            from tools.model_catalog import get_all_model_names
+            from service.model_catalog import get_all_model_names
             model_names = get_all_model_names()
         except Exception:  # noqa: BLE001
             model_names = []

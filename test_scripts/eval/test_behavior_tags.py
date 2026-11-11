@@ -300,7 +300,7 @@ def test_stage_spans_and_stream_close():
     import service.agent as agent
     from tools.dto.request import ChatRequest
     from tools.dto.stage import Continue, Finish
-    from tools.turn_context import TurnContext
+    from service.turn_context import TurnContext
 
     sid = "tracetest-stage-span"
     reset_trace(sid)
@@ -659,7 +659,7 @@ def test_operation_keyphrase_coverage():
     派发看着还在跑，新词其实进不了候选。键名写错更隐蔽——关键句静默不参与打分。
     """
     from config.word_dict_config import OPERATION_KEYPHRASES
-    from tools import operations as ops
+    from service import operations as ops
 
     _assert_eq([o for o in ops.ORDER if o not in ops.OPERATIONS], [], "ORDER 里每个操作都有谓词注册")
     _assert_eq(sorted(set(ops.OPERATIONS) - set(ops.ORDER)), [], "没有表外谓词注册")
@@ -695,7 +695,7 @@ def test_operation_multi_hit_winner():
     V11 之后线上按分数裁决，ORDER 只在同分与降级时起作用——这里锁的正是这条兜底：
     改 ORDER、插新操作、放宽某个谓词，命中集合或 winner 变了会当场红。
     """
-    from tools import operations as ops
+    from service import operations as ops
 
     cases = [("那有没有2000以上的产品", "find_models"),
              ("买个扫地机，顺便问问网点", "service_point"),
@@ -718,7 +718,7 @@ def test_clarify_hub_contract():
     用户那句「是/不是」就被丢掉——所以这里做机器检查。
     """
     from config.word_dict_config import TRACE_NODE_LABELS
-    from tools import clarify_service as clarify
+    from service import clarify_service as clarify
     from tools import pending_store as ps
     from gateway.redis_store import clarify_ttl, sop_ttl
 
@@ -743,7 +743,7 @@ def test_clarify_hub_contract():
 
 def test_check_case_ops_clarify():
     """v2.8 判别器澄清：多候选时 branch 只能是 clarify，判据改看候选出口是否覆盖期望行为。"""
-    from tools.operations import ORDER
+    from service.operations import ORDER
 
     _assert_eq(set(ctx_eval._OPS_EXITS), set(ORDER), "判别器出口映射覆盖全部操作（加操作要同步）")
     for op, exits in ctx_eval._OPS_EXITS.items():
@@ -775,7 +775,7 @@ def test_sop_enter_confirm_policy():
     v2.8.2 把三种门统一到 sops/base，SOP 自己声明 `enter_confirm`；声明写错或漏配
     会让「要不要先问一句」整条链路静默改变，所以这里锁住取值与语义。
     """
-    from sops import base as sb
+    from service.sops import base as sb
 
     _assert_eq(set(sb.ENTER_CONFIRM_MODES), {"always", "weak", "never"}, "进入门模式是闭集")
     for sid in sb.SOPS:
@@ -808,7 +808,7 @@ def test_sop_enter_confirm_policy():
 
 def test_version_registry():
     """版本账本契约：条目/快照/基线 pinned 三方一致；本地账本缺失时不伪造通过。"""
-    from tools import version_store as vs
+    from test_scripts import version_store as vs
 
     if not os.path.isfile(vs._registry_path()):
         _assert(False, "版本账本缺失：先 register-eval（或显式 --allow-missing）")

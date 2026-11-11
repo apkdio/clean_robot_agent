@@ -101,7 +101,7 @@ def test_template_syntax():
 
 
 def test_casual_stream_uses_full_template():
-    from tools.generation import casual_stream
+    from service.generation import casual_stream
 
     captured = []
 
@@ -117,7 +117,7 @@ def test_casual_stream_uses_full_template():
 
 
 def test_rag_stream_uses_full_template():
-    from tools import generation
+    from service import generation
 
     captured = []
 
@@ -140,7 +140,7 @@ def test_rag_stream_uses_full_template():
 
 
 def test_prompts_meta_tracks_prompt_files():
-    from tools import version_store as vs
+    from test_scripts import version_store as vs
 
     meta = vs._prompts_meta()
     _assert_eq(meta.get("algo"), "sha1-pairs-v2", "指纹口径已升级")

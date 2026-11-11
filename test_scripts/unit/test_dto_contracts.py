@@ -12,6 +12,8 @@ from tools.dto.clarify import CLARIFY_DONE, CLARIFY_DROP, CLARIFY_RESUME, Clarif
 from tools.dto.executor import NotMine, Reply
 from tools.dto.handoff import Handoff
 from tools.dto.model_query import FindModelsResult, ModelQueryConstraints
+from tools.dto.feedback import FeedbackRequest, FeedbackResult
+from tools.dto.knowledge import IngestResult, KnowledgeStats, ResetResult
 from tools.dto.request import ChatRequest
 from tools.dto.sop import ExtractResult, SopStepResult
 from tools.dto.stage import Continue, Finish
@@ -67,7 +69,7 @@ def test_turn_event():
 def test_ops_dispatch_rejects_unknown_outcome():
     """执行体返回非 Reply/NotMine 时，派发器要显式报契约错误。"""
     import service.agent as agent_mod
-    from tools.turn_context import TurnContext
+    from service.turn_context import TurnContext
 
     saved_exec, saved_pipeline = agent_mod._OP_EXEC, agent_mod._PIPELINE_OPS
     agent_mod._OP_EXEC = {"bad": lambda _ctx: "not a dto"}
@@ -113,7 +115,7 @@ def test_model_query_result():
 def test_run_stages_rejects_unknown_outcome():
     """阶段返回体不认识时，主链要显式报错，不能当 Continue 继续跑。"""
     import service.agent as agent_mod
-    from tools.turn_context import TurnContext
+    from service.turn_context import TurnContext
 
     saved = agent_mod._STAGES
     agent_mod._STAGES = (
@@ -147,6 +149,48 @@ def test_chat_request():
                    "retry 必须是 bool")
 
 
+def test_feedback_request_and_result():
+    req = FeedbackRequest(
+        "边刷多久换一次", "sid", "useless",
+        reason="kb_gap", note="没讲清楚", date="2026-11-11", turn_index=2,
+    )
+    _assert_eq(req.reason, "kb_gap", "请求体保留无用原因")
+    _assert_eq(req.turn_index, 2, "请求体保留轮次")
+    _assert_raises(ValueError, lambda: FeedbackRequest("", "sid", "useful"), "空 query 报错")
+    _assert_raises(ValueError, lambda: FeedbackRequest("q", "", "useful"), "空 session_id 报错")
+    _assert_raises(ValueError, lambda: FeedbackRequest("q", "sid", None), "rating 类型错误")
+    _assert_raises(ValueError, lambda: FeedbackRequest("q", "sid", "useful", reason=None),
+                   "reason 类型错误")
+    _assert_raises(ValueError, lambda: FeedbackRequest("q", "sid", "useful", date="2026-11-11"),
+                   "date 与 turn_index 必须成对")
+    _assert_raises(ValueError, lambda: FeedbackRequest("q", "sid", "useful", turn_index=2),
+                   "date 与 turn_index 必须成对")
+    _assert_raises(ValueError, lambda: FeedbackRequest("q", "sid", "useful", turn_index=True),
+                   "turn_index 不接受 bool")
+
+    result = FeedbackResult("ok", date="2026-11-11", turn_index=2, updated=True)
+    _assert_eq(result.payload()["turn_index"], 2, "结果回传轮次")
+    _assert_eq(FeedbackResult("error", message="bad").payload(),
+               {"status": "error", "message": "bad"}, "错误结果不带 success 字段")
+    _assert_raises(ValueError, lambda: FeedbackResult("unknown"), "结果状态必须在闭集内")
+
+
+def test_knowledge_results():
+    _assert_eq(KnowledgeStats("kb", 3).payload(),
+               {"collection_name": "kb", "chunk_count": 3}, "统计结果保留字段")
+    _assert_eq(IngestResult("ok", file="a.md", chunks=2, sha256="x", elapsed=0.1).payload(),
+               {"status": "ok", "file": "a.md", "chunks": 2, "sha256": "x", "elapsed": 0.1},
+               "成功入库结果")
+    _assert_eq(IngestResult("error", file="a.md", message="bad").payload(),
+               {"status": "error", "file": "a.md", "message": "bad"},
+               "失败入库结果")
+    _assert_eq(ResetResult("busy").payload(), {"status": "busy"}, "busy 不再用 None 哨兵")
+    _assert_eq(ResetResult("ok", deleted=4).payload(),
+               {"status": "ok", "deleted": 4}, "重置结果")
+    _assert_raises(ValueError, lambda: IngestResult("unknown"), "入库状态闭集")
+    _assert_raises(ValueError, lambda: ResetResult("unknown"), "重置状态闭集")
+
+
 def test_stage_registry():
     """阶段注册表：id/node 唯一、实现可调用、节点标签已登记。"""
     from config.word_dict_config import TRACE_NODE_LABELS
@@ -172,6 +216,8 @@ TESTS = [
     test_extract_result,
     test_model_query_result,
     test_chat_request,
+    test_feedback_request_and_result,
+    test_knowledge_results,
     test_stage_registry,
 ]
 

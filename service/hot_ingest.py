@@ -309,7 +309,7 @@ def invalidate_runtime_caches() -> None:
     BM25 与型号记录都走懒加载，下一次检索或型号查询再重建；这里不阻塞摄入请求。
     """
     from tools.config_tool import reload_configs
-    from tools.hybrid_retriever import reset_hybrid_retriever
+    from service.hybrid_retriever import reset_hybrid_retriever
     from tools.path_tool import get_abs_path
     from tools.prompts_tool import reset as reset_prompts
 

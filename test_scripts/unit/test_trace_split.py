@@ -44,24 +44,24 @@ def test_sop_span_contains_internal_node():
 
 def test_sop_step_spans_match_flow():
     """每个 SOP 循环迭代一条 sop.step span，outcome 与 sop.flow 1:1。"""
-    import sops
-    import sops.base
-    import sops.repair_sop
+    import service.sops
+    import service.sops.base
+    import service.sops.repair_sop
 
     sid = "tracetest-sop-steps"
-    steps = sops.repair_sop.REPAIR_SOP["steps"]
+    steps = service.sops.repair_sop.REPAIR_SOP["steps"]
     old_action = steps[1]["action"]
     steps[1]["action"] = lambda slots: {"query": "", "domain": "repair"}
     try:
         trace_store.begin_turn(sid, "机器人不动了")
         stage_id = trace_store.begin_span("stage.sop", kind="stage")
-        result = sops.base.start_sop(sid, "repair", "机器人不动了")
+        result = service.sops.base.start_sop(sid, "repair", "机器人不动了")
         trace_store.end_span(stage_id, status="hit")
         trace_store.note_behavior("sop_step")
         trace_store.end_turn(reply=result.reply)
     finally:
         steps[1]["action"] = old_action
-        sops.base.end_sop(sid)
+        service.sops.base.end_sop(sid)
 
     row = read_last_turn(sid)
     flow = (row.get("sop") or {}).get("flow") or []

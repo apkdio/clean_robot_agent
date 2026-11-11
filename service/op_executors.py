@@ -4,14 +4,15 @@
 """
 from __future__ import annotations
 
-from tools import trace_store, turn_recorder
+from service import turn_recorder
+from tools import trace_store
 from tools.dto.executor import ExecOutcome, NotMine, Reply
 from tools.log_tool import get_logger
-from tools.model_query import (format_model_query, is_model_detail_query,
+from service.model_query import (format_model_query, is_model_detail_query,
                                resolve_model_query)
-from tools.query_rewrite import history_block
-from sops.runtime import enter_sop_result
-from tools.turn_context import TurnContext
+from service.query_rewrite import history_block
+from service.sops.runtime import enter_sop_result
+from service.turn_context import TurnContext
 
 logger = get_logger(name="op_executors")
 
@@ -23,7 +24,7 @@ def _resolve_model_query(session_id: str, query: str):
     if not is_model_detail_query(query):
         return None
     from tools.llm_extract import extract_model_names
-    from tools.model_catalog import search_models_by_names
+    from service.model_catalog import search_models_by_names
     from tools.metadata_extractor import extract_model_aspect, format_models
 
     try:
@@ -39,7 +40,7 @@ def _resolve_model_query(session_id: str, query: str):
 
 
 def exec_followup(ctx: TurnContext) -> ExecOutcome:
-    from tools.followup import handle_followup
+    from service.followup import handle_followup
 
     reply = handle_followup(ctx.session_id, ctx.q)
     if reply:
@@ -59,7 +60,7 @@ def exec_model(ctx: TurnContext) -> ExecOutcome:
 
 
 def exec_find_models(ctx: TurnContext) -> ExecOutcome:
-    from tools.model_query import constraints_to_slots, is_model_catalog_intent
+    from service.model_query import constraints_to_slots, is_model_catalog_intent
 
     result = resolve_model_query(ctx.q)
     if result:
@@ -75,9 +76,9 @@ def exec_find_models(ctx: TurnContext) -> ExecOutcome:
 
 
 def exec_service_point(ctx: TurnContext) -> ExecOutcome:
-    from sops import enter_confirm_text, enter_declined, sop_needs_enter_confirm
+    from service.sops import enter_confirm_text, enter_declined, sop_needs_enter_confirm
     from tools import pending_store
-    from tools.clarify_service import open_clarify
+    from service.clarify_service import open_clarify
 
     has_coords = ctx.lng is not None and ctx.lat is not None
     trace_store.node("service_point", status="hit",
@@ -100,10 +101,10 @@ def exec_service_point(ctx: TurnContext) -> ExecOutcome:
 
 
 def exec_sop(ctx: TurnContext) -> ExecOutcome:
-    from sops import (enter_confirm_text, enter_declined, match_sop,
+    from service.sops import (enter_confirm_text, enter_declined, match_sop,
                       sop_has_strong_trigger, sop_needs_enter_confirm)
     from tools import pending_store
-    from tools.clarify_service import open_clarify
+    from service.clarify_service import open_clarify
 
     sop_id = match_sop(ctx.q)
     if not sop_id:

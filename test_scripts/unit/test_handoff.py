@@ -14,7 +14,7 @@ from tools.dto.executor import Reply
 from tools.dto.handoff import Handoff
 from tools.dto.request import ChatRequest
 from tools.dto.stage import Continue, Finish
-from tools.turn_context import TurnContext
+from service.turn_context import TurnContext
 
 
 def _ctx():

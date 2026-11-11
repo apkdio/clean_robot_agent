@@ -10,17 +10,17 @@ from test_scripts._runner import *
 
 
 def _clean(sid):
-    from tools.test_hooks import reset as reset_session
+    from test_scripts.test_hooks import reset as reset_session
 
     reset_session(sid)
 
 
 def test_safety_decision_levels():
-    from tools.safety import (
+    from service.safety import (
         SAFETY_CARRY, SAFETY_HINT, SAFETY_NONE, SAFETY_STOP,
         SafetyDecision, decide_safety,
     )
-    from tools.test_hooks import set_danger_window
+    from test_scripts.test_hooks import set_danger_window
 
     sid = "t-s5-safety"
     _clean(sid)
@@ -45,7 +45,7 @@ def test_safety_decision_levels():
 
 def test_unknown_clarify_biz_is_consumed():
     from tools import pending_store, trace_store
-    from tools.clarify_service import dispatch_clarify
+    from service.clarify_service import dispatch_clarify
     from test_scripts import trace_reader
 
     sid = "t-s5-clarify-unknown"
@@ -67,7 +67,7 @@ def test_unknown_clarify_biz_is_consumed():
 
 
 def test_sop_enter_missing_sop_drops():
-    from sops.sop_gate import _clarify_sop_enter
+    from service.sops.sop_gate import _clarify_sop_enter
     from tools import pending_store
 
     sid = "t-s5-enter-missing"

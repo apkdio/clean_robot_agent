@@ -169,13 +169,13 @@ def _expect_ref(entry):
 
 def _compute(entries, hr):
     from tools.date_rules import build_date_filter
-    from tools.domain_router import domain_filter as _domain_filter, route_domain as _route_domain
+    from service.domain_router import domain_filter as _domain_filter, route_domain as _route_domain
     from tools.metadata_extractor import enumerate_models, resolve_budget_filter
-    from tools.model_query import resolve_date_range
-    from tools.query_rewrite import normalize_enabled as _normalize_enabled
+    from service.model_query import resolve_date_range
+    from service.query_rewrite import normalize_enabled as _normalize_enabled
 
     def _date_filter(query):
-        """日期解析在 tools.model_query，filter 组装在 tools.date_rules（与线上同口径）。"""
+        """日期解析在 service.model_query，filter 组装在 tools.date_rules（与线上同口径）。"""
         r = resolve_date_range(query)
         return build_date_filter(r[0], r[1]) if r else None
 
@@ -365,7 +365,7 @@ def _index_meta():
     不用文件 mtime —— Chroma 读一次也会动文件时间，mtime 判不出「索引落后」。
     """
     from tools.config_tool import get_data_dir
-    from tools.hot_ingest import chunks_by_file, load_kb_metadata, scan_files
+    from service.hot_ingest import chunks_by_file, load_kb_metadata, scan_files
 
     meta = load_kb_metadata()
     if not meta:
@@ -421,7 +421,7 @@ def _evalset_meta(path):
 
 def _env_meta():
     """环境指纹统一由 version_store 采集；这里只补评测轨自己的 evalset 与采集时间。"""
-    from tools.version_store import collect_code, collect_env
+    from test_scripts.version_store import collect_code, collect_env
 
     env = collect_env()
     env["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -466,7 +466,7 @@ def _print_env_compare(env, base_env):
 
 
 def _baseline_payload(metrics, records):
-    from tools.version_store import pin
+    from test_scripts.version_store import pin
 
     return {
         "baseline_v": 2,
@@ -571,7 +571,7 @@ def _compare_baseline(metrics, records):
 
     _print_env_compare(cur["env"], base.get("env"))
     if base.get("pinned"):
-        from tools.version_store import compare_pinned
+        from test_scripts.version_store import compare_pinned
         attr = compare_pinned(base["pinned"])
         print("\n[版本归因]")
         if attr["code_recorded"]:
@@ -603,7 +603,7 @@ def _kb_metadata_selfcheck():
     这份记录是「索引里现在是什么」的唯一凭据，本轨的 env.kb 也直接读它；指纹算法改了却沿用旧记录时，
     环境比对会静默失真——这里当场报出来。没有记录不算失败（等一次热更新即可）。
     """
-    from tools.hot_ingest import (KB_METADATA_VERSION, kb_fingerprint, kb_metadata_version,
+    from service.hot_ingest import (KB_METADATA_VERSION, kb_fingerprint, kb_metadata_version,
                                   load_kb_metadata, metadata_path)
 
     rec = load_kb_metadata()
@@ -624,7 +624,7 @@ def _kb_metadata_selfcheck():
 def run():
     reset()
     try:
-        from tools.version_store import dataset_warning
+        from test_scripts.version_store import dataset_warning
         warning = dataset_warning("retrieval")
         if warning:
             print(f"  [版本] ⚠ {warning}")
@@ -671,7 +671,7 @@ def run():
     _assert(bool(catalog), f"型号数据就绪（目录 {len(catalog)} 款）")
     _assert(not missing, "评测集依赖的型号都在目录里" + (f"（缺：{missing}）" if missing else ""))
 
-    from tools.hybrid_retriever import HybridRetriever
+    from service.hybrid_retriever import HybridRetriever
     hr = HybridRetriever()
     hr.ensure_sparse_index()
 
@@ -687,7 +687,7 @@ def run():
         _assert(True, "严格领域外 query 均零召回")
 
     if "--save-baseline" in sys.argv:
-        from tools.version_store import baseline_ready
+        from test_scripts.version_store import baseline_ready
         issues = baseline_ready("retrieval")
         if issues:
             for issue in issues:

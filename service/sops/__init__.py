@@ -3,7 +3,7 @@
 对外暴露会话状态与执行入口，并在此注册各业务场景 SOP。
 """
 
-from sops.base import (  # noqa: F401
+from service.sops.base import (  # noqa: F401
     SOPS,
     register,
     start_sop,
@@ -25,8 +25,8 @@ from sops.base import (  # noqa: F401
 )
 
 # 导入各 SOP 模块，触发 register 注册（顺序＝ match_sop 的优先顺序）
-import sops.service_point_sop  # noqa: F401
-import sops.repair_sop  # noqa: F401
-import sops.model_query_sop  # noqa: F401
-import sops.sop_gate  # noqa: F401  注册 SOP 进入/退出澄清 handler
+import service.sops.service_point_sop  # noqa: F401
+import service.sops.repair_sop  # noqa: F401
+import service.sops.model_query_sop  # noqa: F401
+import service.sops.sop_gate  # noqa: F401  注册 SOP 进入/退出澄清 handler
 

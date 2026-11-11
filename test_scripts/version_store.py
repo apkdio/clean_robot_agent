@@ -174,7 +174,7 @@ def _config_meta() -> dict:
 
 
 def _kb_meta() -> dict:
-    from tools.hot_ingest import kb_fingerprint, load_kb_metadata, metadata_path, scan_files
+    from service.hot_ingest import kb_fingerprint, load_kb_metadata, metadata_path, scan_files
 
     kb_dir = get_data_dir()
     rel_dir = _rel(kb_dir)
@@ -190,7 +190,7 @@ def _kb_meta() -> dict:
 
 
 def _index_meta() -> dict:
-    from tools.hot_ingest import load_kb_metadata, scan_files
+    from service.hot_ingest import load_kb_metadata, scan_files
 
     meta = load_kb_metadata()
     if not meta:
@@ -224,7 +224,7 @@ def trigger_ver(sop: dict) -> str:
 
 
 def _sops_meta() -> dict:
-    from sops.base import SOPS
+    from service.sops.base import SOPS
 
     out = {}
     for sid in sorted(SOPS):

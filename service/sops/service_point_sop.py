@@ -5,7 +5,7 @@
 import re
 
 from config.word_dict_config import SERVICE_POINT_CONSULT_WORDS, SERVICE_POINT_WORDS
-from sops.base import register
+from service.sops.base import register
 from tools.dto.sop import ExtractResult
 from tools.log_tool import get_logger
 

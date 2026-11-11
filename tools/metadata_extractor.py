@@ -238,7 +238,7 @@ def format_model_line(info: Dict, aspect: str = None) -> str:
 def format_models(models, header: str, aspect: str = None) -> str:
     """型号列表 → 回复文本（标题 + 每型号一行）；aspect 非空时只输出该属性维度。
 
-    型号展示是这一层的事：原先放在 sops/base，逼得 agent（上层）反向 import sops（下层）。
+    型号展示是这一层的事：原先放在 service/sops/base，逼得 agent（上层）反向 import SOP（下层）。
     """
     lines = [format_model_line(m, aspect) for m in (models or [])]
     return header + "\n\n" + "\n".join(lines)

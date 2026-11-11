@@ -1,7 +1,7 @@
 """选购/型号查询 SOP：预算 / 系列 / 发布时间 / 标签补槽，最后调用 find_models。"""
 from __future__ import annotations
 
-from sops.base import is_aftersales, is_brand, is_consulting, register
+from service.sops.base import is_aftersales, is_brand, is_consulting, register
 from tools.dto.sop import ExtractResult
 from config.word_dict_config import (
     BARE_BUDGET_RE,
@@ -13,11 +13,11 @@ from config.word_dict_config import (
     TAG_CATALOG,
     TAG_ORDER,
 )
-from tools.model_catalog import find_models_result
+from service.model_catalog import find_models_result
 from tools import trace_store
 from tools.log_tool import get_logger
 from tools.metadata_extractor import extract_price_constraint, extract_series, format_model_line
-from tools.model_query import format_constraints, parse_publish
+from service.model_query import format_constraints, parse_publish
 from tools.prompts_tool import render
 from tools.selection import is_skip, parse_multi_select
 

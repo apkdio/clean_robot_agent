@@ -9,7 +9,7 @@ import sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
 
-from tools import version_store as vs  # noqa: E402
+from test_scripts import version_store as vs  # noqa: E402
 
 
 def _short_eval(value):

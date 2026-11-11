@@ -10,7 +10,7 @@ if os.path.dirname(os.path.dirname(_SCRIPT_DIR)) not in sys.path:
     sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_DIR)))
 
 from test_scripts._runner import *
-from tools import version_store as vs
+from test_scripts import version_store as vs
 
 
 def _write(path, rows):
@@ -70,7 +70,7 @@ def test_diff_reads_snapshots():
 
 
 def test_trigger_ver_covers_selection_definition():
-    from sops.base import is_brand, is_consulting
+    from service.sops.base import is_brand, is_consulting
 
     sop = {"trigger": ["推荐"], "weak_trigger": ["预算"], "enter_confirm": "always",
            "guards": [{"check": is_consulting}], "steps": []}
