@@ -1,0 +1,165 @@
+tools/query_rewrite.py
+  s_40681318f5a20b::t_81f7c0a94732b6 41,55,65
+  s_40681318f5a20b::t_312f7b1ee7062b 109,139
+test_scripts/unit/test_dialogue.py
+  s_40681318f5a20b::t_bbdb954b85ac61 30
+  s_40681318f5a20b::t_c6801fe3a0e1d7 29
+sops/base.py
+  s_40681318f5a20b::t_4451d833495187 180,302,390,395
+  s_40681318f5a20b::t_101b45b5c48bda 196
+test_scripts/eval/test_sop_eval.py
+  s_40681318f5a20b::t_30f1ac5ab7896b 25
+  s_40681318f5a20b::t_9c1aa41da775df 73
+service/__init__.py
+  s_40681318f5a20b::t_84d7cdc309346f 1
+repo/trace/write.py
+  s_40681318f5a20b::t_ae6070159926e6 73,95
+intent_classifier_training/train_intent_classifier.py
+  s_40681318f5a20b::t_7e3ea815566705 23
+sops/__init__.py
+  s_40681318f5a20b::t_aa4a8833eaaa4f 28-29
+gateway/__init__.py
+  s_40681318f5a20b::t_32ea60589e3840 1
+README.md
+  s_40681318f5a20b::t_494f8c857d2954 176-177
+  s_40681318f5a20b::t_cdf225c719b9fa 204
+  s_40681318f5a20b::t_5182e73b0ca040 235
+  s_40681318f5a20b::t_35bc9c144e29c6 150
+  s_40681318f5a20b::t_619ac10339ed9e 173
+  s_40681318f5a20b::t_6c0b6e38159600 64-70
+  s_40681318f5a20b::t_897ef14a4f4e91 71-73
+  s_40681318f5a20b::t_ea1d7821a30ead 158
+  s_40681318f5a20b::t_bdfb21d287a37b 79
+  s_40681318f5a20b::t_28adc3689011e1 136,140
+test_scripts/unit/test_service_point_sop.py
+  s_40681318f5a20b::t_56d7b2ef89a92c 17
+tools/intent_router.py
+  s_40681318f5a20b::t_02301b14f8802f 33
+tools/safety.py
+  s_40681318f5a20b::t_14f85cc74b039c 66
+test_scripts/eval/test_behavior_tags.py
+  s_40681318f5a20b::t_6baf0d30beb748 105
+  s_40681318f5a20b::t_21f23b9c07ec71 349
+  s_40681318f5a20b::t_64c89572f1e276 568
+  s_40681318f5a20b::t_2c333222bbab5e 898,906
+  s_40681318f5a20b::t_6c39b0dbf13658 723
+  s_40681318f5a20b::t_97081345fcab0e 899
+  s_40681318f5a20b::t_f4c2ee32e74cb2 600
+  s_40681318f5a20b::t_d9cbf8738d9241 300
+  s_40681318f5a20b::t_cf2ea3c06ad4c4 913
+  s_40681318f5a20b::t_acd4c4e533ed75 560
+sops/sop_gate.py
+  s_40681318f5a20b::t_6e94841049a217 17
+tools/llm_extract.py
+  s_40681318f5a20b::t_a8a368cbffd9ca 17
+tools/test_hooks.py
+  s_40681318f5a20b::t_1490c4e419a9c7 24,36,63
+test_scripts/unit/test_layer_imports.py
+  s_40681318f5a20b::t_06251af5c47b36 1-81
+test_scripts/unit/test_hot_ingest.py
+  s_40681318f5a20b::t_215775940bfc99 115,157,200
+test_scripts/unit/test_handoff.py
+  s_40681318f5a20b::t_25736ecb96b9e3 25,43,67,83
+  s_40681318f5a20b::t_600e6f416d7e8b 12
+service/chat_service.py
+  s_40681318f5a20b::t_83e42629f06aaa 68,78
+  s_40681318f5a20b::t_0d62511c97171a 105,110,112
+  s_40681318f5a20b::t_92fdc16d0733e1 56,62
+test_scripts/unit/test_agent_guards.py
+  s_40681318f5a20b::t_09dfc80a0578f0 324,356
+  s_40681318f5a20b::t_0442dff6a58b9b 20
+  s_40681318f5a20b::t_803b121eff3154 22
+  s_40681318f5a20b::t_fdfa7f2bd57909 289
+  s_40681318f5a20b::t_a95117c6c2fba1 39,112
+  s_40681318f5a20b::t_5576a4ff0f915a 314,347
+test_scripts/unit/test_dto_contracts.py
+  s_40681318f5a20b::t_16ad3c117e965e 153
+  s_40681318f5a20b::t_654e618f775dd2 69,115
+tools/hot_ingest.py
+  s_40681318f5a20b::t_a1306ab5d3f299 312
+  s_40681318f5a20b::t_f0c09df38e30db 321
+  s_40681318f5a20b::t_88a8331dbe2fa4 343
+test_scripts/eval/test_context_eval.py
+  s_40681318f5a20b::t_726c1f94e833ad 301
+  s_40681318f5a20b::t_182261bddf142e 318,340
+tools/generation.py
+  s_40681318f5a20b::t_3fe4864d8dfa76 46,49,97
+test_scripts/unit/test_retrieval.py
+  s_40681318f5a20b::t_cf1e6585549540 241,305
+test_scripts/unit/test_chat_service.py
+  s_40681318f5a20b::t_d82236810661e3 45
+  s_40681318f5a20b::t_5ef080aba7251d 142-143
+  s_40681318f5a20b::t_f89cf4cdbaf2a4 12,20,25,69
+  s_40681318f5a20b::t_b03a751016d3a3 76-77
+  s_40681318f5a20b::t_54ac88fddc7f78 11
+  s_40681318f5a20b::t_52dff119fb3f41 120-121
+  s_40681318f5a20b::t_2dc001b4b08aba 100-101
+test_scripts/unit/test_model_query_sop.py
+  s_40681318f5a20b::t_f8d9ee347aaa7a 587
+  s_40681318f5a20b::t_ab08d571735c9f 143
+  s_40681318f5a20b::t_e2ba8679801286 44
+tools/hybrid_retriever.py
+  s_40681318f5a20b::t_e1ef53d198587c 247-264
+  s_40681318f5a20b::t_ac879cd65eaf9a 20
+tools/pending_store.py
+  s_40681318f5a20b::t_5c5a0fcb19279c 25
+tools/operations.py
+  s_40681318f5a20b::t_5f64934e9f3ac2 186
+webapp/app.py
+  s_40681318f5a20b::t_6fd0ef01523371 19-20
+  s_40681318f5a20b::t_aced3ad2eff276 25,263,291,305
+  s_40681318f5a20b::t_3e5a897861709a 148,183
+tools/vector_store.py
+  s_40681318f5a20b::t_c4b6571d5d8224 17
+test_scripts/unit/test_review_fixes.py
+  s_40681318f5a20b::t_05bb111129a0de 21
+  s_40681318f5a20b::t_f07c13a6f2ad2e 405,475
+  s_40681318f5a20b::t_2387584e55d039 259
+  s_40681318f5a20b::t_480be6f499398d 299-300
+  s_40681318f5a20b::t_857650b46cff3c 386
+  s_40681318f5a20b::t_e767185a1acbb6 404,474
+  s_40681318f5a20b::t_fdf1a157e408f3 238,258
+  s_40681318f5a20b::t_b9cd4ad4308a8d 219,229
+  s_40681318f5a20b::t_2334b383e93839 315,322,332,349,364
+tools/metadata_extractor.py
+  s_40681318f5a20b::t_ebcb493de2bb3c 27
+tools/followup.py
+  s_40681318f5a20b::t_79d9d379e9a436 21
+test_scripts/unit/test_webapp_routes.py
+  s_40681318f5a20b::t_afb54b73e5de72 135
+test_scripts/unit/test_context.py
+  s_40681318f5a20b::t_5a5dd05f90461c 184
+  s_40681318f5a20b::t_3c80b765dbeda5 22
+test_scripts/unit/test_trace_split.py
+  s_40681318f5a20b::t_4bafa5bbded9ff 49
+  s_40681318f5a20b::t_281021eb6884a0 52
+tools/state_store.py
+  s_40681318f5a20b::t_1aae8624c34677 19
+test_scripts/_runner.py
+  s_40681318f5a20b::t_2fdd2546bf92bf 41
+test_scripts/unit/test_repair_sop.py
+  s_40681318f5a20b::t_817d74c587d4d7 72,89,91,98,104,110,113,117,123,165-166,182
+  s_40681318f5a20b::t_9b4cf3e92d67ca 45
+  s_40681318f5a20b::t_d91e91651ced72 18
+  s_40681318f5a20b::t_f43665bb72921f 163
+  s_40681318f5a20b::t_044f7c11ce9f0f 203
+  s_40681318f5a20b::t_d0033684247d28 31
+sops/runtime.py
+  s_40681318f5a20b::t_df9d58eec33dbb 59,79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.52-trip",
+  "base_commit_sha": "4ce32e248fad7cd570042c3d773cdde8a914faa1",
+  "prompts": {},
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
