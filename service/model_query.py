@@ -6,6 +6,7 @@ S9 撤销后不再保留独立 domain 层，避免只为一个消费者维护半
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict
 
 from mapper import trace_store
@@ -20,9 +21,11 @@ from utils.date_rules import parse_date, publish_int
 from config.word_dict_config import (
     BRAND_EVENT_WORDS,
     DATE_SELECT_HINT_RE,
+    MODEL_LIST_RE,
     MODEL_QUERY_RESULT_PREFIX,
     PURCHASE_DURATION_RE,
     RELEASE_HINT_RE,
+    TAG_ALIASES,
     TAG_CATALOG,
     TIME_HINT_RE,
 )
@@ -64,6 +67,28 @@ def parse_publish(query: str, allow_llm: bool = True) -> PublishRange | None:
     return PublishRange(start, end or None)
 
 
+_SELECT_HINT_RE = re.compile(
+    r"(?:含|支持|带|有|哪些|哪几款|型号|产品|推荐|筛选|预算|左右|以内|以上|以下)")
+# 参数条件暂未接入主链：命中这些词时不要让预算/目录直出把条件吞掉。
+_UNSUPPORTED_PARAM_RE = re.compile(
+    r"(?:lds|激光|视觉导航|导航|避障|结构光|双摄|吸力|\d+\s*pa)", re.I)
+
+
+def has_unsupported_param(query: str) -> bool:
+    return bool(_UNSUPPORTED_PARAM_RE.search(query or ""))
+
+
+def parse_tag_filters(query: str) -> list:
+    """自然语言标签 → 受控标签 id；只在选型语境下生效。"""
+    if not _SELECT_HINT_RE.search(query or ""):
+        return []
+    out = []
+    for alias in sorted(TAG_ALIASES, key=len, reverse=True):
+        if alias in query:
+            out.append(TAG_ALIASES[alias])
+    return list(dict.fromkeys(out))
+
+
 def resolve_model_constraints(query: str, allow_llm: bool = True):
     """把 query 收敛成 (ModelQueryConstraints, kind)；allow_llm=False 只走规则。"""
     budget = parse_budget(query, allow_llm=allow_llm)
@@ -75,20 +100,24 @@ def resolve_model_constraints(query: str, allow_llm: bool = True):
         logger.info("[ModelQuery] date without selection hint, skip: %s", query[:40])
         publish = None
     series = extract_series(query) if is_model_catalog_intent(query) else ""
-    if not (budget or publish or series):
+    tags = parse_tag_filters(query)
+    if not (budget or publish or series or tags):
         return None
-    if series and not (budget or publish):
+    if series and not (budget or publish or tags):
         kind = "series"
     elif budget:
         kind = "budget+date" if publish else "budget"
     elif publish:
         kind = "date"
-    else:
+    elif series:
         kind = "series"
+    else:
+        kind = "tag"
     constraints = ModelQueryConstraints(
         budget=budget,
         publish=publish,
         series=series or "",
+        tags=tuple(tags),
         limit=50,
     )
     return constraints, kind
@@ -107,6 +136,8 @@ def constraints_to_slots(query: str) -> dict:
         slots["series"] = constraints.series
     if constraints.publish is not None:
         slots["publish_range"] = (constraints.publish.start, constraints.publish.end)
+    if constraints.tags:
+        slots["tags"] = list(constraints.tags)
     return slots
 
 
@@ -173,7 +204,7 @@ def is_model_catalog_intent(query: str) -> bool:
     from config.word_dict_config import MODEL_LIST_WORDS
 
     words = tuple(MODEL_LIST_WORDS) + ("哪几款", "有哪些")
-    return any(w in query for w in words)
+    return any(w in query for w in words) or bool(MODEL_LIST_RE.search(query or ""))
 
 
 def resolve_model_query(query: str):

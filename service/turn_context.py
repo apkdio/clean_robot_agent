@@ -45,13 +45,5 @@ class TurnContext:
         return self.request.session_id
 
     @property
-    def lng(self) -> float | None:
-        return self.request.lng
-
-    @property
-    def lat(self) -> float | None:
-        return self.request.lat
-
-    @property
     def retry(self) -> bool:
         return self.request.retry

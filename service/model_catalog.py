@@ -72,6 +72,19 @@ def model_name_in_query(query: str) -> bool:
     return False
 
 
+def models_in_text(text: str) -> List[Dict]:
+    """从助手答复中提取明确出现的型号，返回型号记录（长名优先，避免 T2 吞掉 T2 Ultra）。"""
+    flat = re.sub(r"\s+", "", text or "")
+    if not flat:
+        return []
+    found = []
+    for name in sorted(get_all_model_names(), key=len, reverse=True):
+        key = match_key(name)
+        if key and key in flat and not any(key in match_key(item) for item in found):
+            found.append(name)
+    return search_models_by_names(",".join(found)) if found else []
+
+
 
 
 def _param_of(record: Dict, key: str) -> str:

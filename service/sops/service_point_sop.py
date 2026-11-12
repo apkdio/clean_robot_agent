@@ -1,6 +1,7 @@
 """售后网点查询：问城市（重名时选序号）→ 按距离列最近网点。
 
-城市识别复用网点工具（geonamescache）。前端给了坐标时主链路直接作答，不进本流程。
+城市识别复用网点工具（geonamescache）。主链路先按 query 解析城市，再尝试 LLM；
+两者都没有时进入本流程问城市。
 """
 import re
 
@@ -40,8 +41,8 @@ def _extract_city_by_llm(text: str) -> list:
 
 def _extract_city(text: str, _slots: dict):
     """识城市；重名候选放 extra，由 base 在 done 时原子写入 slots。"""
-    from mapper.service_points_repo import geocode_city
-    candidates = geocode_city(text) or _extract_city_by_llm(text)
+    from mapper.service_points_repo import city_in_query, geocode_city
+    candidates = geocode_city(text) or city_in_query(text) or _extract_city_by_llm(text)
     if not candidates:
         return ExtractResult("fail", reason="no_city")
     extra = {"candidates": candidates}

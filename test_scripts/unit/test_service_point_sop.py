@@ -15,6 +15,9 @@ import service.sops  # 触发各 SOP 注册
 import service.sops.base
 import mapper.service_points_repo as spt
 from service.sops import service_point_sop as sp
+from service.op_executors import exec_service_point
+from service.turn_context import TurnContext
+from utils.dto.request import ChatRequest
 from utils.dto.sop import ExtractResult
 
 _CAND = [
@@ -219,8 +222,50 @@ def test_guard_only_vetoes_its_own_sop():
     _cleanup()
 
 
+def test_city_in_query_prefers_named_city():
+    _assert_eq(spt.city_in_query("那离杭州最近的售后点在哪里")[0].get("cn_name"), "杭州市",
+               "整句里能取出杭州")
+    _assert_eq(spt.city_in_query("上海售后网点")[0].get("cn_name"), "上海市",
+               "城市 + 售后短语也能取出")
+    _assert_eq(spt.city_in_query("离我最近的售后网点"), [], "没有城市名时不硬猜")
+
+
+def test_service_point_query_then_llm_then_sop():
+    """解析顺序：query 规则 → LLM 城市 → 进入 SOP 问城市。"""
+    if not _points_ready():
+        _skip("网点数据缺失")
+        return
+    import service.llm_extract as le
+    from mapper import pending_store
+
+    saved = le.extract_city_candidates
+    calls = []
+    try:
+        le.extract_city_candidates = lambda q: (calls.append(q), [
+            {"name": "Hangzhou", "cn_name": "杭州市", "lng": 120.15, "lat": 30.27, "population": 1}
+        ])[1]
+        ctx = TurnContext.from_request(ChatRequest(
+            query="我在杭州出差，最近的网点在哪里", session_id="sp-order"))
+        out = getattr(exec_service_point(ctx), "text", "") or ""
+        _assert(calls, "规则取不到城市时才调 LLM")
+        _assert_in("离杭州市最近", out, "LLM 城市直接作答")
+
+        calls.clear()
+        pending_store.close("sp-order")
+        ctx = TurnContext.from_request(ChatRequest(
+            query="离我最近的售后网点", session_id="sp-order"))
+        out = getattr(exec_service_point(ctx), "text", "") or ""
+        _assert_eq(calls, [], "纯「离我最近」不调 LLM，避免幻觉城市")
+        _assert_in("要走引导吗", out, "没有城市时进入网点 SOP 确认门")
+    finally:
+        pending_store.close("sp-order")
+        le.extract_city_candidates = saved
+
+
 TESTS = [
     test_entry_judgement,
+    test_service_point_query_then_llm_then_sop,
+    test_city_in_query_prefers_named_city,
     test_match_and_guard,
     test_unique_city_one_turn,
     test_ambiguous_then_pick,

@@ -7,6 +7,7 @@ from config.word_dict_config import (
     BARE_BUDGET_RE,
     MODEL_QUERY_CONSTRAINT_RETRY_REPLY,
     MODEL_QUERY_EMPTY_REPLIES,
+    MODEL_QUERY_EXCLUDE_WORDS,
     MODEL_QUERY_RESULT_PREFIX,
     MODEL_QUERY_TRIGGER,
     MODEL_QUERY_WEAK_TRIGGER,
@@ -27,6 +28,11 @@ logger = get_logger(name="model_query_sop")
 
 def _skip_text(text: str) -> bool:
     return is_skip(text)
+
+
+def _is_parts_or_service(query: str) -> bool:
+    """配件/售后/回收类问题不是选购动作，避免「买电池」触发预算引导。"""
+    return any(w in query for w in MODEL_QUERY_EXCLUDE_WORDS)
 
 
 def _extract_budget(text: str, _slots: dict):
@@ -175,6 +181,7 @@ MODEL_QUERY_SOP = {
         {"check": is_consulting},
         {"check": is_aftersales},
         {"check": is_brand},
+        {"check": _is_parts_or_service},
     ],
     "intro": "好的，我来帮您筛选合适的型号～",
     "max_retry": 2,

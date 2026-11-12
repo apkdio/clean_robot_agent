@@ -22,11 +22,9 @@ from utils.dto.request import ChatRequest
 import service.agent as agent_mod
 
 
-def ask_stream(query, session_id="default", lng=None, lat=None,
-               retry=False, stop_check=None):
+def ask_stream(query, session_id="default", retry=False, stop_check=None):
     """测试入口：把字符串 query 包成 ChatRequest 后走真实主链。"""
-    request = ChatRequest(query=query, session_id=session_id,
-                          lng=lng, lat=lat, retry=retry)
+    request = ChatRequest(query=query, session_id=session_id, retry=retry)
     return _ask_prod(request, stop_check=stop_check)
 
 
@@ -97,11 +95,25 @@ def test_enter_gate_decline_reuses_entry_query():
         _assert(bool(captured), "意图分类被调用了")
         _assert_eq(captured[0], "帮我推荐一款扫地机器人！",
                    "意图分类收到的是入口 query 的归一化（不是被否掉的那句）")
-        _assert_in("预算", out, "按入口 query 走：强触发进选购 SOP、问预算")
+        _assert(out, "按入口 query 继续作答")
+        _assert_not_in("要走引导吗", out, "同一轮拒绝后不再反向拉起 SOP")
     finally:
         ir.route_intent_with_margin = saved_intent
         pending_store.close(sid)
         end_sop(sid)
+
+
+def test_declined_turn_skips_sop_even_for_strong_trigger():
+    """同一轮刚拒绝进入时，强触发也不能反向拉起 SOP。"""
+    from service.op_executors import exec_sop
+    from service.turn_context import TurnContext
+    from utils.dto.executor import NotMine
+
+    ctx = TurnContext.from_request(ChatRequest(
+        query="想买新机器人，有没有以旧换新服务啊", session_id="t-decline-turn"))
+    ctx.q = ctx.query
+    ctx.enter_declined_turn = True
+    _assert(isinstance(exec_sop(ctx), NotMine), "拒绝进入后本轮不再进 SOP")
 
 
 def test_enter_gate_timeout_is_not_decline():
@@ -848,6 +860,7 @@ TESTS = [
     test_refuse_only_when_out_of_domain,
     test_retrieved_inject_chunks_dropped,
     test_enter_gate_decline_reuses_entry_query,
+    test_declined_turn_skips_sop_even_for_strong_trigger,
     test_enter_gate_timeout_is_not_decline,
     test_enter_gate_decline_hint_truthful,
     test_all_sop_entry_gate,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from math import atan2, cos, radians, sin, sqrt
 from typing import Dict, List, Optional, Tuple
 
@@ -74,3 +75,24 @@ def geocode_city(name: str) -> List[Dict]:
         })
     candidates.sort(key=lambda c: c.get("population") or 0, reverse=True)
     return candidates
+
+
+def city_in_query(query: str) -> List[Dict]:
+    """从“离杭州最近的售后点”这类句子里取出城市并解析；取不到返回 []。"""
+    text = (query or "").strip()
+    if not text:
+        return []
+    for match in re.finditer(
+            r"([\u4e00-\u9fff]{2,10}?)(?:市)?(?:的)?(?:最近|附近|售后|服务网点|网点|服务点|维修点)",
+            text):
+        token = match.group(1)
+        for prefix in ("那离", "请问", "离", "在", "从", "去", "到", "的"):
+            if token.startswith(prefix):
+                token = token[len(prefix):]
+                break
+        if len(token) < 2:
+            continue
+        candidates = geocode_city(token)
+        if candidates:
+            return candidates
+    return []

@@ -6,7 +6,7 @@
     - 故障排查 SOP（触发词含症状 → 直接排查）
     - 型号精准查询 / 系列枚举
     - 追问（更便宜）
-    - 网点查询（前端定位直出）
+    - 网点查询（query 城市直出）
     - 闲聊 / 领域外拒答
     - 情绪安抚 + 诉求继续
   非人类对话：
@@ -31,11 +31,10 @@ from mapper.context_store import append_message
 from utils.dto.request import ChatRequest
 
 
-def _chat(query, sid, lng=None, lat=None):
+def _chat(query, sid):
     """模拟一轮对话：收集流式回答，并写 assistant 消息维持历史。"""
     parts = []
-    for chunk in ask_stream(ChatRequest(query=query, session_id=sid,
-                                        lng=lng, lat=lat)):
+    for chunk in ask_stream(ChatRequest(query=query, session_id=sid)):
         parts.append(chunk)
     ans = "".join(parts).strip()
     if ans:
@@ -107,8 +106,8 @@ def test_normal_followup():
 @e2e("网点查询需要 geonamescache")
 def test_normal_service_point():
     sid = _sid()
-    r = _chat("离我最近的售后网点", sid, lng=116.4074, lat=39.9042)
-    _assert_in("网点", r, "前端定位直出网点")
+    r = _chat("离杭州最近的售后网点", sid)
+    _assert_in("杭州", r, "query 城市直出网点")
 
 
 @e2e("闲聊/拒答需要 Ollama")

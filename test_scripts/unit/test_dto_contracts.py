@@ -135,16 +135,6 @@ def test_chat_request():
     _assert_eq(ChatRequest("q", "sid").query, "q", "请求体保留 query")
     _assert_raises(ValueError, lambda: ChatRequest("", "sid"), "空 query 报错")
     _assert_raises(ValueError, lambda: ChatRequest("q", ""), "空 session_id 报错")
-    _assert_raises(ValueError, lambda: ChatRequest("q", "sid", lng=1.0),
-                   "lng/lat 必须成对")
-    _assert_raises(ValueError, lambda: ChatRequest("q", "sid", lng=181.0, lat=0.0),
-                   "经度越界报错")
-    _assert_raises(ValueError, lambda: ChatRequest("q", "sid", lng=0.0, lat=91.0),
-                   "纬度越界报错")
-    _assert_raises(ValueError, lambda: ChatRequest("q", "sid", lng=float("nan"), lat=0.0),
-                   "非有限坐标报错")
-    _assert_raises(ValueError, lambda: ChatRequest("q", "sid", lng=True, lat=0.0),
-                   "坐标不接受 bool")
     _assert_raises(ValueError, lambda: ChatRequest("q", "sid", retry="yes"),
                    "retry 必须是 bool")
 

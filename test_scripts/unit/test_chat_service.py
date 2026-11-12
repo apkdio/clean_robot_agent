@@ -14,7 +14,7 @@ from utils.dto.request import ChatRequest
 
 
 def test_stream_turn_accepts_chat_request():
-    """新入口直接传 ChatRequest：query/session/lng/lat/retry 不再拆参数。"""
+    """新入口直接传 ChatRequest：query/session/retry 不再拆参数。"""
     sid = "11111111-2222-3333-4444-555566667780"
     delete_session(sid)
     from mapper.context_store import set_session_title
@@ -28,7 +28,7 @@ def test_stream_turn_accepts_chat_request():
         append_message(request.session_id, "user", request.query)
         yield "ok"
 
-    req = ChatRequest("推荐一款", sid, lng=121.5, lat=31.2, retry=True)
+    req = ChatRequest("推荐一款", sid, retry=True)
     try:
         events = list(cs.stream_turn(req, ask_stream_func=fake_ask))
         _assert_eq([e.kind for e in events], ["delta", "meta", "done"],

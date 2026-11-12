@@ -300,6 +300,12 @@ def test_model_query_trigger_and_guards():
     _assert(service.sops.base.match_sop("选购扫地机器人要注意什么") is None, "选购咨询 guard 拦截")
     _assert(service.sops.base.match_sop("扫地机器人保修多久") is None, "售后 guard 拦截")
     _assert(service.sops.base.match_sop("不染一尘有什么优势") is None, "品牌 guard 拦截")
+    _assert(service.sops.base.match_sop("我朋友买了一个机器人电池，怎么确定是不是正品") is None,
+            "配件正品 guard 拦截")
+    _assert(service.sops.base.match_sop("如果我自己买配件换上呢？") is None,
+            "配件更换 guard 拦截")
+    _assert(service.sops.base.match_sop("想买新机器人，有没有以旧换新服务啊") is None,
+            "回收服务 guard 拦截")
 
 
 # ──────────────────────────────────────────────────────────────

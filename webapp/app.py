@@ -183,12 +183,9 @@ def chat_stream():
     if not query:
         return jsonify({"status": "error", "message": "Empty query."}), 400
     session_id = normalize_session_id(data.get("session_id", ""))
-    lng = data.get("lng")
-    lat = data.get("lat")
     is_retry = bool(data.get("retry"))     # 前端点「重新回答」时显式带上；不靠"和上一句相同"猜
     try:
-        chat_request = ChatRequest(query=query, session_id=session_id,
-                                   lng=lng, lat=lat, retry=is_retry)
+        chat_request = ChatRequest(query=query, session_id=session_id, retry=is_retry)
     except ValueError as e:
         return jsonify({"status": "error", "message": str(e)}), 400
 

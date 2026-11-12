@@ -91,7 +91,7 @@ _ACCEPTED_BRANCHES["slot_filled"] = {"sop_step", "structured"}
 _OPS_EXITS = {
     "followup": {"structured"},                                  # 追问筛选 → 直出列表
     "model": {"structured"},                                     # 型号详情 / 对比 → 直出
-    "service_point": {"structured", "sop_step", "start_sop"},    # 有坐标直出；否则进网点 SOP
+    "service_point": {"structured", "sop_step", "start_sop"},    # 有明确城市直出；否则进网点 SOP
     "sop": {"start_sop", "sop_step", "clarify"},                 # 所有 SOP 先过确认门；拒绝后强触发可直接进
     "find_models": {"structured", "start_sop", "sop_step"},      # 有约束直出；无约束进型号查询 SOP
     "domain": {"answer", "no_answer_fallback"},                  # 知识问答 = RAG
