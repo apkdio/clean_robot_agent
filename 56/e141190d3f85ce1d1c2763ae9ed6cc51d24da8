@@ -1,0 +1,112 @@
+service/sops/service_point_sop.py
+  s_40681318f5a20b::t_594ae6e4cee1fa 4
+  s_40681318f5a20b::t_80fe55589871d3 44-45
+  s_40681318f5a20b::t_d18105d42e4e71 3
+test_scripts/unit/test_agent_guards.py
+  s_40681318f5a20b::t_12fe5f040c7edf 98-99
+  s_40681318f5a20b::t_660e9e9ff169b9 25,27
+  s_40681318f5a20b::t_dca517ca519c83 106-118
+  s_40681318f5a20b::t_9b8fb886e59f24 863
+utils/dto/request.py
+  s_40681318f5a20b::t_0c2f344415cf3b 1
+test_scripts/unit/test_dialogue.py
+  s_40681318f5a20b::t_f784009cdb5444 109-110
+  s_40681318f5a20b::t_5d75ada7f84316 9
+  s_40681318f5a20b::t_e19a31694dc877 34,37
+test_scripts/unit/test_model_query.py
+  s_40681318f5a20b::t_5082fc1c53216b 10-12
+  s_40681318f5a20b::t_abd66d2fa2ffe4 14
+  s_40681318f5a20b::t_638d5151485d76 193
+  s_40681318f5a20b::t_62ff61aad64ada 164
+  s_40681318f5a20b::t_b3253c7e66af43 194
+  s_40681318f5a20b::t_8485fae07c09b0 165-167,170-175
+  s_40681318f5a20b::t_82b8d017dfd50d 195
+  s_40681318f5a20b::t_491ed484085f47 106-127
+  s_40681318f5a20b::t_8a54d2a2ba78fd 145-163
+  s_40681318f5a20b::t_3411ebaaf2c22e 168-169
+  s_40681318f5a20b::t_5c70a81625e10e 128-144
+  s_40681318f5a20b::t_df813e1c82b9d7 192
+mapper/service_points_repo.py
+  s_40681318f5a20b::t_de52267746ce9c 78-85,87-98
+  s_40681318f5a20b::t_a22b2cbe080c89 5
+  s_40681318f5a20b::t_b1d9113b581640 86
+service/sops/model_query_sop.py
+  s_40681318f5a20b::t_07e11476743e4c 33-37
+  s_40681318f5a20b::t_fd79381756821d 10
+  s_40681318f5a20b::t_20a40bf8f33202 184
+config/word_dict_config.py
+  s_40681318f5a20b::t_e03a74ab1c756a 145-153
+  s_40681318f5a20b::t_ebb5abccd5f0a1 239,241-242,250,255
+  s_40681318f5a20b::t_ec581299c96624 343-349
+  s_40681318f5a20b::t_bcd7eff9c0c61f 100-101
+  s_40681318f5a20b::t_7c9762094a1406 113-114
+service/chat_service.py
+  s_40681318f5a20b::t_44afd2b8a4d9e6 79,81,86-91
+service/op_executors.py
+  s_40681318f5a20b::t_39a0286456cc21 110-111,114
+  s_40681318f5a20b::t_ab5749b6edc2fd 133,137
+  s_40681318f5a20b::t_799400b4ac14fc 44-46,48-51
+  s_40681318f5a20b::t_9eb123f4a23d7d 135,147,151-153
+  s_40681318f5a20b::t_b22c726c77b5a8 7-8
+  s_40681318f5a20b::t_2357a4aec8f58a 36-43,47,52-55,61,74-75
+  s_40681318f5a20b::t_f758ebe3ebd92e 138-146,149
+  s_40681318f5a20b::t_6814ae284f4205 184-189
+  s_40681318f5a20b::t_4f9b25335677c3 121-123
+  s_40681318f5a20b::t_5080c4846abc1b 150,156-158
+  s_40681318f5a20b::t_42d9ce148f749d 23-34
+  s_40681318f5a20b::t_332613a053413c 80
+  s_40681318f5a20b::t_fb5e4ccf394dc5 58,63,67-73,76-79,81-82
+  s_40681318f5a20b::t_e3d6c3c944c331 109,115
+service/model_query.py
+  s_40681318f5a20b::t_9a8435ae2a79cd 139-140
+  s_40681318f5a20b::t_f488219321a9a5 9
+  s_40681318f5a20b::t_587150102a0e49 104,106,115
+  s_40681318f5a20b::t_b6a9caf14ca913 24,28
+  s_40681318f5a20b::t_9eb3678b63f1b8 70-71,79-91
+  s_40681318f5a20b::t_78436c8739f1ba 72-78
+  s_40681318f5a20b::t_1c40cd8d787323 103,112,114,120
+  s_40681318f5a20b::t_6074973649170f 207
+webapp/templates/index.html
+  s_40681318f5a20b::t_a20d96c2b9ca84 686
+test_scripts/unit/test_model_query_sop.py
+  s_40681318f5a20b::t_1536ec5d0243e8 303-308
+test_scripts/unit/test_chat_service.py
+  s_40681318f5a20b::t_d3b18fdf29e95b 17
+  s_40681318f5a20b::t_b0731c237fe0d6 31
+README.md
+  s_40681318f5a20b::t_8ad56a66b57307 15
+  s_40681318f5a20b::t_eeaa027fd46081 161
+  s_40681318f5a20b::t_a2755dd721749d 493
+  s_40681318f5a20b::t_eb4a53139fb0a8 228
+  s_40681318f5a20b::t_9118173850da33 11
+  s_40681318f5a20b::t_eb6d82fff1cefc 14
+service/model_catalog.py
+  s_40681318f5a20b::t_886ceee52b3d54 75-87
+test_scripts/unit/test_service_point_sop.py
+  s_40681318f5a20b::t_2e32460833b268 18-20
+  s_40681318f5a20b::t_2a501b29954b6c 233-234,239,248,251,254,256,259,261,267
+  s_40681318f5a20b::t_93fe6b8f3bb49f 235-238,240-247,250,252-253,255,258,260,262-264
+  s_40681318f5a20b::t_24ea6be32a3256 249
+  s_40681318f5a20b::t_f4aad15d24191d 257
+  s_40681318f5a20b::t_a881f9570825e0 225-232,268
+webapp/app.py
+  s_40681318f5a20b::t_67365969177440 188
+test_scripts/eval/test_context_eval.py
+  s_40681318f5a20b::t_1028ae7b81e5cc 94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.52-trip",
+  "base_commit_sha": "56e141190d3f85ce1d1c2763ae9ed6cc51d24da8",
+  "prompts": {},
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
