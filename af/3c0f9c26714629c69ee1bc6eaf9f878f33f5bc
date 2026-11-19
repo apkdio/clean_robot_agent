@@ -1,0 +1,57 @@
+config/word_dict_config.py
+  s_40681318f5a20b::t_e92ebbd7ad6e73 102-104
+  s_40681318f5a20b::t_04c6e776ae1c79 98
+  s_40681318f5a20b::t_130e8460524cee 100-101
+  s_40681318f5a20b::t_c2d8c25e458fd3 113
+  s_40681318f5a20b::t_e1273736f34767 220-222
+  s_40681318f5a20b::t_dced8a85e3f1dc 489
+  s_40681318f5a20b::t_24d55b5c4eeacc 180
+  s_40681318f5a20b::t_6db5f2c648c4fe 178-179,181
+test_scripts/unit/test_repair_sop.py
+  s_40681318f5a20b::t_ebfe1ea1c3e8a9 199
+  s_40681318f5a20b::t_0c2fe530112482 66-73
+test_scripts/unit/test_retrieval.py
+  s_40681318f5a20b::t_034e1f8162851d 74-77
+data/knowledge/不染一尘具体型号.txt
+  s_40681318f5a20b::t_b0eff7a585b4d2 51
+  s_40681318f5a20b::t_60b404a8c4fb11 60
+data/knowledge/不染一尘常见维修问题.txt
+  s_40681318f5a20b::t_ead41ff296df20 55-56,58
+  s_40681318f5a20b::t_ecf9cadf92e981 182-186
+service/model_query.py
+  s_40681318f5a20b::t_18f1594b2f2111 71
+test_scripts/unit/test_model_query_sop.py
+  s_40681318f5a20b::t_8eb417d42abd5a 687
+  s_40681318f5a20b::t_fb3f0c4d1f85b9 380-389
+test_scripts/unit/test_operations.py
+  s_40681318f5a20b::t_44c6484cb1524e 289-290
+  s_40681318f5a20b::t_b04d4506c491d3 279-288
+data/knowledge/不染一尘机器人操作指南.txt
+  s_40681318f5a20b::t_fcfe78febee972 130,135
+service/sops/model_query_sop.py
+  s_40681318f5a20b::t_cfbd27c5126764 164-166
+test_scripts/unit/test_model_query.py
+  s_40681318f5a20b::t_88de964ad18573 206
+  s_40681318f5a20b::t_1f034f71b2e586 176-185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.52-trip",
+  "base_commit_sha": "af3c0f9c26714629c69ee1bc6eaf9f878f33f5bc",
+  "prompts": {},
+  "humans": {
+    "h_26b9a38f4942dd": {
+      "author": "apkdio <apkdio@163.com>"
+    }
+  },
+  "sessions": {
+    "s_40681318f5a20b": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_p0tu8b8f9edg",
+        "model": "DeepSeek-V4.1-Flash"
+      },
+      "human_author": "apkdio <apkdio@163.com>"
+    }
+  }
+}
