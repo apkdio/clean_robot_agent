@@ -63,6 +63,14 @@ def test_repair_trigger():
     _assert_eq(service.sops.base.match_sop("扫地机器人保修多久"), None, "售后→不触发 repair（guard）")
 
 
+def test_noise_attribute_not_repair():
+    """问噪音表现不是报故障；真故障仍必须能进维修流程。"""
+    _assert_eq(service.sops.base.match_sop("产品清扫的噪音怎么样？"), None, "噪音属性咨询不进 repair")
+    _assert_eq(service.sops.base.match_sop("产品清扫的噪音大不大"), None, "噪音大不大不进 repair")
+    _assert_eq(service.sops.base.match_sop("产品清扫的噪音很大怎么办"), "repair", "噪音很大仍进 repair")
+    _assert_eq(service.sops.base.match_sop("有异响，嘎嘎的"), "repair", "异响仍进 repair")
+
+
 # ──────────────────────────────────────────────────────────────
 # 3. repair SOP 流程（stub 掉 LLM/Chroma 的 action）
 # ──────────────────────────────────────────────────────────────
@@ -188,6 +196,7 @@ def test_symptom_mapping_leaves_trace():
 TESTS = [
     test_extract_symptom_rule,
     test_repair_trigger,
+    test_noise_attribute_not_repair,
     test_repair_sop_flow,
     test_repair_sop_ask_fallback,
     test_repair_dropped_symptom_does_not_search,

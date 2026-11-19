@@ -173,6 +173,16 @@ def test_model_ref_and_tag_filters():
     _assert(all(m.get("tag_pet_friendly") for m in r.models), "宠物标签作用到结果")
 
 
+def test_tag_requires_selection_intent():
+    """「有没有静音模式」是功能咨询；只有选型语境才把标签当约束。"""
+    _assert_eq(resolve_model_constraints("有没有静音模式"), None, "功能咨询不进入选型")
+    _assert_eq(resolve_model_constraints("机器人有没有静音模式"), None, "产品功能咨询不进入选型")
+    c, _ = resolve_model_constraints("有静音模式的型号有哪些")
+    _assert_eq(c.tags, ("quiet",), "明确问型号才解析标签")
+    c, _ = resolve_model_constraints("3000左右静音")
+    _assert_eq(c.tags, ("quiet",), "预算 + 静音仍是选型")
+
+
 def test_format_empty_result():
     r = FindModelsResult(models=[{"name": "X"}], kind="budget",
                          constraints=ModelQueryConstraints())
@@ -193,6 +203,7 @@ TESTS = [
     test_previous_turn_fallback_without_meta,
     test_find_models_refreshes_last_models,
     test_model_ref_and_tag_filters,
+    test_tag_requires_selection_intent,
     test_format_empty_result,
 ]
 

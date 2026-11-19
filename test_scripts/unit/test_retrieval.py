@@ -71,6 +71,10 @@ def test_domain_scoring_and_filter():
     _assert_eq(domain_filter("扫地机器人保修多久")[0], "不染一尘售后服务.txt", "top1 单域")
     _assert_eq(domain_filter("今天天气怎么样"), (None, "no-domain"), "无域 → 全库兜底")
     _assert_eq(route_domain("保修期内维修要多少钱"), "不染一尘售后服务.txt", "route_domain 仍是 top1 主文件")
+    # 噪音属性咨询不归 repair；故障描述仍归 repair
+    _assert_eq(route_domain("产品清扫的噪音怎么样"), None, "噪音属性咨询不路由到维修")
+    _assert_eq(route_domain("产品清扫的噪音大不大"), None, "噪音大不大不路由到维修")
+    _assert_eq(route_domain("产品清扫的噪音很大怎么办"), "不染一尘常见维修问题.txt", "噪音很大→维修")
 
 
 def test_domain_files_config():

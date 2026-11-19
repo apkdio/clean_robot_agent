@@ -161,7 +161,9 @@ def _make_reply(templates: dict):
             return templates.get("invalid") or MODEL_QUERY_CONSTRAINT_RETRY_REPLY
         n = int(ctx.get("count") or 0)
         if n <= 0:
-            return templates.get("empty") or MODEL_QUERY_EMPTY_REPLIES[0]
+            empty = templates.get("empty") or MODEL_QUERY_EMPTY_REPLIES[0]
+            condition = str(ctx.get("condition") or "").strip()
+            return "%s\n\n本次筛选条件：%s" % (empty, condition) if condition else empty
         return render(
             "sop:model_query:reply",
             template=templates.get("ok") or "",

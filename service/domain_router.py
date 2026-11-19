@@ -32,12 +32,12 @@ def domain_scores(query: str) -> list:
     """给每个知识域打分：命中词的长度之和（词越长越具体，权重越高）。"""
     from config.word_dict_config import (
         AFTERSALES_WORDS, BRAND_WORDS, BUY_WORDS, CONSULT_WORDS,
-        MAINTAIN_WORDS, OPERATION_WORDS, REPAIR_BASE_WORDS,
+        MAINTAIN_WORDS, OPERATION_WORDS, REPAIR_ROUTE_WORDS,
     )
 
     scores = {}
     for name, words in (("brand", BRAND_WORDS), ("aftersales", AFTERSALES_WORDS),
-                        ("repair", REPAIR_BASE_WORDS), ("maintain", MAINTAIN_WORDS),
+                        ("repair", REPAIR_ROUTE_WORDS), ("maintain", MAINTAIN_WORDS),
                         ("operation", OPERATION_WORDS)):
         hit = [w for w in words if w in query]
         if hit:

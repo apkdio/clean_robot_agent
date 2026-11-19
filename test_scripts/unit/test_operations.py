@@ -276,7 +276,18 @@ def test_operation_labels_sync():
         _assert_eq(len(labels), len(set(labels)), "%s 的别名校内不重复" % name)
 
 
-TESTS = [test_registry_shape, test_operation_labels_sync, test_probe_hits, test_resolve_three_states, test_note_ops_why_none,
+def test_recent_release_not_bare_chars():
+    """追问词不能靠裸单字：重新/出远门不能被当成最近发布。"""
+    _assert(not ops._p_followup("另外的话，我家路由器重新安了一个，怎么配网呢"),
+            "重新不能命中 followup")
+    _assert(not ops._p_followup("我要出远门，机器人在家没啥问题吧"),
+            "出远门不能命中 followup")
+    _assert(ops._p_followup("最近新出的有哪些"), "最近新出仍然命中 followup")
+    _assert(ops._p_followup("有没有更新的型号"), "更新的型号仍走相对追问")
+
+
+TESTS = [test_registry_shape, test_operation_labels_sync, test_probe_hits,
+         test_recent_release_not_bare_chars, test_resolve_three_states, test_note_ops_why_none,
          test_note_ops_writes_route_and_returns_usable, test_order_contract,
          test_model_intent_predicates_parity,
          test_score_all_shape_and_determinism, test_score_all_degrades_without_dense,

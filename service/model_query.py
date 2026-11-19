@@ -68,7 +68,7 @@ def parse_publish(query: str, allow_llm: bool = True) -> PublishRange | None:
 
 
 _SELECT_HINT_RE = re.compile(
-    r"(?:含|支持|带|有|哪些|哪几款|型号|产品|推荐|筛选|预算|左右|以内|以上|以下)")
+    r"(?:型号|款|推荐|筛选|预算|左右|以内|以上|以下|哪些|哪几款|清单|系列)")
 # 参数条件暂未接入主链：命中这些词时不要让预算/目录直出把条件吞掉。
 _UNSUPPORTED_PARAM_RE = re.compile(
     r"(?:lds|激光|视觉导航|导航|避障|结构光|双摄|吸力|\d+\s*pa)", re.I)

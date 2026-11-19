@@ -377,6 +377,16 @@ def test_result_reply():
     _assert("对比" not in empty, "0 款时不追问对比")
 
 
+def test_result_reply_empty_marks_flow_end():
+    """SOP 0 款要明确告知本次筛选结束，并回显条件。"""
+    from service.sops.model_query_sop import MODEL_QUERY_SOP
+    reply = MODEL_QUERY_SOP["steps"][-1]["template"]
+    text = reply({"count": 0, "condition": "预算 2500–3500 元、适合木地板"})
+    _assert_in("本次筛选先到这里", text, "明确结束本次筛选")
+    _assert_in("本次筛选条件", text, "回显已应用条件")
+    _assert_in("2500", text, "条件内容进入回复")
+
+
 def test_search_rejects_malformed_slots():
     """预算/时间槽形状不对或重试耗尽时，不能静默按无条件筛选。"""
     import service.sops.model_query_sop as mq
@@ -674,6 +684,7 @@ TESTS = [
     test_full_flow,
     test_extract_budget_bare_number,
     test_result_reply,
+    test_result_reply_empty_marks_flow_end,
     test_search_rejects_malformed_slots,
     test_retry_then_abandon,
     test_model_query_dropped_budget_does_not_return_all,
